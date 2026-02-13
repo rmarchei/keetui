@@ -2,8 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tobischo/gokeepasslib/v3"
 
@@ -33,14 +35,18 @@ type stackFrame struct {
 
 // BrowserModel handles navigation through groups and entries.
 type BrowserModel struct {
-	db     *keepass.DB
-	stack  []stackFrame
-	items  []listItem
-	cursor int
-	offset int
-	width  int
-	height int
-	status string
+	db          *keepass.DB
+	stack       []stackFrame
+	items       []listItem
+	cursor      int
+	offset      int
+	width       int
+	height      int
+	status      string
+	searching   bool
+	searchInput textinput.Model
+	searchQuery string
+	allItems    []listItem // unfiltered items for search
 }
 
 // ViewEntryMsg requests viewing the detail of an entry.
@@ -87,8 +93,15 @@ type StatusMsg struct {
 
 func NewBrowserModel(db *keepass.DB) BrowserModel {
 	root := db.RootGroup()
+	si := textinput.New()
+	si.Prompt = "  / "
+	si.PromptStyle = focusedStyle
+	si.Width = 40
+	si.Placeholder = "search..."
+
 	m := BrowserModel{
-		db: db,
+		db:          db,
+		searchInput: si,
 	}
 	m.items = buildItems(root)
 	m.stack = []stackFrame{{group: root, cursor: 0, offset: 0}}
@@ -102,6 +115,29 @@ func buildItems(g keepass.Group) []listItem {
 	}
 	for _, e := range g.Entries {
 		items = append(items, listItem{isGroup: false, entry: e})
+	}
+	sortItems(items)
+	return items
+}
+
+func sortItems(items []listItem) {
+	sort.SliceStable(items, func(i, j int) bool {
+		// Groups first, then entries; alphabetical within each category
+		if items[i].isGroup != items[j].isGroup {
+			return items[i].isGroup
+		}
+		return strings.ToLower(items[i].name()) < strings.ToLower(items[j].name())
+	})
+}
+
+// collectAllEntries recursively gathers all entries from a group tree.
+func collectAllEntries(g keepass.Group) []listItem {
+	var items []listItem
+	for _, e := range g.Entries {
+		items = append(items, listItem{isGroup: false, entry: e})
+	}
+	for _, sg := range g.Groups {
+		items = append(items, collectAllEntries(sg)...)
 	}
 	return items
 }
@@ -125,10 +161,36 @@ func (m BrowserModel) Init() tea.Cmd {
 func (m BrowserModel) visibleHeight() int {
 	// Reserve lines for header, breadcrumb, blank lines, help, status
 	h := m.height - 8
+	if m.searching {
+		h -= 2 // search input line
+	}
 	if h < 5 {
 		h = 5
 	}
 	return h
+}
+
+func (m *BrowserModel) applySearch() {
+	query := strings.ToLower(m.searchInput.Value())
+	m.searchQuery = query
+	if query == "" {
+		m.items = m.allItems
+	} else {
+		var filtered []listItem
+		for _, item := range m.allItems {
+			n := strings.ToLower(item.name())
+			u := ""
+			if !item.isGroup {
+				u = strings.ToLower(item.entry.UserName)
+			}
+			if strings.Contains(n, query) || strings.Contains(u, query) {
+				filtered = append(filtered, item)
+			}
+		}
+		m.items = filtered
+	}
+	m.cursor = 0
+	m.offset = 0
 }
 
 func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -145,6 +207,9 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.items = buildItems(root)
 		m.cursor = 0
 		m.offset = 0
+		m.searching = false
+		m.searchQuery = ""
+		m.searchInput.SetValue("")
 		return m, nil
 
 	case StatusMsg:
@@ -156,9 +221,46 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Search mode key handling
+		if m.searching {
+			switch msg.String() {
+			case "esc":
+				m.searching = false
+				m.searchInput.SetValue("")
+				m.searchInput.Blur()
+				m.items = buildItems(m.currentGroup())
+				m.cursor = 0
+				m.offset = 0
+				return m, nil
+			case "enter":
+				m.searching = false
+				m.searchInput.Blur()
+				return m, nil
+			case "ctrl+c":
+				return m, tea.Quit
+			default:
+				var cmd tea.Cmd
+				m.searchInput, cmd = m.searchInput.Update(msg)
+				m.applySearch()
+				return m, cmd
+			}
+		}
+
+		// Normal mode key handling
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+
+		case "/":
+			m.searching = true
+			m.allItems = collectAllEntries(m.db.RootGroup())
+			sortItems(m.allItems)
+			m.searchInput.SetValue("")
+			m.searchInput.Focus()
+			m.items = m.allItems
+			m.cursor = 0
+			m.offset = 0
+			return m, textinput.Blink
 
 		case "up", "k":
 			if m.cursor > 0 {
@@ -250,11 +352,24 @@ func (m BrowserModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" keetui "))
 	b.WriteString("\n")
-	b.WriteString(breadcrumbStyle.Render(m.breadcrumb()))
+	if m.searchQuery != "" && !m.searching {
+		b.WriteString(breadcrumbStyle.Render(fmt.Sprintf("Search: %q", m.searchQuery)))
+	} else {
+		b.WriteString(breadcrumbStyle.Render(m.breadcrumb()))
+	}
 	b.WriteString("\n\n")
 
+	if m.searching {
+		b.WriteString(m.searchInput.View())
+		b.WriteString("\n\n")
+	}
+
 	if len(m.items) == 0 {
-		b.WriteString(itemStyle.Render(hiddenStyle.Render("(empty)")))
+		if m.searchQuery != "" {
+			b.WriteString(itemStyle.Render(hiddenStyle.Render("(no matches)")))
+		} else {
+			b.WriteString(itemStyle.Render(hiddenStyle.Render("(empty)")))
+		}
 		b.WriteString("\n")
 	} else {
 		vis := m.visibleHeight()
@@ -306,7 +421,11 @@ func (m BrowserModel) View() string {
 		b.WriteString(m.status)
 		b.WriteString("\n")
 	}
-	b.WriteString(helpStyle.Render("  j/k: navigate  enter/l: open  h/esc: back  n: new entry  g: new group  d: delete  s: save  q: quit"))
+	if m.searching {
+		b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
+	} else {
+		b.WriteString(helpStyle.Render("  j/k: navigate  enter/l: open  h/esc: back  /: search  n: new entry  g: new group  d: delete  s: save  q: quit"))
+	}
 	b.WriteString("\n")
 
 	return b.String()

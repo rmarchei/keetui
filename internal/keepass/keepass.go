@@ -38,6 +38,38 @@ type Group struct {
 	Entries []Entry
 }
 
+// Create creates a new .kdbx database file with the given password.
+func Create(path, password string) (*DB, error) {
+	rootGroup := gokeepasslib.NewGroup()
+	rootGroup.Name = "Root"
+
+	db := gokeepasslib.NewDatabase()
+	db.Credentials = gokeepasslib.NewPasswordCredentials(password)
+	db.Content.Root = &gokeepasslib.RootData{
+		Groups: []gokeepasslib.Group{rootGroup},
+	}
+
+	db.LockProtectedEntries()
+
+	file, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("create file: %w", err)
+	}
+	defer file.Close()
+
+	if err := gokeepasslib.NewEncoder(file).Encode(db); err != nil {
+		return nil, fmt.Errorf("encode database: %w", err)
+	}
+
+	db.UnlockProtectedEntries()
+
+	return &DB{
+		Path:     path,
+		Database: db,
+		unlocked: true,
+	}, nil
+}
+
 // Open reads and decodes a .kdbx file with the given password.
 func Open(path, password string) (*DB, error) {
 	file, err := os.Open(path)
