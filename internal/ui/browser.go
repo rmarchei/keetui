@@ -46,7 +46,8 @@ type BrowserModel struct {
 	searching   bool
 	searchInput textinput.Model
 	searchQuery string
-	allItems    []listItem // unfiltered items for search
+	allItems    []listItem              // unfiltered items for search
+	cutEntry    *gokeepasslib.UUID      // entry UUID in the clipboard for move
 }
 
 // ViewEntryMsg requests viewing the detail of an entry.
@@ -300,6 +301,14 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "esc", "h", "left":
+			if m.searchQuery != "" {
+				// Clear search results and go back to normal browsing
+				m.searchQuery = ""
+				m.items = buildItems(m.currentGroup())
+				m.cursor = 0
+				m.offset = 0
+				return m, nil
+			}
 			if len(m.stack) > 1 {
 				m.stack = m.stack[:len(m.stack)-1]
 				frame := m.stack[len(m.stack)-1]
@@ -320,6 +329,52 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cg := m.currentGroup()
 			return m, func() tea.Msg {
 				return NewGroupMsg{ParentUUID: cg.UUID}
+			}
+
+		case "r":
+			// Rename group
+			if len(m.items) == 0 {
+				break
+			}
+			item := m.items[m.cursor]
+			if item.isGroup {
+				return m, func() tea.Msg {
+					return RenameGroupStartMsg{GroupUUID: item.group.UUID, CurrentName: item.group.Name}
+				}
+			}
+
+		case "y":
+			// Duplicate entry
+			if len(m.items) == 0 {
+				break
+			}
+			item := m.items[m.cursor]
+			if !item.isGroup {
+				return m, func() tea.Msg {
+					return DuplicateEntryMsg{EntryUUID: item.entry.UUID}
+				}
+			}
+
+		case "x":
+			// Cut entry for move
+			if len(m.items) == 0 {
+				break
+			}
+			item := m.items[m.cursor]
+			if !item.isGroup {
+				uuid := item.entry.UUID
+				m.cutEntry = &uuid
+				m.status = successStyle.Render(fmt.Sprintf("Cut: %s (navigate to target group and press v to paste)", item.entry.Title))
+			}
+
+		case "v":
+			// Paste cut entry into current group
+			if m.cutEntry != nil {
+				entryUUID := *m.cutEntry
+				cg := m.currentGroup()
+				return m, func() tea.Msg {
+					return PasteEntryMsg{EntryUUID: entryUUID, TargetGroupUUID: cg.UUID}
+				}
 			}
 
 		case "d":
@@ -424,7 +479,8 @@ func (m BrowserModel) View() string {
 	if m.searching {
 		b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
 	} else {
-		b.WriteString(helpStyle.Render("  j/k: navigate  enter/l: open  h/esc: back  /: search  n: new entry  g: new group  d: delete  s: save  q: quit"))
+		help := "  j/k: nav  enter/l: open  h/esc: back  /: search  n: new  g: group  r: rename  y: dup  x: cut  v: paste  d: del  s: save  q: quit"
+		b.WriteString(helpStyle.Render(help))
 	}
 	b.WriteString("\n")
 

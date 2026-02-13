@@ -9,12 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tobischo/gokeepasslib/v3"
 
+	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
-)
-
-const (
-	clipboardClearDelay = 15 * time.Second
-	autoLockTimeout     = 5 * time.Minute
 )
 
 type viewState int
@@ -36,6 +32,33 @@ type autoLockMsg struct {
 	at time.Time
 }
 
+// DuplicateEntryMsg requests duplicating an entry.
+type DuplicateEntryMsg struct {
+	EntryUUID gokeepasslib.UUID
+}
+
+// MoveEntryMsg requests cutting an entry to be pasted elsewhere.
+type MoveEntryMsg struct {
+	EntryUUID gokeepasslib.UUID
+}
+
+// PasteEntryMsg requests pasting the cut entry into the current group.
+type PasteEntryMsg struct {
+	EntryUUID     gokeepasslib.UUID
+	TargetGroupUUID gokeepasslib.UUID
+}
+
+// RenameGroupMsg requests renaming a group.
+type RenameGroupMsg struct {
+	GroupUUID gokeepasslib.UUID
+	NewName   string
+}
+
+// OpenURLMsg requests opening a URL in the system browser.
+type OpenURLMsg struct {
+	URL string
+}
+
 // AppModel is the top-level model coordinating all views.
 type AppModel struct {
 	state        viewState
@@ -52,16 +75,18 @@ type AppModel struct {
 	lastActivity time.Time   // tracks last user interaction for auto-lock
 	filePath     string      // remember file path for re-lock
 	keyFilePath  string      // remember key file path for re-lock
+	cfg          config.Config
 }
 
 // NewApp creates the application starting at the unlock screen.
-func NewApp(filePath, keyFilePath string) AppModel {
+func NewApp(filePath, keyFilePath string, cfg config.Config) AppModel {
 	return AppModel{
 		state:        viewUnlock,
 		unlock:       NewUnlockModel(filePath, keyFilePath),
 		lastActivity: time.Now(),
 		filePath:     filePath,
 		keyFilePath:  keyFilePath,
+		cfg:          cfg,
 	}
 }
 
@@ -69,14 +94,15 @@ func (m AppModel) Init() tea.Cmd {
 	return m.unlock.Init()
 }
 
-func scheduleAutoLock(lastActivity time.Time) tea.Cmd {
-	return tea.Tick(autoLockTimeout, func(t time.Time) tea.Msg {
+func (m AppModel) scheduleAutoLock() tea.Cmd {
+	lastActivity := m.lastActivity
+	return tea.Tick(m.cfg.AutoLockDuration(), func(t time.Time) tea.Msg {
 		return autoLockMsg{at: lastActivity}
 	})
 }
 
-func scheduleClearClipboard() tea.Cmd {
-	return tea.Tick(clipboardClearDelay, func(t time.Time) tea.Msg {
+func (m AppModel) scheduleClearClipboard() tea.Cmd {
+	return tea.Tick(m.cfg.ClipboardClearDuration(), func(t time.Time) tea.Msg {
 		return clipboardClearMsg{}
 	})
 }
@@ -104,17 +130,34 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.detail.Init()
 
 	case EditEntryMsg:
-		m.editor = NewEditorModel(&msg.Entry, gokeepasslib.UUID{})
+		m.editor = NewEditorModel(&msg.Entry, gokeepasslib.UUID{}, m.cfg)
 		m.state = viewEditor
 		return m, nil
 
 	case NewEntryMsg:
-		m.editor = NewEditorModel(nil, msg.GroupUUID)
+		m.editor = NewEditorModel(nil, msg.GroupUUID, m.cfg)
 		m.state = viewEditor
 		return m, m.editor.Init()
 
 	case NewGroupMsg:
-		m.groupInput = NewGroupInputModel(msg.ParentUUID)
+		m.groupInput = NewGroupInputModel(msg.ParentUUID, "")
+		m.state = viewGroupInput
+		return m, m.groupInput.Init()
+
+	case RenameGroupMsg:
+		if err := m.db.RenameGroup(msg.GroupUUID, msg.NewName); err != nil {
+			m.state = viewBrowser
+			return m, statusCmd(fmt.Sprintf("Error renaming group: %s", err), true)
+		}
+		m.state = viewBrowser
+		return m, tea.Batch(
+			func() tea.Msg { return RefreshMsg{} },
+			statusCmd("Group renamed (use 's' to save to file)", false),
+		)
+
+	case RenameGroupStartMsg:
+		m.groupInput = NewGroupInputModel(msg.GroupUUID, msg.CurrentName)
+		m.groupInput.renaming = true
 		m.state = viewGroupInput
 		return m, m.groupInput.Init()
 
@@ -156,6 +199,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			statusCmd("Group deleted", false),
 		)
 
+	case DuplicateEntryMsg:
+		if err := m.db.DuplicateEntry(msg.EntryUUID); err != nil {
+			return m, statusCmd(fmt.Sprintf("Error duplicating: %s", err), true)
+		}
+		return m, tea.Batch(
+			func() tea.Msg { return RefreshMsg{} },
+			statusCmd("Entry duplicated (use 's' to save to file)", false),
+		)
+
+	case PasteEntryMsg:
+		if err := m.db.MoveEntry(msg.EntryUUID, msg.TargetGroupUUID); err != nil {
+			return m, statusCmd(fmt.Sprintf("Error moving entry: %s", err), true)
+		}
+		m.browser.cutEntry = nil
+		return m, tea.Batch(
+			func() tea.Msg { return RefreshMsg{} },
+			statusCmd("Entry moved (use 's' to save to file)", false),
+		)
+
 	case SaveEntryMsg:
 		return m.handleSaveEntry(msg)
 
@@ -176,11 +238,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CopyToClipboardMsg:
 		copyToClipboard(msg.Value)
 		m.detail.copied = msg.Field
-		return m, scheduleClearClipboard()
+		return m, m.scheduleClearClipboard()
 
 	case clipboardClearMsg:
 		clearClipboard()
 		m.detail.copied = ""
+		return m, nil
+
+	case OpenURLMsg:
+		openURL(msg.URL)
 		return m, nil
 
 	case autoLockMsg:
@@ -261,7 +327,7 @@ func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cm
 	m.browser = NewBrowserModel(db)
 	m.state = viewBrowser
 	m.lastActivity = time.Now()
-	return m, scheduleAutoLock(m.lastActivity)
+	return m, m.scheduleAutoLock()
 }
 
 func (m AppModel) handleSaveEntry(msg SaveEntryMsg) (tea.Model, tea.Cmd) {
@@ -284,6 +350,17 @@ func (m AppModel) handleSaveEntry(msg SaveEntryMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) handleSaveGroup(msg SaveGroupMsg) (tea.Model, tea.Cmd) {
+	if msg.Rename {
+		if err := m.db.RenameGroup(msg.ParentUUID, msg.Name); err != nil {
+			m.state = viewBrowser
+			return m, statusCmd(fmt.Sprintf("Error renaming group: %s", err), true)
+		}
+		m.state = viewBrowser
+		return m, tea.Batch(
+			func() tea.Msg { return RefreshMsg{} },
+			statusCmd("Group renamed (use 's' to save to file)", false),
+		)
+	}
 	if err := m.db.AddGroup(msg.ParentUUID, msg.Name); err != nil {
 		m.state = viewBrowser
 		return m, statusCmd(fmt.Sprintf("Error adding group: %s", err), true)
@@ -315,6 +392,12 @@ type confirmDeleteEntryMsg struct {
 
 type confirmDeleteGroupMsg struct {
 	UUID gokeepasslib.UUID
+}
+
+// RenameGroupStartMsg is sent to initiate group renaming.
+type RenameGroupStartMsg struct {
+	GroupUUID   gokeepasslib.UUID
+	CurrentName string
 }
 
 func copyToClipboard(text string) {
@@ -351,4 +434,20 @@ func copyToClipboard(text string) {
 
 func clearClipboard() {
 	copyToClipboard("")
+}
+
+func openURL(u string) {
+	if u == "" {
+		return
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", u)
+	case "linux":
+		cmd = exec.Command("xdg-open", u)
+	default:
+		return
+	}
+	cmd.Start()
 }

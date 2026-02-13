@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tobischo/gokeepasslib/v3"
 
+	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
 )
 
@@ -20,10 +21,10 @@ const (
 	fieldURL
 	fieldNotes
 	fieldTOTP
-	fieldCount
+	fixedFieldCount // number of built-in fields
 )
 
-var fieldLabels = [fieldCount]string{
+var fieldLabels = [fixedFieldCount]string{
 	"Title",
 	"Username",
 	"Password",
@@ -34,15 +35,23 @@ var fieldLabels = [fieldCount]string{
 
 // EditorModel handles creating or editing an entry.
 type EditorModel struct {
-	inputs    [fieldCount]textinput.Model
-	focused   int
-	isNew     bool
-	entryUUID gokeepasslib.UUID
-	groupUUID gokeepasslib.UUID
-	width     int
-	height    int
-	err       error
-	generated bool // true after password was auto-generated
+	inputs       [fixedFieldCount]textinput.Model
+	customInputs []customFieldInput
+	focused      int
+	isNew        bool
+	entryUUID    gokeepasslib.UUID
+	groupUUID    gokeepasslib.UUID
+	width        int
+	height       int
+	err          error
+	generated    bool // true after password was auto-generated
+	cfg          config.Config
+}
+
+type customFieldInput struct {
+	key       textinput.Model
+	value     textinput.Model
+	protected bool
 }
 
 // SaveEntryMsg signals that the entry should be saved.
@@ -56,8 +65,8 @@ type SaveEntryMsg struct {
 // CancelEditMsg signals cancellation of editing.
 type CancelEditMsg struct{}
 
-func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID) EditorModel {
-	var inputs [fieldCount]textinput.Model
+func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg config.Config) EditorModel {
+	var inputs [fixedFieldCount]textinput.Model
 	for i := range inputs {
 		t := textinput.New()
 		t.Prompt = fmt.Sprintf("  %s: ", fieldLabels[i])
@@ -76,6 +85,7 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID) EditorMod
 		inputs:    inputs,
 		groupUUID: groupUUID,
 		isNew:     entry == nil,
+		cfg:       cfg,
 	}
 
 	if entry != nil {
@@ -87,12 +97,39 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID) EditorMod
 		inputs[fieldNotes].SetValue(entry.Notes)
 		inputs[fieldTOTP].SetValue(entry.TOTP)
 		m.inputs = inputs
+		for _, cf := range entry.CustomFields {
+			m.customInputs = append(m.customInputs, newCustomFieldInput(cf.Key, cf.Value, cf.Protected))
+		}
 	}
 
 	m.inputs[0].Focus()
 	m.inputs[0].TextStyle = focusedStyle
 
 	return m
+}
+
+func newCustomFieldInput(key, value string, protected bool) customFieldInput {
+	k := textinput.New()
+	k.Prompt = "  Key: "
+	k.PromptStyle = labelStyle
+	k.Width = 20
+	k.SetValue(key)
+
+	v := textinput.New()
+	v.Prompt = "  Value: "
+	v.PromptStyle = labelStyle
+	v.Width = 40
+	v.SetValue(value)
+	if protected {
+		v.EchoMode = textinput.EchoPassword
+		v.EchoCharacter = '*'
+	}
+
+	return customFieldInput{key: k, value: v, protected: protected}
+}
+
+func (m EditorModel) totalFields() int {
+	return fixedFieldCount + len(m.customInputs)*2
 }
 
 func (m EditorModel) Init() tea.Cmd {
@@ -115,27 +152,61 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return CancelEditMsg{} }
 
 		case "tab", "down":
-			m.focused = (m.focused + 1) % fieldCount
+			m.focused = (m.focused + 1) % m.totalFields()
 			return m, m.updateFocus()
 
 		case "shift+tab", "up":
-			m.focused = (m.focused - 1 + fieldCount) % fieldCount
+			m.focused = (m.focused - 1 + m.totalFields()) % m.totalFields()
 			return m, m.updateFocus()
 
 		case "ctrl+s":
 			return m, m.save()
 
 		case "ctrl+g":
-			pw := generatePassword(20)
+			pw := generatePassword(m.cfg.PasswordLen())
 			m.inputs[fieldPassword].SetValue(pw)
 			m.generated = true
 			return m, nil
+
+		case "ctrl+a":
+			// Add a new custom field
+			m.customInputs = append(m.customInputs, newCustomFieldInput("", "", false))
+			m.focused = fixedFieldCount + (len(m.customInputs)-1)*2
+			return m, m.updateFocus()
+
+		case "ctrl+d":
+			// Delete the custom field that is currently focused
+			if m.focused >= fixedFieldCount && len(m.customInputs) > 0 {
+				cfIdx := (m.focused - fixedFieldCount) / 2
+				if cfIdx < len(m.customInputs) {
+					m.customInputs = append(m.customInputs[:cfIdx], m.customInputs[cfIdx+1:]...)
+					if m.focused >= m.totalFields() {
+						m.focused = m.totalFields() - 1
+						if m.focused < 0 {
+							m.focused = 0
+						}
+					}
+					return m, m.updateFocus()
+				}
+			}
 		}
 	}
 
 	// Update only the focused input
 	var cmd tea.Cmd
-	m.inputs[m.focused], cmd = m.inputs[m.focused].Update(msg)
+	if m.focused < fixedFieldCount {
+		m.inputs[m.focused], cmd = m.inputs[m.focused].Update(msg)
+	} else {
+		cfIdx := (m.focused - fixedFieldCount) / 2
+		isValue := (m.focused-fixedFieldCount)%2 == 1
+		if cfIdx < len(m.customInputs) {
+			if isValue {
+				m.customInputs[cfIdx].value, cmd = m.customInputs[cfIdx].value.Update(msg)
+			} else {
+				m.customInputs[cfIdx].key, cmd = m.customInputs[cfIdx].key.Update(msg)
+			}
+		}
+	}
 	return m, cmd
 }
 
@@ -150,23 +221,55 @@ func (m *EditorModel) updateFocus() tea.Cmd {
 			m.inputs[i].TextStyle = blurredStyle
 		}
 	}
+	for ci := range m.customInputs {
+		keyIdx := fixedFieldCount + ci*2
+		valIdx := keyIdx + 1
+		if keyIdx == m.focused {
+			cmds = append(cmds, m.customInputs[ci].key.Focus())
+			m.customInputs[ci].key.TextStyle = focusedStyle
+			m.customInputs[ci].value.Blur()
+			m.customInputs[ci].value.TextStyle = blurredStyle
+		} else if valIdx == m.focused {
+			m.customInputs[ci].key.Blur()
+			m.customInputs[ci].key.TextStyle = blurredStyle
+			cmds = append(cmds, m.customInputs[ci].value.Focus())
+			m.customInputs[ci].value.TextStyle = focusedStyle
+		} else {
+			m.customInputs[ci].key.Blur()
+			m.customInputs[ci].key.TextStyle = blurredStyle
+			m.customInputs[ci].value.Blur()
+			m.customInputs[ci].value.TextStyle = blurredStyle
+		}
+	}
 	return tea.Batch(cmds...)
 }
 
 func (m EditorModel) save() tea.Cmd {
 	return func() tea.Msg {
+		entry := keepass.Entry{
+			Title:    m.inputs[fieldTitle].Value(),
+			UserName: m.inputs[fieldUserName].Value(),
+			Password: m.inputs[fieldPassword].Value(),
+			URL:      m.inputs[fieldURL].Value(),
+			Notes:    m.inputs[fieldNotes].Value(),
+			TOTP:     m.inputs[fieldTOTP].Value(),
+		}
+		for _, cf := range m.customInputs {
+			key := cf.key.Value()
+			val := cf.value.Value()
+			if key != "" {
+				entry.CustomFields = append(entry.CustomFields, keepass.CustomField{
+					Key:       key,
+					Value:     val,
+					Protected: cf.protected,
+				})
+			}
+		}
 		return SaveEntryMsg{
 			IsNew:     m.isNew,
 			EntryUUID: m.entryUUID,
 			GroupUUID: m.groupUUID,
-			Entry: keepass.Entry{
-				Title:    m.inputs[fieldTitle].Value(),
-				UserName: m.inputs[fieldUserName].Value(),
-				Password: m.inputs[fieldPassword].Value(),
-				URL:      m.inputs[fieldURL].Value(),
-				Notes:    m.inputs[fieldNotes].Value(),
-				TOTP:     m.inputs[fieldTOTP].Value(),
-			},
+			Entry:     entry,
 		}
 	}
 }
@@ -187,6 +290,18 @@ func (m EditorModel) View() string {
 		b.WriteString("\n")
 	}
 
+	if len(m.customInputs) > 0 {
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("  Custom Fields:"))
+		b.WriteString("\n")
+		for _, cf := range m.customInputs {
+			b.WriteString(cf.key.View())
+			b.WriteString("  ")
+			b.WriteString(cf.value.View())
+			b.WriteString("\n")
+		}
+	}
+
 	if m.generated {
 		b.WriteString("\n")
 		b.WriteString(successStyle.Render("  Password generated!"))
@@ -200,7 +315,7 @@ func (m EditorModel) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+g: generate password  ctrl+s: save  esc: cancel"))
+	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+g: gen password  ctrl+a: add field  ctrl+d: del field  ctrl+s: save  esc: cancel"))
 	b.WriteString("\n")
 
 	return b.String()
