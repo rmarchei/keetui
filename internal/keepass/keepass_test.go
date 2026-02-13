@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/pquerna/otp/totp"
 	"github.com/tobischo/gokeepasslib/v3"
 )
 
@@ -304,5 +306,185 @@ func TestAddAndDeleteGroup(t *testing.T) {
 	groups3 := db3.RootGroup().Groups
 	if len(groups3) != 1 {
 		t.Errorf("groups after delete = %d, want 1", len(groups3))
+	}
+}
+
+func TestTOTPSecret(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		want   string
+	}{
+		{"empty", "", ""},
+		{"raw base32", "JBSWY3DPEHPK3PXP", "JBSWY3DPEHPK3PXP"},
+		{"otpauth URI", "otpauth://totp/Example:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example", "JBSWY3DPEHPK3PXP"},
+		{"otpauth with period", "otpauth://totp/Test?secret=ABCDEFGH&period=60", "ABCDEFGH"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TOTPSecret(tt.input)
+			if got != tt.want {
+				t.Errorf("TOTPSecret(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTOTPPeriod(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  uint
+	}{
+		{"empty", "", 30},
+		{"raw secret", "JBSWY3DPEHPK3PXP", 30},
+		{"otpauth default", "otpauth://totp/Test?secret=ABC", 30},
+		{"otpauth period 60", "otpauth://totp/Test?secret=ABC&period=60", 60},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TOTPPeriod(tt.input)
+			if got != tt.want {
+				t.Errorf("TOTPPeriod(%q) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTOTPCodeGeneration(t *testing.T) {
+	// Use a known secret and verify code generation works
+	secret := "JBSWY3DPEHPK3PXP"
+	now := time.Now()
+
+	code, err := totp.GenerateCodeCustom(secret, now, totp.ValidateOpts{
+		Period: 30,
+		Digits: 6,
+	})
+	if err != nil {
+		t.Fatalf("GenerateCodeCustom: %v", err)
+	}
+	if len(code) != 6 {
+		t.Errorf("TOTP code length = %d, want 6", len(code))
+	}
+
+	// Validate the code we just generated
+	valid, err := totp.ValidateCustom(code, secret, now, totp.ValidateOpts{
+		Period: 30,
+		Digits: 6,
+	})
+	if err != nil {
+		t.Fatalf("ValidateCustom: %v", err)
+	}
+	if !valid {
+		t.Error("generated TOTP code failed validation")
+	}
+}
+
+func TestAddEntryWithTOTP(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+
+	// Add entry with raw base32 TOTP secret
+	err = db.AddEntry(emailGroup.UUID, Entry{
+		Title:    "TOTP Entry",
+		UserName: "totpuser",
+		Password: "totppass",
+		TOTP:     "JBSWY3DPEHPK3PXP",
+	})
+	if err != nil {
+		t.Fatalf("AddEntry with TOTP: %v", err)
+	}
+
+	savePath := filepath.Join(dir, "test2.kdbx")
+	err = db.SaveAs(savePath)
+	if err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	entries := db2.RootGroup().Groups[0].Entries
+	var found *Entry
+	for i, e := range entries {
+		if e.Title == "TOTP Entry" {
+			found = &entries[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("TOTP entry not found after save/reload")
+	}
+	if found.TOTP != "JBSWY3DPEHPK3PXP" {
+		t.Errorf("TOTP = %q, want %q", found.TOTP, "JBSWY3DPEHPK3PXP")
+	}
+}
+
+func TestAddEntryWithOTPAuthURI(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+
+	otpauthURI := "otpauth://totp/Example:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example"
+	err = db.AddEntry(emailGroup.UUID, Entry{
+		Title:    "OTPAuth Entry",
+		UserName: "otpuser",
+		Password: "otppass",
+		TOTP:     otpauthURI,
+	})
+	if err != nil {
+		t.Fatalf("AddEntry with otpauth URI: %v", err)
+	}
+
+	savePath := filepath.Join(dir, "test2.kdbx")
+	err = db.SaveAs(savePath)
+	if err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	entries := db2.RootGroup().Groups[0].Entries
+	var found *Entry
+	for i, e := range entries {
+		if e.Title == "OTPAuth Entry" {
+			found = &entries[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("OTPAuth entry not found after save/reload")
+	}
+	if found.TOTP != otpauthURI {
+		t.Errorf("TOTP = %q, want %q", found.TOTP, otpauthURI)
+	}
+	// Verify we can extract the secret from the URI
+	secret := TOTPSecret(found.TOTP)
+	if secret != "JBSWY3DPEHPK3PXP" {
+		t.Errorf("extracted secret = %q, want %q", secret, "JBSWY3DPEHPK3PXP")
 	}
 }

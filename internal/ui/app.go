@@ -64,7 +64,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ViewEntryMsg:
 		m.detail = NewDetailModel(msg.Entry)
 		m.state = viewDetail
-		return m, nil
+		return m, m.detail.Init()
 
 	case EditEntryMsg:
 		m.editor = NewEditorModel(&msg.Entry, gokeepasslib.UUID{})

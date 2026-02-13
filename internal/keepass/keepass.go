@@ -3,7 +3,9 @@ package keepass
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tobischo/gokeepasslib/v3"
@@ -25,6 +27,7 @@ type Entry struct {
 	Password string
 	URL      string
 	Notes    string
+	TOTP     string // TOTP secret (base32) or otpauth:// URI
 }
 
 // Group is a simplified view of a KeePass group.
@@ -112,6 +115,7 @@ func convertGroup(g gokeepasslib.Group) Group {
 			Password: e.GetContent("Password"),
 			URL:      e.GetContent("URL"),
 			Notes:    e.GetContent("Notes"),
+			TOTP:     extractTOTP(e),
 		})
 	}
 	return group
@@ -157,6 +161,13 @@ func (d *DB) AddEntry(groupUUID gokeepasslib.UUID, e Entry) error {
 		mkValue("URL", e.URL),
 		mkValue("Notes", e.Notes),
 	}
+	if e.TOTP != "" {
+		if strings.HasPrefix(e.TOTP, "otpauth://") {
+			entry.Values = append(entry.Values, mkProtectedValue("otp", e.TOTP))
+		} else {
+			entry.Values = append(entry.Values, mkProtectedValue("TimeOtp-Secret-Base32", e.TOTP))
+		}
+	}
 	g.Entries = append(g.Entries, entry)
 	return nil
 }
@@ -175,6 +186,13 @@ func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 	setEntryValue(entry, "Password", e.Password, true)
 	setEntryValue(entry, "URL", e.URL, false)
 	setEntryValue(entry, "Notes", e.Notes, false)
+	if e.TOTP != "" {
+		if strings.HasPrefix(e.TOTP, "otpauth://") {
+			setEntryValue(entry, "otp", e.TOTP, true)
+		} else {
+			setEntryValue(entry, "TimeOtp-Secret-Base32", e.TOTP, true)
+		}
+	}
 	entry.Times.LastModificationTime = &w.TimeWrapper{Time: time.Now()}
 	return nil
 }
@@ -282,6 +300,56 @@ func setEntryValue(entry *gokeepasslib.Entry, key, value string, protected bool)
 	} else {
 		entry.Values = append(entry.Values, mkValue(key, value))
 	}
+}
+
+// extractTOTP reads the TOTP value from an entry.
+// It supports two conventions:
+//   - KeePassXC: "otp" field containing an otpauth:// URI
+//   - KeePass2: "TimeOtp-Secret-Base32" field containing a raw base32 secret
+func extractTOTP(e gokeepasslib.Entry) string {
+	// KeePassXC style: otp field with otpauth:// URI
+	if otp := e.GetContent("otp"); otp != "" {
+		return otp
+	}
+	// KeePass2 style: TimeOtp-Secret-Base32
+	if secret := e.GetContent("TimeOtp-Secret-Base32"); secret != "" {
+		return secret
+	}
+	return ""
+}
+
+// TOTPSecret extracts the base32 secret from a TOTP value.
+// The value may be a raw base32 string or an otpauth:// URI.
+func TOTPSecret(totp string) string {
+	if totp == "" {
+		return ""
+	}
+	if strings.HasPrefix(totp, "otpauth://") {
+		u, err := url.Parse(totp)
+		if err != nil {
+			return ""
+		}
+		return u.Query().Get("secret")
+	}
+	return totp
+}
+
+// TOTPPeriod extracts the period (in seconds) from a TOTP value.
+// Returns 30 as default if not specified.
+func TOTPPeriod(totp string) uint {
+	if strings.HasPrefix(totp, "otpauth://") {
+		u, err := url.Parse(totp)
+		if err != nil {
+			return 30
+		}
+		if p := u.Query().Get("period"); p != "" {
+			var period uint
+			if _, err := fmt.Sscanf(p, "%d", &period); err == nil && period > 0 {
+				return period
+			}
+		}
+	}
+	return 30
 }
 
 func mkValue(key, value string) gokeepasslib.ValueData {
