@@ -1,0 +1,84 @@
+package ui
+
+import "github.com/charmbracelet/lipgloss"
+
+var (
+	// Colors
+	primaryColor   = lipgloss.Color("#7D56F4")
+	secondaryColor = lipgloss.Color("#AD58B4")
+	mutedColor     = lipgloss.Color("#626262")
+	successColor   = lipgloss.Color("#04B575")
+	errorColor     = lipgloss.Color("#FF4444")
+	warnColor      = lipgloss.Color("#FFAA00")
+
+	// Title bar
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FAFAFA")).
+			Background(primaryColor).
+			Padding(0, 1)
+
+	// Breadcrumb / path
+	breadcrumbStyle = lipgloss.NewStyle().
+			Foreground(mutedColor).
+			Padding(0, 1)
+
+	// List items
+	itemStyle = lipgloss.NewStyle().
+			PaddingLeft(2)
+
+	selectedItemStyle = lipgloss.NewStyle().
+				PaddingLeft(2).
+				Foreground(primaryColor).
+				Bold(true)
+
+	// Group icon styling
+	groupStyle = lipgloss.NewStyle().
+			Foreground(warnColor)
+
+	entryStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FAFAFA"))
+
+	// Detail view
+	labelStyle = lipgloss.NewStyle().
+			Foreground(secondaryColor).
+			Bold(true).
+			Width(12)
+
+	valueStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FAFAFA"))
+
+	hiddenStyle = lipgloss.NewStyle().
+			Foreground(mutedColor)
+
+	// Status bar
+	statusStyle = lipgloss.NewStyle().
+			Foreground(mutedColor).
+			Padding(0, 1)
+
+	successStyle = lipgloss.NewStyle().
+			Foreground(successColor).
+			Padding(0, 1)
+
+	errorMsgStyle = lipgloss.NewStyle().
+			Foreground(errorColor).
+			Padding(0, 1)
+
+	// Help
+	helpStyle = lipgloss.NewStyle().
+			Foreground(mutedColor)
+
+	// Borders
+	boxStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("62")).
+			Padding(1, 2)
+
+	// Input field focused
+	focusedStyle = lipgloss.NewStyle().
+			Foreground(primaryColor)
+
+	// Input field blurred
+	blurredStyle = lipgloss.NewStyle().
+			Foreground(mutedColor)
+)
