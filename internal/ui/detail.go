@@ -123,6 +123,13 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return CopyToClipboardMsg{Field: "TOTP code", Value: m.totpCode}
 				}
 			}
+
+		case "o":
+			if m.entry.URL != "" {
+				return m, func() tea.Msg {
+					return OpenURLMsg{URL: m.entry.URL}
+				}
+			}
 		}
 	}
 
@@ -174,6 +181,16 @@ func (m DetailModel) View() string {
 		}
 	}
 
+	for _, cf := range m.entry.CustomFields {
+		val := cf.Value
+		if cf.Protected && !m.showPassword {
+			val = strings.Repeat("*", len(cf.Value))
+		}
+		b.WriteString(fmt.Sprintf("  %s %s\n",
+			labelStyle.Render(cf.Key+":"),
+			valueStyle.Render(val)))
+	}
+
 	if m.copied != "" {
 		b.WriteString("\n")
 		b.WriteString(successStyle.Render(fmt.Sprintf("  Copied %s to clipboard!", m.copied)))
@@ -181,7 +198,7 @@ func (m DetailModel) View() string {
 	}
 
 	b.WriteString("\n")
-	help := "  p: toggle password  e: edit  1: copy user  2: copy pass  3: copy url"
+	help := "  p: toggle password  e: edit  o: open url  1: copy user  2: copy pass  3: copy url"
 	if m.totpCode != "" {
 		help += "  4: copy totp"
 	}

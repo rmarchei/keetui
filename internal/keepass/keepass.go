@@ -19,15 +19,23 @@ type DB struct {
 	unlocked bool
 }
 
+// CustomField represents an extra key-value pair stored on an entry.
+type CustomField struct {
+	Key       string
+	Value     string
+	Protected bool
+}
+
 // Entry is a simplified view of a KeePass entry.
 type Entry struct {
-	UUID     gokeepasslib.UUID
-	Title    string
-	UserName string
-	Password string
-	URL      string
-	Notes    string
-	TOTP     string // TOTP secret (base32) or otpauth:// URI
+	UUID         gokeepasslib.UUID
+	Title        string
+	UserName     string
+	Password     string
+	URL          string
+	Notes        string
+	TOTP         string // TOTP secret (base32) or otpauth:// URI
+	CustomFields []CustomField
 }
 
 // Group is a simplified view of a KeePass group.
@@ -140,7 +148,7 @@ func convertGroup(g gokeepasslib.Group) Group {
 		group.Groups = append(group.Groups, convertGroup(sg))
 	}
 	for _, e := range g.Entries {
-		group.Entries = append(group.Entries, Entry{
+		entry := Entry{
 			UUID:     e.UUID,
 			Title:    e.GetContent("Title"),
 			UserName: e.GetContent("UserName"),
@@ -148,7 +156,9 @@ func convertGroup(g gokeepasslib.Group) Group {
 			URL:      e.GetContent("URL"),
 			Notes:    e.GetContent("Notes"),
 			TOTP:     extractTOTP(e),
-		})
+		}
+		entry.CustomFields = extractCustomFields(e)
+		group.Entries = append(group.Entries, entry)
 	}
 	return group
 }
@@ -200,6 +210,13 @@ func (d *DB) AddEntry(groupUUID gokeepasslib.UUID, e Entry) error {
 			entry.Values = append(entry.Values, mkProtectedValue("TimeOtp-Secret-Base32", e.TOTP))
 		}
 	}
+	for _, cf := range e.CustomFields {
+		if cf.Protected {
+			entry.Values = append(entry.Values, mkProtectedValue(cf.Key, cf.Value))
+		} else {
+			entry.Values = append(entry.Values, mkValue(cf.Key, cf.Value))
+		}
+	}
 	g.Entries = append(g.Entries, entry)
 	return nil
 }
@@ -223,6 +240,21 @@ func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 			setEntryValue(entry, "otp", e.TOTP, true)
 		} else {
 			setEntryValue(entry, "TimeOtp-Secret-Base32", e.TOTP, true)
+		}
+	}
+	// Sync custom fields: remove old custom fields, add new ones
+	var cleaned []gokeepasslib.ValueData
+	for _, v := range entry.Values {
+		if standardFields[v.Key] {
+			cleaned = append(cleaned, v)
+		}
+	}
+	entry.Values = cleaned
+	for _, cf := range e.CustomFields {
+		if cf.Protected {
+			entry.Values = append(entry.Values, mkProtectedValue(cf.Key, cf.Value))
+		} else {
+			entry.Values = append(entry.Values, mkValue(cf.Key, cf.Value))
 		}
 	}
 	entry.Times.LastModificationTime = &w.TimeWrapper{Time: time.Now()}
@@ -252,6 +284,78 @@ func (d *DB) AddGroup(parentUUID gokeepasslib.UUID, name string) error {
 	newGroup := gokeepasslib.NewGroup()
 	newGroup.Name = name
 	parent.Groups = append(parent.Groups, newGroup)
+	return nil
+}
+
+// MoveEntry moves an entry from its current group to the group identified by targetGroupUUID.
+func (d *DB) MoveEntry(entryUUID, targetGroupUUID gokeepasslib.UUID) error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	root := &d.Database.Content.Root.Groups[0]
+
+	// Find and remove the entry from its current group
+	entry := extractEntry(root, entryUUID)
+	if entry == nil {
+		return fmt.Errorf("entry not found")
+	}
+
+	// Find the target group and add the entry
+	target := findGroup(root, targetGroupUUID)
+	if target == nil {
+		return fmt.Errorf("target group not found")
+	}
+	target.Entries = append(target.Entries, *entry)
+	return nil
+}
+
+// DuplicateEntry creates a copy of an entry in the same group.
+func (d *DB) DuplicateEntry(entryUUID gokeepasslib.UUID) error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	root := &d.Database.Content.Root.Groups[0]
+
+	// Find the entry and its parent group
+	parentGroup, entryIdx := findEntryParent(root, entryUUID)
+	if parentGroup == nil {
+		return fmt.Errorf("entry not found")
+	}
+
+	original := parentGroup.Entries[entryIdx]
+
+	// Create a new entry with a new UUID but same values
+	dup := gokeepasslib.NewEntry()
+	for _, v := range original.Values {
+		if v.Key == "Title" {
+			dup.Values = append(dup.Values, gokeepasslib.ValueData{
+				Key:   v.Key,
+				Value: gokeepasslib.V{Content: v.Value.Content + " (copy)", Protected: v.Value.Protected},
+			})
+		} else {
+			dup.Values = append(dup.Values, gokeepasslib.ValueData{
+				Key:   v.Key,
+				Value: gokeepasslib.V{Content: v.Value.Content, Protected: v.Value.Protected},
+			})
+		}
+	}
+	dup.Times.CreationTime = &w.TimeWrapper{Time: time.Now()}
+	dup.Times.LastModificationTime = &w.TimeWrapper{Time: time.Now()}
+
+	parentGroup.Entries = append(parentGroup.Entries, dup)
+	return nil
+}
+
+// RenameGroup changes the name of a group identified by groupUUID.
+func (d *DB) RenameGroup(groupUUID gokeepasslib.UUID, newName string) error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	g := findGroup(&d.Database.Content.Root.Groups[0], groupUUID)
+	if g == nil {
+		return fmt.Errorf("group not found")
+	}
+	g.Name = newName
 	return nil
 }
 
@@ -305,6 +409,38 @@ func removeEntry(g *gokeepasslib.Group, uuid gokeepasslib.UUID) bool {
 		}
 	}
 	return false
+}
+
+// extractEntry removes and returns an entry from the tree, or nil if not found.
+func extractEntry(g *gokeepasslib.Group, uuid gokeepasslib.UUID) *gokeepasslib.Entry {
+	for i := range g.Entries {
+		if g.Entries[i].UUID.Compare(uuid) {
+			entry := g.Entries[i]
+			g.Entries = append(g.Entries[:i], g.Entries[i+1:]...)
+			return &entry
+		}
+	}
+	for i := range g.Groups {
+		if found := extractEntry(&g.Groups[i], uuid); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// findEntryParent returns the parent group and index of the entry.
+func findEntryParent(g *gokeepasslib.Group, uuid gokeepasslib.UUID) (*gokeepasslib.Group, int) {
+	for i := range g.Entries {
+		if g.Entries[i].UUID.Compare(uuid) {
+			return g, i
+		}
+	}
+	for i := range g.Groups {
+		if parent, idx := findEntryParent(&g.Groups[i], uuid); parent != nil {
+			return parent, idx
+		}
+	}
+	return nil, -1
 }
 
 func removeGroup(g *gokeepasslib.Group, uuid gokeepasslib.UUID) bool {
@@ -382,6 +518,32 @@ func TOTPPeriod(totp string) uint {
 		}
 	}
 	return 30
+}
+
+// standardFields are the built-in KeePass fields that are handled separately.
+var standardFields = map[string]bool{
+	"Title":                true,
+	"UserName":             true,
+	"Password":             true,
+	"URL":                  true,
+	"Notes":                true,
+	"otp":                  true,
+	"TimeOtp-Secret-Base32": true,
+}
+
+func extractCustomFields(e gokeepasslib.Entry) []CustomField {
+	var fields []CustomField
+	for _, v := range e.Values {
+		if standardFields[v.Key] {
+			continue
+		}
+		fields = append(fields, CustomField{
+			Key:       v.Key,
+			Value:     v.Value.Content,
+			Protected: v.Value.Protected.Bool,
+		})
+	}
+	return fields
 }
 
 func mkValue(key, value string) gokeepasslib.ValueData {
