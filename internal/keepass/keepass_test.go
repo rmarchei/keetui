@@ -488,3 +488,59 @@ func TestAddEntryWithOTPAuthURI(t *testing.T) {
 		t.Errorf("extracted secret = %q, want %q", secret, "JBSWY3DPEHPK3PXP")
 	}
 }
+
+func TestCreateDatabase(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "new.kdbx")
+	password := "newpass"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	root := db.RootGroup()
+	if root.Name != "Root" {
+		t.Errorf("root group name = %q, want %q", root.Name, "Root")
+	}
+
+	// Verify we can reopen the created database
+	db2, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open created db: %v", err)
+	}
+
+	root2 := db2.RootGroup()
+	if root2.Name != "Root" {
+		t.Errorf("reopened root group name = %q, want %q", root2.Name, "Root")
+	}
+
+	// Add an entry and save to verify it's functional
+	err = db2.AddEntry(root2.UUID, Entry{
+		Title:    "First Entry",
+		UserName: "user1",
+		Password: "pass1",
+	})
+	if err != nil {
+		t.Fatalf("AddEntry to created db: %v", err)
+	}
+
+	savePath := filepath.Join(dir, "new2.kdbx")
+	err = db2.SaveAs(savePath)
+	if err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db3, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	entries := db3.RootGroup().Entries
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(entries))
+	}
+	if entries[0].Title != "First Entry" {
+		t.Errorf("title = %q, want %q", entries[0].Title, "First Entry")
+	}
+}
