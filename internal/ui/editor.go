@@ -17,6 +17,7 @@ const (
 	fieldPassword
 	fieldURL
 	fieldNotes
+	fieldTOTP
 	fieldCount
 )
 
@@ -26,6 +27,7 @@ var fieldLabels = [fieldCount]string{
 	"Password",
 	"URL",
 	"Notes",
+	"TOTP Secret",
 }
 
 // EditorModel handles creating or editing an entry.
@@ -63,6 +65,9 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID) EditorMod
 
 	inputs[fieldPassword].EchoMode = textinput.EchoPassword
 	inputs[fieldPassword].EchoCharacter = '*'
+	inputs[fieldTOTP].EchoMode = textinput.EchoPassword
+	inputs[fieldTOTP].EchoCharacter = '*'
+	inputs[fieldTOTP].Placeholder = "base32 secret or otpauth:// URI"
 
 	m := EditorModel{
 		inputs:    inputs,
@@ -77,6 +82,7 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID) EditorMod
 		inputs[fieldPassword].SetValue(entry.Password)
 		inputs[fieldURL].SetValue(entry.URL)
 		inputs[fieldNotes].SetValue(entry.Notes)
+		inputs[fieldTOTP].SetValue(entry.TOTP)
 		m.inputs = inputs
 	}
 
@@ -150,6 +156,7 @@ func (m EditorModel) save() tea.Cmd {
 				Password: m.inputs[fieldPassword].Value(),
 				URL:      m.inputs[fieldURL].Value(),
 				Notes:    m.inputs[fieldNotes].Value(),
+				TOTP:     m.inputs[fieldTOTP].Value(),
 			},
 		}
 	}
