@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -40,6 +42,7 @@ type EditorModel struct {
 	width     int
 	height    int
 	err       error
+	generated bool // true after password was auto-generated
 }
 
 // SaveEntryMsg signals that the entry should be saved.
@@ -121,6 +124,12 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+s":
 			return m, m.save()
+
+		case "ctrl+g":
+			pw := generatePassword(20)
+			m.inputs[fieldPassword].SetValue(pw)
+			m.generated = true
+			return m, nil
 		}
 	}
 
@@ -178,6 +187,12 @@ func (m EditorModel) View() string {
 		b.WriteString("\n")
 	}
 
+	if m.generated {
+		b.WriteString("\n")
+		b.WriteString(successStyle.Render("  Password generated!"))
+		b.WriteString("\n")
+	}
+
 	if m.err != nil {
 		b.WriteString("\n")
 		b.WriteString(errorMsgStyle.Render(fmt.Sprintf("  Error: %s", m.err)))
@@ -185,8 +200,24 @@ func (m EditorModel) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate fields  ctrl+s: save  esc: cancel"))
+	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+g: generate password  ctrl+s: save  esc: cancel"))
 	b.WriteString("\n")
 
 	return b.String()
+}
+
+const passwordChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+"
+
+func generatePassword(length int) string {
+	result := make([]byte, length)
+	charLen := big.NewInt(int64(len(passwordChars)))
+	for i := range result {
+		n, err := rand.Int(rand.Reader, charLen)
+		if err != nil {
+			result[i] = 'x'
+			continue
+		}
+		result[i] = passwordChars[n.Int64()]
+	}
+	return string(result)
 }

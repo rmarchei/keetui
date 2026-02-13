@@ -4,11 +4,17 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/keepass"
+)
+
+const (
+	clipboardClearDelay = 15 * time.Second
+	autoLockTimeout     = 5 * time.Minute
 )
 
 type viewState int
@@ -22,26 +28,40 @@ const (
 	viewConfirm
 )
 
+// clipboardClearMsg signals that the clipboard should be cleared.
+type clipboardClearMsg struct{}
+
+// autoLockMsg signals that the database should be locked due to inactivity.
+type autoLockMsg struct {
+	at time.Time
+}
+
 // AppModel is the top-level model coordinating all views.
 type AppModel struct {
-	state       viewState
-	db          *keepass.DB
-	unlock      UnlockModel
-	browser     BrowserModel
-	detail      DetailModel
-	editor      EditorModel
-	groupInput  GroupInputModel
-	confirm     ConfirmModel
-	width       int
-	height      int
-	pendingDel  interface{} // stores the UUID for pending delete
+	state        viewState
+	db           *keepass.DB
+	unlock       UnlockModel
+	browser      BrowserModel
+	detail       DetailModel
+	editor       EditorModel
+	groupInput   GroupInputModel
+	confirm      ConfirmModel
+	width        int
+	height       int
+	pendingDel   interface{} // stores the UUID for pending delete
+	lastActivity time.Time   // tracks last user interaction for auto-lock
+	filePath     string      // remember file path for re-lock
+	keyFilePath  string      // remember key file path for re-lock
 }
 
 // NewApp creates the application starting at the unlock screen.
 func NewApp(filePath, keyFilePath string) AppModel {
 	return AppModel{
-		state:  viewUnlock,
-		unlock: NewUnlockModel(filePath, keyFilePath),
+		state:        viewUnlock,
+		unlock:       NewUnlockModel(filePath, keyFilePath),
+		lastActivity: time.Now(),
+		filePath:     filePath,
+		keyFilePath:  keyFilePath,
 	}
 }
 
@@ -49,11 +69,28 @@ func (m AppModel) Init() tea.Cmd {
 	return m.unlock.Init()
 }
 
+func scheduleAutoLock(lastActivity time.Time) tea.Cmd {
+	return tea.Tick(autoLockTimeout, func(t time.Time) tea.Msg {
+		return autoLockMsg{at: lastActivity}
+	})
+}
+
+func scheduleClearClipboard() tea.Cmd {
+	return tea.Tick(clipboardClearDelay, func(t time.Time) tea.Msg {
+		return clipboardClearMsg{}
+	})
+}
+
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle window size globally
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = wsm.Width
 		m.height = wsm.Height
+	}
+
+	// Track user activity for auto-lock (any key press)
+	if _, ok := msg.(tea.KeyMsg); ok && m.state != viewUnlock {
+		m.lastActivity = time.Now()
 	}
 
 	// Handle cross-view messages first
@@ -139,6 +176,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CopyToClipboardMsg:
 		copyToClipboard(msg.Value)
 		m.detail.copied = msg.Field
+		return m, scheduleClearClipboard()
+
+	case clipboardClearMsg:
+		clearClipboard()
+		m.detail.copied = ""
+		return m, nil
+
+	case autoLockMsg:
+		// Only lock if no activity since the timer was set
+		if m.state != viewUnlock && msg.at == m.lastActivity {
+			m.db = nil
+			m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
+			m.unlock.err = fmt.Errorf("locked due to inactivity")
+			m.state = viewUnlock
+			return m, m.unlock.Init()
+		}
 		return m, nil
 	}
 
@@ -207,7 +260,8 @@ func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cm
 	m.db = db
 	m.browser = NewBrowserModel(db)
 	m.state = viewBrowser
-	return m, nil
+	m.lastActivity = time.Now()
+	return m, scheduleAutoLock(m.lastActivity)
 }
 
 func (m AppModel) handleSaveEntry(msg SaveEntryMsg) (tea.Model, tea.Cmd) {
@@ -293,4 +347,8 @@ func copyToClipboard(text string) {
 	pipe.Write([]byte(text))
 	pipe.Close()
 	cmd.Wait()
+}
+
+func clearClipboard() {
+	copyToClipboard("")
 }

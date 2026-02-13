@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/rmarchei/keetui/internal/keepass"
 	"github.com/rmarchei/keetui/internal/ui"
 )
 
@@ -15,6 +16,7 @@ var version = "dev"
 func main() {
 	keyFile := flag.String("keyfile", "", "path to key file")
 	showVersion := flag.Bool("version", false, "show version")
+	newDB := flag.Bool("new", false, "create a new database")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "keetui - a TUI for KeePass databases\n\n")
 		fmt.Fprintf(os.Stderr, "Usage: keetui [options] <database.kdbx>\n\n")
@@ -34,9 +36,38 @@ func main() {
 	}
 
 	dbPath := flag.Arg(0)
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "Error: file %q does not exist\n", dbPath)
-		os.Exit(1)
+
+	if *newDB {
+		if _, err := os.Stat(dbPath); err == nil {
+			fmt.Fprintf(os.Stderr, "Error: file %q already exists\n", dbPath)
+			os.Exit(1)
+		}
+		// Prompt for password
+		fmt.Printf("Creating new database: %s\n", dbPath)
+		fmt.Print("Enter master password: ")
+		var password string
+		fmt.Scanln(&password)
+		if password == "" {
+			fmt.Fprintln(os.Stderr, "Error: password cannot be empty")
+			os.Exit(1)
+		}
+		fmt.Print("Confirm master password: ")
+		var confirm string
+		fmt.Scanln(&confirm)
+		if password != confirm {
+			fmt.Fprintln(os.Stderr, "Error: passwords do not match")
+			os.Exit(1)
+		}
+		if _, err := keepass.Create(dbPath, password); err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating database: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Database created: %s\n", dbPath)
+	} else {
+		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error: file %q does not exist\n", dbPath)
+			os.Exit(1)
+		}
 	}
 
 	app := ui.NewApp(dbPath, *keyFile)
