@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
 	"github.com/rmarchei/keetui/internal/ui"
 )
@@ -70,7 +71,8 @@ func main() {
 		}
 	}
 
-	app := ui.NewApp(dbPath, *keyFile)
+	cfg := config.Load()
+	app := ui.NewApp(dbPath, *keyFile, cfg)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

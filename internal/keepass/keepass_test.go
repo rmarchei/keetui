@@ -544,3 +544,233 @@ func TestCreateDatabase(t *testing.T) {
 		t.Errorf("title = %q, want %q", entries[0].Title, "First Entry")
 	}
 }
+
+func TestMoveEntry(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+	entry := emailGroup.Entries[0]
+
+	// Add a second group to move into
+	err = db.AddGroup(root.UUID, "Target Group")
+	if err != nil {
+		t.Fatalf("AddGroup: %v", err)
+	}
+
+	// Find the new group UUID
+	root = db.RootGroup()
+	var targetUUID gokeepasslib.UUID
+	for _, g := range root.Groups {
+		if g.Name == "Target Group" {
+			targetUUID = g.UUID
+		}
+	}
+
+	err = db.MoveEntry(entry.UUID, targetUUID)
+	if err != nil {
+		t.Fatalf("MoveEntry: %v", err)
+	}
+
+	// Save and reopen
+	savePath := filepath.Join(dir, "test2.kdbx")
+	err = db.SaveAs(savePath)
+	if err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	root2 := db2.RootGroup()
+
+	// Email group should be empty
+	var emailEntries int
+	var targetEntries int
+	for _, g := range root2.Groups {
+		if g.Name == "Email" {
+			emailEntries = len(g.Entries)
+		}
+		if g.Name == "Target Group" {
+			targetEntries = len(g.Entries)
+		}
+	}
+	if emailEntries != 0 {
+		t.Errorf("email group entries = %d, want 0", emailEntries)
+	}
+	if targetEntries != 1 {
+		t.Errorf("target group entries = %d, want 1", targetEntries)
+	}
+}
+
+func TestDuplicateEntry(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	err = db.DuplicateEntry(entry.UUID)
+	if err != nil {
+		t.Fatalf("DuplicateEntry: %v", err)
+	}
+
+	// Save and reopen
+	savePath := filepath.Join(dir, "test2.kdbx")
+	err = db.SaveAs(savePath)
+	if err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	entries := db2.RootGroup().Groups[0].Entries
+	if len(entries) != 2 {
+		t.Fatalf("entries after dup = %d, want 2", len(entries))
+	}
+
+	// The duplicate should have " (copy)" suffix
+	found := false
+	for _, e := range entries {
+		if e.Title == "Test Entry (copy)" {
+			found = true
+			if e.UserName != "testuser" {
+				t.Errorf("dup username = %q, want %q", e.UserName, "testuser")
+			}
+		}
+	}
+	if !found {
+		t.Error("duplicate entry not found")
+	}
+}
+
+func TestRenameGroup(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+
+	err = db.RenameGroup(emailGroup.UUID, "Work Email")
+	if err != nil {
+		t.Fatalf("RenameGroup: %v", err)
+	}
+
+	savePath := filepath.Join(dir, "test2.kdbx")
+	err = db.SaveAs(savePath)
+	if err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	groups := db2.RootGroup().Groups
+	if len(groups) != 1 {
+		t.Fatalf("groups = %d, want 1", len(groups))
+	}
+	if groups[0].Name != "Work Email" {
+		t.Errorf("name = %q, want %q", groups[0].Name, "Work Email")
+	}
+}
+
+func TestCustomFields(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+
+	err = db.AddEntry(emailGroup.UUID, Entry{
+		Title:    "Custom Entry",
+		UserName: "user",
+		Password: "pass",
+		CustomFields: []CustomField{
+			{Key: "RecoveryKey", Value: "abc123", Protected: true},
+			{Key: "SecurityQ", Value: "pet name", Protected: false},
+		},
+	})
+	if err != nil {
+		t.Fatalf("AddEntry with custom fields: %v", err)
+	}
+
+	savePath := filepath.Join(dir, "test2.kdbx")
+	err = db.SaveAs(savePath)
+	if err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	entries := db2.RootGroup().Groups[0].Entries
+	var found *Entry
+	for i, e := range entries {
+		if e.Title == "Custom Entry" {
+			found = &entries[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("custom entry not found")
+	}
+	if len(found.CustomFields) != 2 {
+		t.Fatalf("custom fields = %d, want 2", len(found.CustomFields))
+	}
+
+	for _, cf := range found.CustomFields {
+		switch cf.Key {
+		case "RecoveryKey":
+			if cf.Value != "abc123" {
+				t.Errorf("RecoveryKey value = %q, want %q", cf.Value, "abc123")
+			}
+		case "SecurityQ":
+			if cf.Value != "pet name" {
+				t.Errorf("SecurityQ value = %q, want %q", cf.Value, "pet name")
+			}
+		default:
+			t.Errorf("unexpected custom field: %q", cf.Key)
+		}
+	}
+}
