@@ -328,9 +328,9 @@ func TestAddAndDeleteGroup(t *testing.T) {
 
 func TestTOTPSecret(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		want   string
+		name  string
+		input string
+		want  string
 	}{
 		{"empty", "", ""},
 		{"raw base32", "JBSWY3DPEHPK3PXP", "JBSWY3DPEHPK3PXP"},
@@ -819,5 +819,197 @@ func TestCustomFields(t *testing.T) {
 		default:
 			t.Errorf("unexpected custom field: %q", cf.Key)
 		}
+	}
+}
+
+func TestChangePassword(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	newPassword := "newpassword123"
+	db.ChangePassword(newPassword)
+
+	savePath := filepath.Join(dir, "test2.kdbx")
+	err = db.SaveAs(savePath)
+	if err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	// Old password should fail
+	_, err = Open(savePath, password)
+	if err == nil {
+		t.Fatal("expected error with old password, got nil")
+	}
+
+	// New password should work
+	db2, err := Open(savePath, newPassword)
+	if err != nil {
+		t.Fatalf("Open with new password: %v", err)
+	}
+
+	root := db2.RootGroup()
+	if len(root.Groups) != 1 {
+		t.Errorf("groups = %d, want 1", len(root.Groups))
+	}
+}
+
+func TestMoveGroup(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+
+	// Add a second group to move the first into
+	err = db.AddGroup(root.UUID, "Target Group")
+	if err != nil {
+		t.Fatalf("AddGroup: %v", err)
+	}
+
+	root = db.RootGroup()
+	emailGroup := root.Groups[0]
+	var targetUUID gokeepasslib.UUID
+	for _, g := range root.Groups {
+		if g.Name == "Target Group" {
+			targetUUID = g.UUID
+		}
+	}
+
+	err = db.MoveGroup(emailGroup.UUID, targetUUID)
+	if err != nil {
+		t.Fatalf("MoveGroup: %v", err)
+	}
+
+	// Save and reopen
+	savePath := filepath.Join(dir, "test2.kdbx")
+	err = db.SaveAs(savePath)
+	if err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	root2 := db2.RootGroup()
+
+	// Root should only have "Target Group" now
+	if len(root2.Groups) != 1 {
+		t.Fatalf("root groups = %d, want 1", len(root2.Groups))
+	}
+	if root2.Groups[0].Name != "Target Group" {
+		t.Errorf("root group name = %q, want %q", root2.Groups[0].Name, "Target Group")
+	}
+
+	// Target Group should contain the Email group
+	if len(root2.Groups[0].Groups) != 1 {
+		t.Fatalf("target subgroups = %d, want 1", len(root2.Groups[0].Groups))
+	}
+	if root2.Groups[0].Groups[0].Name != "Email" {
+		t.Errorf("moved group name = %q, want %q", root2.Groups[0].Groups[0].Name, "Email")
+	}
+
+	// Entry should still be there
+	if len(root2.Groups[0].Groups[0].Entries) != 1 {
+		t.Errorf("moved group entries = %d, want 1", len(root2.Groups[0].Groups[0].Entries))
+	}
+}
+
+func TestMoveGroupIntoSelfFails(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+
+	err = db.MoveGroup(emailGroup.UUID, emailGroup.UUID)
+	if err == nil {
+		t.Fatal("expected error moving group into itself, got nil")
+	}
+}
+
+func TestMoveGroupIntoDescendantFails(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+
+	// Add a sub-group under Email
+	err = db.AddGroup(emailGroup.UUID, "Sub Group")
+	if err != nil {
+		t.Fatalf("AddGroup: %v", err)
+	}
+
+	root = db.RootGroup()
+	emailGroup = root.Groups[0]
+	subGroup := emailGroup.Groups[0]
+
+	// Try to move Email into Sub Group (its own descendant)
+	err = db.MoveGroup(emailGroup.UUID, subGroup.UUID)
+	if err == nil {
+		t.Fatal("expected error moving group into descendant, got nil")
+	}
+}
+
+func TestSaveAsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Save to same path (overwrite)
+	err = db.Save()
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Verify the file is still valid
+	db2, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open after save: %v", err)
+	}
+
+	root := db2.RootGroup()
+	if root.Name != "Root" {
+		t.Errorf("root name = %q, want %q", root.Name, "Root")
 	}
 }

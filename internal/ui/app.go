@@ -24,10 +24,13 @@ const (
 	viewEditor
 	viewGroupInput
 	viewConfirm
+	viewPassword
 )
 
 // clipboardClearMsg signals that the clipboard should be cleared.
-type clipboardClearMsg struct{}
+type clipboardClearMsg struct {
+	expected string // the value we expect to still be on the clipboard
+}
 
 // autoLockMsg signals that the database should be locked due to inactivity.
 type autoLockMsg struct {
@@ -46,7 +49,13 @@ type MoveEntryMsg struct {
 
 // PasteEntryMsg requests pasting the cut entry into the current group.
 type PasteEntryMsg struct {
-	EntryUUID     gokeepasslib.UUID
+	EntryUUID       gokeepasslib.UUID
+	TargetGroupUUID gokeepasslib.UUID
+}
+
+// PasteGroupMsg requests pasting the cut group into the current group.
+type PasteGroupMsg struct {
+	GroupUUID       gokeepasslib.UUID
 	TargetGroupUUID gokeepasslib.UUID
 }
 
@@ -61,6 +70,13 @@ type OpenURLMsg struct {
 	URL string
 }
 
+// RequestQuitMsg is sent by sub-views when the user presses q.
+// The AppModel checks for unsaved changes before actually quitting.
+type RequestQuitMsg struct{}
+
+// quitMsg is sent when the user confirms quitting with unsaved changes.
+type quitMsg struct{}
+
 // AppModel is the top-level model coordinating all views.
 type AppModel struct {
 	state        viewState
@@ -71,12 +87,15 @@ type AppModel struct {
 	editor       EditorModel
 	groupInput   GroupInputModel
 	confirm      ConfirmModel
+	password     PasswordModel
 	width        int
 	height       int
 	lastActivity time.Time // tracks last user interaction for auto-lock
-	filePath     string      // remember file path for re-lock
-	keyFilePath  string      // remember key file path for re-lock
+	filePath     string    // remember file path for re-lock
+	keyFilePath  string    // remember key file path for re-lock
 	cfg          config.Config
+	dirty        bool      // true when in-memory changes haven't been saved
+	returnState  viewState // view to return to after confirm dialog
 }
 
 // NewApp creates the application starting at the unlock screen.
@@ -102,9 +121,9 @@ func (m AppModel) scheduleAutoLock() tea.Cmd {
 	})
 }
 
-func (m AppModel) scheduleClearClipboard() tea.Cmd {
+func (m AppModel) scheduleClearClipboard(copiedValue string) tea.Cmd {
 	return tea.Tick(m.cfg.ClipboardClearDuration(), func(t time.Time) tea.Msg {
-		return clipboardClearMsg{}
+		return clipboardClearMsg{expected: copiedValue}
 	})
 }
 
@@ -122,6 +141,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Handle cross-view messages first
 	switch msg := msg.(type) {
+	case RequestQuitMsg:
+		if m.dirty {
+			m.returnState = m.state
+			m.confirm = NewConfirmModel("You have unsaved changes. Quit anyway?", func() tea.Msg {
+				return quitMsg{}
+			})
+			m.state = viewConfirm
+			return m, nil
+		}
+		return m, tea.Quit
+
+	case quitMsg:
+		return m, tea.Quit
+
 	case DatabaseOpenedMsg:
 		return m.handleDatabaseOpened(msg)
 
@@ -150,6 +183,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = viewBrowser
 			return m, statusCmd(fmt.Sprintf("Error renaming group: %s", err), true)
 		}
+		m.dirty = true
 		m.state = viewBrowser
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
@@ -181,6 +215,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = viewBrowser
 			return m, statusCmd(err.Error(), true)
 		}
+		m.dirty = true
 		m.state = viewBrowser
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
@@ -192,6 +227,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = viewBrowser
 			return m, statusCmd(err.Error(), true)
 		}
+		m.dirty = true
 		m.state = viewBrowser
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
@@ -202,6 +238,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err := m.db.DuplicateEntry(msg.EntryUUID); err != nil {
 			return m, statusCmd(fmt.Sprintf("Error duplicating: %s", err), true)
 		}
+		m.dirty = true
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
 			statusCmd("Entry duplicated (use 's' to save to file)", false),
@@ -211,11 +248,34 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err := m.db.MoveEntry(msg.EntryUUID, msg.TargetGroupUUID); err != nil {
 			return m, statusCmd(fmt.Sprintf("Error moving entry: %s", err), true)
 		}
+		m.dirty = true
 		m.browser.cutEntry = nil
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
 			statusCmd("Entry moved (use 's' to save to file)", false),
 		)
+
+	case PasteGroupMsg:
+		if err := m.db.MoveGroup(msg.GroupUUID, msg.TargetGroupUUID); err != nil {
+			return m, statusCmd(fmt.Sprintf("Error moving group: %s", err), true)
+		}
+		m.dirty = true
+		m.browser.cutGroup = nil
+		return m, tea.Batch(
+			func() tea.Msg { return RefreshMsg{} },
+			statusCmd("Group moved (use 's' to save to file)", false),
+		)
+
+	case ChangePasswordStartMsg:
+		m.password = NewPasswordModel()
+		m.state = viewPassword
+		return m, m.password.Init()
+
+	case ChangePasswordMsg:
+		m.db.ChangePassword(msg.NewPassword)
+		m.dirty = true
+		m.state = viewBrowser
+		return m, statusCmd("Master password changed (use 's' to save to file)", false)
 
 	case SaveEntryMsg:
 		return m.handleSaveEntry(msg)
@@ -231,7 +291,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg { return RefreshMsg{} }
 
 	case CancelEditMsg:
-		m.state = viewBrowser
+		if m.returnState != 0 {
+			m.state = m.returnState
+			m.returnState = 0
+		} else {
+			m.state = viewBrowser
+		}
 		return m, nil
 
 	case CopyToClipboardMsg:
@@ -240,10 +305,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, statusCmd(fmt.Sprintf("Clipboard error: %s", err), true)
 		}
 		m.detail.copied = msg.Field
-		return m, m.scheduleClearClipboard()
+		return m, m.scheduleClearClipboard(msg.Value)
 
 	case clipboardClearMsg:
-		clearClipboard()
+		current, err := readClipboard()
+		if err == nil && current == msg.expected {
+			clearClipboard()
+		}
 		m.detail.copied = ""
 		return m, nil
 
@@ -293,6 +361,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var updated tea.Model
 		updated, cmd = m.confirm.Update(msg)
 		m.confirm = updated.(ConfirmModel)
+	case viewPassword:
+		var updated tea.Model
+		updated, cmd = m.password.Update(msg)
+		m.password = updated.(PasswordModel)
 	}
 
 	return m, cmd
@@ -312,6 +384,8 @@ func (m AppModel) View() string {
 		return m.groupInput.View()
 	case viewConfirm:
 		return m.confirm.View()
+	case viewPassword:
+		return m.password.View()
 	}
 	return ""
 }
@@ -329,6 +403,8 @@ func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cm
 		return m, nil
 	}
 	m.db = db
+	m.unlock.input.SetValue("")
+	m.unlock.input.Reset()
 	m.browser = NewBrowserModel(db)
 	m.state = viewBrowser
 	m.lastActivity = time.Now()
@@ -347,6 +423,7 @@ func (m AppModel) handleSaveEntry(msg SaveEntryMsg) (tea.Model, tea.Cmd) {
 			return m, statusCmd(fmt.Sprintf("Error updating entry: %s", err), true)
 		}
 	}
+	m.dirty = true
 	m.state = viewBrowser
 	return m, tea.Batch(
 		func() tea.Msg { return RefreshMsg{} },
@@ -360,6 +437,7 @@ func (m AppModel) handleSaveGroup(msg SaveGroupMsg) (tea.Model, tea.Cmd) {
 			m.state = viewBrowser
 			return m, statusCmd(fmt.Sprintf("Error renaming group: %s", err), true)
 		}
+		m.dirty = true
 		m.state = viewBrowser
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
@@ -370,6 +448,7 @@ func (m AppModel) handleSaveGroup(msg SaveGroupMsg) (tea.Model, tea.Cmd) {
 		m.state = viewBrowser
 		return m, statusCmd(fmt.Sprintf("Error adding group: %s", err), true)
 	}
+	m.dirty = true
 	m.state = viewBrowser
 	return m, tea.Batch(
 		func() tea.Msg { return RefreshMsg{} },
@@ -381,6 +460,7 @@ func (m AppModel) handleSave() (tea.Model, tea.Cmd) {
 	if err := m.db.Save(); err != nil {
 		return m, statusCmd(fmt.Sprintf("Error saving: %s", err), true)
 	}
+	m.dirty = false
 	return m, statusCmd("Database saved!", false)
 }
 
@@ -404,6 +484,9 @@ type RenameGroupStartMsg struct {
 	GroupUUID   gokeepasslib.UUID
 	CurrentName string
 }
+
+// ChangePasswordStartMsg is sent to initiate master password change.
+type ChangePasswordStartMsg struct{}
 
 func copyToClipboard(text string) error {
 	var cmd *exec.Cmd
@@ -440,6 +523,31 @@ func copyToClipboard(text string) error {
 		return fmt.Errorf("clipboard: %w", err)
 	}
 	return nil
+}
+
+func readClipboard() (string, error) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbpaste")
+	case "linux":
+		if _, err := exec.LookPath("xclip"); err == nil {
+			cmd = exec.Command("xclip", "-selection", "clipboard", "-o")
+		} else if _, err := exec.LookPath("xsel"); err == nil {
+			cmd = exec.Command("xsel", "--clipboard", "--output")
+		} else if _, err := exec.LookPath("wl-paste"); err == nil {
+			cmd = exec.Command("wl-paste", "--no-newline")
+		} else {
+			return "", fmt.Errorf("no clipboard utility found")
+		}
+	default:
+		return "", fmt.Errorf("clipboard not supported on %s", runtime.GOOS)
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("clipboard read: %w", err)
+	}
+	return string(out), nil
 }
 
 func clearClipboard() {

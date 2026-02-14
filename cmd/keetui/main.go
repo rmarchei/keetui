@@ -91,6 +91,13 @@ func main() {
 		}
 	}
 
+	if *keyFile != "" {
+		if _, err := os.Stat(*keyFile); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error: key file %q does not exist\n", *keyFile)
+			os.Exit(1)
+		}
+	}
+
 	cfg := config.Load()
 	app := ui.NewApp(dbPath, *keyFile, cfg)
 	p := tea.NewProgram(app, tea.WithAltScreen())

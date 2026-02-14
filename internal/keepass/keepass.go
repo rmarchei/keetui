@@ -29,14 +29,16 @@ type CustomField struct {
 
 // Entry is a simplified view of a KeePass entry.
 type Entry struct {
-	UUID         gokeepasslib.UUID
-	Title        string
-	UserName     string
-	Password     string
-	URL          string
-	Notes        string
-	TOTP         string // TOTP secret (base32) or otpauth:// URI
-	CustomFields []CustomField
+	UUID             gokeepasslib.UUID
+	Title            string
+	UserName         string
+	Password         string
+	URL              string
+	Notes            string
+	TOTP             string // TOTP secret (base32) or otpauth:// URI
+	CustomFields     []CustomField
+	CreationTime     time.Time
+	ModificationTime time.Time
 }
 
 // Group is a simplified view of a KeePass group.
@@ -164,6 +166,12 @@ func convertGroup(g gokeepasslib.Group) Group {
 			Notes:    e.GetContent("Notes"),
 			TOTP:     extractTOTP(e),
 		}
+		if e.Times.CreationTime != nil {
+			entry.CreationTime = e.Times.CreationTime.Time
+		}
+		if e.Times.LastModificationTime != nil {
+			entry.ModificationTime = e.Times.LastModificationTime.Time
+		}
 		entry.CustomFields = extractCustomFields(e)
 		group.Entries = append(group.Entries, entry)
 	}
@@ -222,6 +230,11 @@ func (d *DB) SaveAs(path string) error {
 
 	success = true
 	return nil
+}
+
+// ChangePassword updates the master password of the database.
+func (d *DB) ChangePassword(newPassword string) {
+	d.Database.Credentials = gokeepasslib.NewPasswordCredentials(newPassword)
 }
 
 // AddEntry adds a new entry to the group identified by groupUUID.
@@ -349,6 +362,54 @@ func (d *DB) MoveEntry(entryUUID, targetGroupUUID gokeepasslib.UUID) error {
 	return nil
 }
 
+// MoveGroup moves a group from its current parent to the group identified by targetGroupUUID.
+// It refuses to move a group into itself or one of its descendants.
+func (d *DB) MoveGroup(groupUUID, targetGroupUUID gokeepasslib.UUID) error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	root := &d.Database.Content.Root.Groups[0]
+
+	// Cannot move a group into itself
+	if groupUUID.Compare(targetGroupUUID) {
+		return fmt.Errorf("cannot move a group into itself")
+	}
+
+	// Check the target exists
+	target := findGroup(root, targetGroupUUID)
+	if target == nil {
+		return fmt.Errorf("target group not found")
+	}
+
+	// Check the source exists
+	src := findGroup(root, groupUUID)
+	if src == nil {
+		return fmt.Errorf("group not found")
+	}
+
+	// Cannot move into a descendant of itself
+	if findGroup(src, targetGroupUUID) != nil {
+		return fmt.Errorf("cannot move a group into one of its descendants")
+	}
+
+	// Extract the group from its current parent
+	extracted := extractGroup(root, groupUUID)
+	if extracted == nil {
+		return fmt.Errorf("group not found")
+	}
+
+	// Re-find target after extraction (pointers may have shifted)
+	target = findGroup(root, targetGroupUUID)
+	if target == nil {
+		// Should not happen, but protect against it
+		root.Groups = append(root.Groups, *extracted)
+		return fmt.Errorf("target group lost after extraction")
+	}
+
+	target.Groups = append(target.Groups, *extracted)
+	return nil
+}
+
 // DuplicateEntry creates a copy of an entry in the same group.
 func (d *DB) DuplicateEntry(entryUUID gokeepasslib.UUID) error {
 	if len(d.Database.Content.Root.Groups) == 0 {
@@ -449,6 +510,24 @@ func removeEntry(g *gokeepasslib.Group, uuid gokeepasslib.UUID) bool {
 		}
 	}
 	return false
+}
+
+// extractGroup removes and returns a sub-group from the tree, or nil if not found.
+// It does not extract the root group itself.
+func extractGroup(g *gokeepasslib.Group, uuid gokeepasslib.UUID) *gokeepasslib.Group {
+	for i := range g.Groups {
+		if g.Groups[i].UUID.Compare(uuid) {
+			grp := g.Groups[i]
+			g.Groups = append(g.Groups[:i], g.Groups[i+1:]...)
+			return &grp
+		}
+	}
+	for i := range g.Groups {
+		if found := extractGroup(&g.Groups[i], uuid); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 // extractEntry removes and returns an entry from the tree, or nil if not found.
@@ -562,12 +641,12 @@ func TOTPPeriod(totp string) uint {
 
 // standardFields are the built-in KeePass fields that are handled separately.
 var standardFields = map[string]bool{
-	"Title":                true,
-	"UserName":             true,
-	"Password":             true,
-	"URL":                  true,
-	"Notes":                true,
-	"otp":                  true,
+	"Title":                 true,
+	"UserName":              true,
+	"Password":              true,
+	"URL":                   true,
+	"Notes":                 true,
+	"otp":                   true,
 	"TimeOtp-Secret-Base32": true,
 }
 
