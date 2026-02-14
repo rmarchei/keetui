@@ -25,22 +25,38 @@ func TestDetailPasswordToggle(t *testing.T) {
 	m := NewDetailModel(entry, config.Default())
 	m.SetSize(80, 24)
 
-	if m.showPassword {
+	if m.revealedFields["password"] {
 		t.Error("password should be hidden initially")
 	}
 
-	// Toggle password
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	// Select password field (index 1)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	m = updated.(DetailModel)
-	if !m.showPassword {
+	if m.selectedField != 1 {
+		t.Fatalf("selectedField = %d, want 1 (password)", m.selectedField)
+	}
+
+	// Toggle password on selected field
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = updated.(DetailModel)
+	if !m.revealedFields["password"] {
 		t.Error("password should be visible after toggle")
 	}
 
 	// Toggle back
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 	m = updated.(DetailModel)
-	if m.showPassword {
+	if m.revealedFields["password"] {
 		t.Error("password should be hidden after second toggle")
+	}
+
+	// Toggle on non-protected field should do nothing
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}) // back to username
+	m = updated.(DetailModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = updated.(DetailModel)
+	if m.revealedFields["username"] {
+		t.Error("username is not protected, toggle should have no effect")
 	}
 }
 
@@ -257,6 +273,57 @@ func TestDetailQRSelectedField(t *testing.T) {
 	}
 	if m.qrLabel != "URL" {
 		t.Errorf("qrLabel = %q, want %q", m.qrLabel, "URL")
+	}
+}
+
+func TestDetailMouseSelectField(t *testing.T) {
+	entry := testEntry()
+	m := NewDetailModel(entry, config.Default())
+	m.SetSize(80, 24)
+
+	// Starts on field 0 (username)
+	if m.selectedField != 0 {
+		t.Fatalf("initial selectedField = %d, want 0", m.selectedField)
+	}
+
+	// headerView() = "\n" + title + "\n" has 2 newlines.
+	// Viewport content starts at Y = strings.Count(header, "\n") = 2.
+	vpStart := 2
+
+	// Click on Username line (viewport line 0)
+	updated, _ := m.Update(tea.MouseMsg{
+		X:      10,
+		Y:      vpStart,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	m = updated.(DetailModel)
+	if m.selectedField != 0 {
+		t.Errorf("selectedField after click on username line = %d, want 0", m.selectedField)
+	}
+
+	// Click on Password line (viewport line 1)
+	updated, _ = m.Update(tea.MouseMsg{
+		X:      10,
+		Y:      vpStart + 1,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	m = updated.(DetailModel)
+	if m.selectedField != 1 {
+		t.Errorf("selectedField after click on password line = %d, want 1", m.selectedField)
+	}
+
+	// Click on URL line (viewport line 2)
+	updated, _ = m.Update(tea.MouseMsg{
+		X:      10,
+		Y:      vpStart + 2,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	m = updated.(DetailModel)
+	if m.selectedField != 2 {
+		t.Errorf("selectedField after click on URL line = %d, want 2", m.selectedField)
 	}
 }
 
