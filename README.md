@@ -11,6 +11,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Entries sorted alphabetically (groups first, then entries)
 - View entry details (username, password, URL, notes, custom fields)
 - TOTP/2FA support -- live code display with countdown, compatible with KeePassXC and KeePass2
+- Display password as a scannable QR code (useful over SSH from a phone)
 - Copy username, password, URL, or TOTP code to clipboard (auto-cleared after 15s)
 - Open entry URL in system browser
 - Password generator for creating strong random passwords
@@ -95,6 +96,7 @@ keetui -new database.kdbx              # create a new database
 | `2` | Copy password to clipboard |
 | `3` | Copy URL to clipboard |
 | `4` | Copy TOTP code to clipboard |
+| `Q` | Display password as QR code (for scanning from phone) |
 | `Esc` | Back to browser |
 
 ### Editor
