@@ -14,6 +14,13 @@ import (
 // totpTickMsg is sent every second to refresh the TOTP code.
 type totpTickMsg time.Time
 
+// hibpResultMsg carries the result of a HIBP breach check.
+type hibpResultMsg struct {
+	Breached bool
+	Count    int
+	Err      error
+}
+
 // DetailModel shows a read-only view of a single entry.
 type DetailModel struct {
 	entry        keepass.Entry
@@ -23,6 +30,10 @@ type DetailModel struct {
 	width        int
 	height       int
 	copied       string
+	strength     keepass.StrengthResult
+	hibpChecking bool
+	hibpResult   *hibpResultMsg
+	attachments  []keepass.Attachment
 }
 
 // BackToBrowserMsg signals returning to the browser.
@@ -36,10 +47,16 @@ type CopyToClipboardMsg struct {
 
 func NewDetailModel(entry keepass.Entry) DetailModel {
 	m := DetailModel{
-		entry: entry,
+		entry:    entry,
+		strength: keepass.EvaluatePasswordStrength(entry.Password),
 	}
 	m.refreshTOTP()
 	return m
+}
+
+// SetAttachments sets the attachment list for display.
+func (m *DetailModel) SetAttachments(attachments []keepass.Attachment) {
+	m.attachments = attachments
 }
 
 func (m DetailModel) Init() tea.Cmd {
@@ -126,6 +143,22 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "5":
+			// HIBP breach check
+			if !m.hibpChecking && m.entry.Password != "" {
+				m.hibpChecking = true
+				m.hibpResult = nil
+				pw := m.entry.Password
+				return m, func() tea.Msg {
+					result := keepass.CheckHIBP(pw)
+					return hibpResultMsg{
+						Breached: result.Breached,
+						Count:    result.Count,
+						Err:      result.Err,
+					}
+				}
+			}
+
 		case "o":
 			if m.entry.URL != "" {
 				return m, func() tea.Msg {
@@ -157,9 +190,11 @@ func (m DetailModel) View() string {
 	if m.showPassword {
 		pw = m.entry.Password
 	}
-	b.WriteString(fmt.Sprintf("  %s %s\n",
+	strengthStr := renderStrength(m.strength)
+	b.WriteString(fmt.Sprintf("  %s %s  %s\n",
 		labelStyle.Render("Password:"),
-		hiddenStyle.Render(pw)))
+		hiddenStyle.Render(pw),
+		strengthStr))
 
 	b.WriteString(fmt.Sprintf("  %s %s\n",
 		labelStyle.Render("URL:"),
@@ -204,6 +239,33 @@ func (m DetailModel) View() string {
 			valueStyle.Render(val)))
 	}
 
+	// Attachments
+	if len(m.attachments) > 0 {
+		b.WriteString(fmt.Sprintf("\n  %s\n", helpStyle.Render("Attachments:")))
+		for _, a := range m.attachments {
+			b.WriteString(fmt.Sprintf("    %s (%s)\n",
+				valueStyle.Render(a.Name),
+				hiddenStyle.Render(formatAttachmentSize(a.Size))))
+		}
+	}
+
+	// HIBP result
+	if m.hibpChecking {
+		b.WriteString("\n")
+		b.WriteString(helpStyle.Render("  Checking HIBP..."))
+		b.WriteString("\n")
+	} else if m.hibpResult != nil {
+		b.WriteString("\n")
+		if m.hibpResult.Err != nil {
+			b.WriteString(errorMsgStyle.Render(fmt.Sprintf("  HIBP check failed: %s", m.hibpResult.Err)))
+		} else if m.hibpResult.Breached {
+			b.WriteString(errorMsgStyle.Render(fmt.Sprintf("  WARNING: Password found in %d data breaches!", m.hibpResult.Count)))
+		} else {
+			b.WriteString(successStyle.Render("  Password not found in any known breaches"))
+		}
+		b.WriteString("\n")
+	}
+
 	if m.copied != "" {
 		b.WriteString("\n")
 		b.WriteString(successStyle.Render(fmt.Sprintf("  Copied %s to clipboard!", m.copied)))
@@ -215,11 +277,35 @@ func (m DetailModel) View() string {
 	if m.totpCode != "" {
 		help += "  4: copy totp"
 	}
-	help += "  esc: back  q: quit"
+	help += "  5: HIBP check  esc: back  q: quit"
 	b.WriteString(helpStyle.Render(help))
 	b.WriteString("\n")
 
 	return b.String()
+}
+
+// renderStrength returns a styled strength label.
+func renderStrength(s keepass.StrengthResult) string {
+	label := fmt.Sprintf("[%s %.0f bits]", s.Label, s.Entropy)
+	switch s.Score {
+	case keepass.StrengthWeak:
+		return errorMsgStyle.Render(label)
+	case keepass.StrengthFair:
+		return warnStyle.Render(label)
+	case keepass.StrengthGood:
+		return valueStyle.Render(label)
+	case keepass.StrengthStrong, keepass.StrengthExcellent:
+		return successStyle.Render(label)
+	default:
+		return hiddenStyle.Render(label)
+	}
+}
+
+func formatAttachmentSize(bytes int) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
 }
 
 // totpCountdownBar renders a visual progress bar for the TOTP countdown.
