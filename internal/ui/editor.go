@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,6 +22,7 @@ const (
 	fieldURL
 	fieldNotes
 	fieldTOTP
+	fieldExpiry
 	fixedFieldCount // number of built-in fields
 )
 
@@ -31,6 +33,7 @@ var fieldLabels = [fixedFieldCount]string{
 	"URL",
 	"Notes",
 	"TOTP Secret",
+	"Expiry (YYYY-MM-DD)",
 }
 
 // EditorModel handles creating or editing an entry.
@@ -80,6 +83,7 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 	inputs[fieldTOTP].EchoMode = textinput.EchoPassword
 	inputs[fieldTOTP].EchoCharacter = '*'
 	inputs[fieldTOTP].Placeholder = "base32 secret or otpauth:// URI"
+	inputs[fieldExpiry].Placeholder = "blank = no expiry"
 
 	m := EditorModel{
 		inputs:    inputs,
@@ -96,6 +100,9 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 		inputs[fieldURL].SetValue(entry.URL)
 		inputs[fieldNotes].SetValue(entry.Notes)
 		inputs[fieldTOTP].SetValue(entry.TOTP)
+		if entry.Expires && !entry.ExpiryTime.IsZero() {
+			inputs[fieldExpiry].SetValue(entry.ExpiryTime.Local().Format("2006-01-02"))
+		}
 		m.inputs = inputs
 		for _, cf := range entry.CustomFields {
 			m.customInputs = append(m.customInputs, newCustomFieldInput(cf.Key, cf.Value, cf.Protected))
@@ -268,6 +275,14 @@ func (m EditorModel) save() tea.Cmd {
 			URL:      m.inputs[fieldURL].Value(),
 			Notes:    m.inputs[fieldNotes].Value(),
 			TOTP:     m.inputs[fieldTOTP].Value(),
+		}
+		expiryStr := strings.TrimSpace(m.inputs[fieldExpiry].Value())
+		if expiryStr != "" {
+			t, err := time.Parse("2006-01-02", expiryStr)
+			if err == nil {
+				entry.Expires = true
+				entry.ExpiryTime = t
+			}
 		}
 		for _, cf := range m.customInputs {
 			key := cf.key.Value()

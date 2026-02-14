@@ -1395,3 +1395,161 @@ func TestExportImportXMLWithAttachments(t *testing.T) {
 		t.Errorf("extracted content = %q, want %q", string(extracted), string(attachData))
 	}
 }
+
+func TestExpiryFields(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+
+	pastExpiry := time.Now().Add(-24 * time.Hour)
+	futureExpiry := time.Now().Add(30 * 24 * time.Hour)
+
+	// Add expired entry
+	err = db.AddEntry(emailGroup.UUID, Entry{
+		Title:      "Expired Entry",
+		UserName:   "user",
+		Password:   "pass",
+		Expires:    true,
+		ExpiryTime: pastExpiry,
+	})
+	if err != nil {
+		t.Fatalf("AddEntry expired: %v", err)
+	}
+
+	// Add future-expiry entry
+	err = db.AddEntry(emailGroup.UUID, Entry{
+		Title:      "Future Entry",
+		UserName:   "user",
+		Password:   "pass",
+		Expires:    true,
+		ExpiryTime: futureExpiry,
+	})
+	if err != nil {
+		t.Fatalf("AddEntry future: %v", err)
+	}
+
+	// Add no-expiry entry
+	err = db.AddEntry(emailGroup.UUID, Entry{
+		Title:    "No Expiry",
+		UserName: "user",
+		Password: "pass",
+	})
+	if err != nil {
+		t.Fatalf("AddEntry no expiry: %v", err)
+	}
+
+	// Save and reopen
+	savePath := filepath.Join(dir, "test2.kdbx")
+	if err := db.SaveAs(savePath); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	entries := db2.RootGroup().Groups[0].Entries
+	for _, e := range entries {
+		switch e.Title {
+		case "Expired Entry":
+			if !e.Expires {
+				t.Error("Expired Entry: Expires should be true")
+			}
+			if !e.IsExpired() {
+				t.Error("Expired Entry: IsExpired() should be true")
+			}
+		case "Future Entry":
+			if !e.Expires {
+				t.Error("Future Entry: Expires should be true")
+			}
+			if e.IsExpired() {
+				t.Error("Future Entry: IsExpired() should be false")
+			}
+		case "No Expiry":
+			if e.Expires {
+				t.Error("No Expiry: Expires should be false")
+			}
+			if e.IsExpired() {
+				t.Error("No Expiry: IsExpired() should be false")
+			}
+		}
+	}
+}
+
+func TestIsExpired(t *testing.T) {
+	tests := []struct {
+		name    string
+		entry   Entry
+		expired bool
+	}{
+		{"no expiry", Entry{}, false},
+		{"expires false", Entry{Expires: false, ExpiryTime: time.Now().Add(-time.Hour)}, false},
+		{"expired", Entry{Expires: true, ExpiryTime: time.Now().Add(-time.Hour)}, true},
+		{"not yet expired", Entry{Expires: true, ExpiryTime: time.Now().Add(time.Hour)}, false},
+		{"expires with zero time", Entry{Expires: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.entry.IsExpired(); got != tt.expired {
+				t.Errorf("IsExpired() = %v, want %v", got, tt.expired)
+			}
+		})
+	}
+}
+
+func TestUpdateEntryExpiry(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	futureExpiry := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	err = db.UpdateEntry(entry.UUID, Entry{
+		Title:      entry.Title,
+		UserName:   entry.UserName,
+		Password:   entry.Password,
+		Expires:    true,
+		ExpiryTime: futureExpiry,
+	})
+	if err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+
+	savePath := filepath.Join(dir, "test2.kdbx")
+	if err := db.SaveAs(savePath); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	updated := db2.RootGroup().Groups[0].Entries[0]
+	if !updated.Expires {
+		t.Error("Expires should be true after update")
+	}
+	if !updated.ExpiryTime.Equal(futureExpiry) {
+		t.Errorf("ExpiryTime = %v, want %v", updated.ExpiryTime, futureExpiry)
+	}
+}

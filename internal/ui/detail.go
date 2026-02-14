@@ -251,6 +251,18 @@ func (m DetailModel) buildContent() string {
 			labelStyle.Render("Modified:"),
 			hiddenStyle.Render(m.entry.ModificationTime.Local().Format("2006-01-02 15:04:05"))))
 	}
+	if m.entry.Expires {
+		expiryStr := m.entry.ExpiryTime.Local().Format("2006-01-02 15:04:05")
+		if m.entry.IsExpired() {
+			b.WriteString(fmt.Sprintf("  %s %s\n",
+				labelStyle.Render("Expires:"),
+				errorMsgStyle.Render(expiryStr+" (EXPIRED)")))
+		} else {
+			b.WriteString(fmt.Sprintf("  %s %s\n",
+				labelStyle.Render("Expires:"),
+				hiddenStyle.Render(expiryStr)))
+		}
+	}
 
 	for _, cf := range m.entry.CustomFields {
 		val := cf.Value
