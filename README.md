@@ -30,6 +30,8 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Database stats and batch password audit (weak, reused, empty, expired)
 - Import/export (CSV, XML) and merge from other `.kdbx` files
 - Change database master password
+- Undo last action with `Ctrl+Z` (delete, edit, move, rename, duplicate, add)
+- Status bar showing database name, entry count, and modified state
 - Save changes back to the `.kdbx` file
 - Auto-lock after 5 minutes of inactivity
 - Configurable keybindings and settings via `~/.config/keetui/config.json`
@@ -117,6 +119,7 @@ keetui --merge other.kdbx database.kdbx
 | `I` | Password audit |
 | `c` | Settings |
 | `P` | Change master password |
+| `Ctrl+Z` | Undo last action |
 | `s` / `Ctrl+S` | Save database to file |
 | `q` | Quit |
 
@@ -184,7 +187,29 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `password_length` | 20 | Length of generated passwords (minimum 8) |
 | `show_password_strength` | true | Show password strength indicator in detail and editor views |
 
-Use `keetui -config` to view current settings. Settings can also be edited from the TUI (press `c` in the browser).
+Use `keetui -config` to view current settings as JSON (including all keybindings). The output is valid JSON that can be used as a config file:
+
+```sh
+keetui -config > ~/.config/keetui/config.json
+```
+
+Settings can also be edited from the TUI (press `c` in the browser).
+
+### Keybindings
+
+Keybindings can be customized by adding a `keybindings` section to the config file. Only specify the keys you want to change; omitted keys use defaults:
+
+```json
+{
+  "keybindings": {
+    "delete": "D",
+    "show_qr": "Q",
+    "quit": "q"
+  }
+}
+```
+
+Run `keetui -config` to see all available keybinding names and their current values.
 
 ## Security
 
