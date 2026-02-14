@@ -119,7 +119,9 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if clipSec != 0 && clipSec < 15 {
-		clipSec = 15
+		m.status = "Clipboard clear must be 0 (disabled) or at least 15 seconds"
+		m.isError = true
+		return m, nil
 	}
 
 	lockMin, err := strconv.Atoi(strings.TrimSpace(m.inputs[settingAutoLock].Value()))
@@ -129,7 +131,9 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if lockMin != 0 && lockMin < 5 {
-		lockMin = 5
+		m.status = "Auto-lock must be 0 (disabled) or at least 5 minutes"
+		m.isError = true
+		return m, nil
 	}
 
 	pwLen, err := strconv.Atoi(strings.TrimSpace(m.inputs[settingPasswordLength].Value()))
@@ -139,7 +143,9 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if pwLen < 8 {
-		pwLen = 8
+		m.status = "Password length must be at least 8"
+		m.isError = true
+		return m, nil
 	}
 
 	newCfg := config.Config{

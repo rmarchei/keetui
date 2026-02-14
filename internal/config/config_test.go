@@ -91,14 +91,19 @@ func TestString(t *testing.T) {
 	if s == "" {
 		t.Error("String() returned empty string")
 	}
-	if !contains(s, "clipboard_clear_seconds: 15") {
-		t.Error("String() missing clipboard_clear_seconds")
+	// String() now returns JSON
+	var parsed Config
+	if err := json.Unmarshal([]byte(s), &parsed); err != nil {
+		t.Fatalf("String() returned invalid JSON: %v", err)
 	}
-	if !contains(s, "auto_lock_minutes:       5") {
-		t.Error("String() missing auto_lock_minutes")
+	if parsed.ClipboardClearSeconds != 15 {
+		t.Errorf("ClipboardClearSeconds = %d, want 15", parsed.ClipboardClearSeconds)
 	}
-	if !contains(s, "password_length:         20") {
-		t.Error("String() missing password_length")
+	if parsed.AutoLockMinutes != 5 {
+		t.Errorf("AutoLockMinutes = %d, want 5", parsed.AutoLockMinutes)
+	}
+	if parsed.PasswordLength != 20 {
+		t.Errorf("PasswordLength = %d, want 20", parsed.PasswordLength)
 	}
 }
 
