@@ -15,11 +15,15 @@ CONTAINER_RUNTIME ?= $(shell command -v docker 2>/dev/null || command -v podman 
 HOST_OS   := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/')
 
+CROSS_PLATFORMS := $(filter-out $(HOST_OS)-$(HOST_ARCH),$(PLATFORMS))
+
 PREFIX   ?= /usr/local
 
-.PHONY: build test all clean install $(PLATFORMS)
+.PHONY: build test all clean install $(CROSS_PLATFORMS)
 
-build:
+build: $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH)
+
+$(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH): $(shell find cmd internal -name '*.go')
 	@mkdir -p $(DIST)
 	@if [ -n "$(CONTAINER_RUNTIME)" ]; then \
 		$(CONTAINER_RUNTIME) run --rm \
@@ -45,7 +49,7 @@ test:
 		go test ./...; \
 	fi
 
-all: $(PLATFORMS)
+all: build $(CROSS_PLATFORMS)
 
 define BUILD_PLATFORM
 $(1): $(DIST)/$(APP)-$(1)
@@ -62,9 +66,9 @@ $(DIST)/$(APP)-$(1):
 		go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/$(APP)-$(1) $(CMD)
 endef
 
-$(foreach p,$(PLATFORMS),$(eval $(call BUILD_PLATFORM,$(p))))
+$(foreach p,$(CROSS_PLATFORMS),$(eval $(call BUILD_PLATFORM,$(p))))
 
-install: build
+install: $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH)
 	install -d $(PREFIX)/bin
 	install -m 755 $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH) $(PREFIX)/bin/$(APP)
 
