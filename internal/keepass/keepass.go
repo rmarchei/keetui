@@ -228,6 +228,12 @@ func (d *DB) SaveAs(path string) error {
 		return fmt.Errorf("rename temp file: %w", err)
 	}
 
+	// Sync the parent directory to ensure the rename is durably persisted.
+	if dirFD, err := os.Open(dir); err == nil {
+		_ = dirFD.Sync()
+		dirFD.Close()
+	}
+
 	success = true
 	return nil
 }

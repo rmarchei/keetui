@@ -91,7 +91,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "ctrl+c":
-			return m, tea.Quit
+			return m, func() tea.Msg { return RequestQuitMsg{} }
 
 		case "esc", "h", "left":
 			return m, func() tea.Msg { return BackToBrowserMsg{} }
