@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/rmarchei/keetui/internal/config"
 )
@@ -54,10 +55,11 @@ type SettingsModel struct {
 
 func NewSettingsModel(cfg config.Config) SettingsModel {
 	var inputs [settingCount]textinput.Model
+	promptStyle := lipgloss.NewStyle().Foreground(secondaryColor).Bold(true)
 	for i := range inputs {
 		t := textinput.New()
 		t.Prompt = fmt.Sprintf("  %-24s", settingLabels[i]+":")
-		t.PromptStyle = labelStyle
+		t.PromptStyle = promptStyle
 		t.Width = 10
 		t.CharLimit = 5
 		inputs[i] = t
