@@ -32,6 +32,10 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Change database master password
 - Undo last action with `Ctrl+Z` (delete, edit, move, rename, duplicate, add)
 - Status bar showing database name, entry count, and modified state
+- Automatic backup (`.kdbx.bak`) before every save
+- Password generator character set options (toggle uppercase, lowercase, digits, symbols)
+- Read-only mode (`--read-only`) to prevent accidental modifications
+- Keyboard shortcut help overlay (`?` key)
 - Save changes back to the `.kdbx` file
 - Auto-lock after 5 minutes of inactivity
 - Configurable keybindings and settings via `~/.config/keetui/config.json`
@@ -75,6 +79,7 @@ CONTAINER_RUNTIME= make       # skip container, use local go
 keetui database.kdbx                    # open existing database
 keetui -keyfile key.key database.kdbx   # open with key file
 keetui -new database.kdbx              # create a new database
+keetui -read-only database.kdbx        # open in read-only mode
 ```
 
 ### Import / Export / Merge
@@ -121,6 +126,7 @@ keetui --merge other.kdbx database.kdbx
 | `P` | Change master password |
 | `Ctrl+Z` | Undo last action |
 | `s` / `Ctrl+S` | Save database to file |
+| `?` | Keyboard shortcut help |
 | `q` | Quit |
 
 ### Entry Detail
@@ -140,6 +146,7 @@ keetui --merge other.kdbx database.kdbx
 | `4` | Copy TOTP code to clipboard |
 | `5` | Check password against HIBP breaches |
 | `Q` | Display selected field as QR code |
+| `?` | Keyboard shortcut help |
 | `Esc` | Back to browser |
 
 ### Editor
@@ -176,7 +183,11 @@ Settings are stored in `~/.config/keetui/config.json`:
   "clipboard_clear_seconds": 15,
   "auto_lock_minutes": 5,
   "password_length": 20,
-  "show_password_strength": true
+  "show_password_strength": true,
+  "password_uppercase": true,
+  "password_lowercase": true,
+  "password_digits": true,
+  "password_symbols": true
 }
 ```
 
@@ -186,6 +197,10 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `auto_lock_minutes` | 5 | Minutes of inactivity before the database locks (0: disable) |
 | `password_length` | 20 | Length of generated passwords (minimum 8) |
 | `show_password_strength` | true | Show password strength indicator in detail and editor views |
+| `password_uppercase` | true | Include uppercase letters (A-Z) in generated passwords |
+| `password_lowercase` | true | Include lowercase letters (a-z) in generated passwords |
+| `password_digits` | true | Include digits (0-9) in generated passwords |
+| `password_symbols` | true | Include symbols (!@#$%^&*()-_=+) in generated passwords |
 
 Use `keetui -config` to view current settings as JSON (including all keybindings). The output is valid JSON that can be used as a config file:
 
@@ -215,7 +230,9 @@ Run `keetui -config` to see all available keybinding names and their current val
 
 - **Clipboard auto-clear**: Copied passwords and TOTP codes are automatically cleared from the clipboard (configurable, default 15s)
 - **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered
-- **Password generator**: Generates random passwords using uppercase, lowercase, digits, and symbols via `crypto/rand`
+- **Password generator**: Generates random passwords via `crypto/rand` with configurable character sets (uppercase, lowercase, digits, symbols)
+- **Backup on save**: The original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback
+- **Read-only mode**: Open with `--read-only` to browse a database without risk of accidental modification
 
 ## Clipboard
 
