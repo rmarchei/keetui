@@ -29,6 +29,7 @@ const (
 	viewPassword
 	viewStats
 	viewSettings
+	viewHistory
 )
 
 // clipboardClearMsg signals that the clipboard should be cleared.
@@ -94,6 +95,7 @@ type AppModel struct {
 	password     PasswordModel
 	stats        StatsModel
 	settings     SettingsModel
+	history      HistoryModel
 	width        int
 	height       int
 	lastActivity time.Time // tracks last user interaction for auto-lock
@@ -401,6 +403,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scheduleAutoLock(),
 		)
 
+	case ShowHistoryMsg:
+		history := m.db.EntryHistory(msg.EntryUUID)
+		m.history = NewHistoryModel(msg.EntryTitle, history)
+		m.history.width = m.width
+		m.history.height = m.height
+		m.state = viewHistory
+		return m, nil
+
+	case BackToDetailMsg:
+		m.state = viewDetail
+		return m, nil
+
 	case hibpResultMsg:
 		m.detail.hibpResult = &msg
 		m.detail.hibpChecking = false
@@ -560,6 +574,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var updated tea.Model
 		updated, cmd = m.settings.Update(msg)
 		m.settings = updated.(SettingsModel)
+	case viewHistory:
+		var updated tea.Model
+		updated, cmd = m.history.Update(msg)
+		m.history = updated.(HistoryModel)
 	}
 
 	return m, cmd
@@ -585,6 +603,8 @@ func (m AppModel) View() string {
 		return m.stats.View()
 	case viewSettings:
 		return m.settings.View()
+	case viewHistory:
+		return m.history.View()
 	}
 	return ""
 }

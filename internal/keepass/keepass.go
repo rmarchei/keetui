@@ -41,11 +41,20 @@ type Entry struct {
 	ModificationTime time.Time
 	ExpiryTime       time.Time
 	Expires          bool
+	HistoryCount     int
 }
 
 // IsExpired returns true if the entry has an expiry date set and it is in the past.
 func (e Entry) IsExpired() bool {
 	return e.Expires && !e.ExpiryTime.IsZero() && time.Now().After(e.ExpiryTime)
+}
+
+// HistoryEntry represents a single password history record.
+type HistoryEntry struct {
+	Password         string
+	ModificationTime time.Time
+	Title            string
+	UserName         string
 }
 
 // Group is a simplified view of a KeePass group.
@@ -183,6 +192,9 @@ func convertGroup(g gokeepasslib.Group) Group {
 		if e.Times.ExpiryTime != nil {
 			entry.ExpiryTime = e.Times.ExpiryTime.Time
 		}
+		for _, h := range e.Histories {
+			entry.HistoryCount += len(h.Entries)
+		}
 		entry.CustomFields = extractCustomFields(e)
 		group.Entries = append(group.Entries, entry)
 	}
@@ -294,6 +306,37 @@ func (d *DB) AddEntry(groupUUID gokeepasslib.UUID, e Entry) error {
 	return nil
 }
 
+// EntryHistory returns the password history for an entry, most recent first.
+func (d *DB) EntryHistory(entryUUID gokeepasslib.UUID) []HistoryEntry {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return nil
+	}
+	entry := findEntry(&d.Database.Content.Root.Groups[0], entryUUID)
+	if entry == nil {
+		return nil
+	}
+	var history []HistoryEntry
+	for _, h := range entry.Histories {
+		for _, he := range h.Entries {
+			var modTime time.Time
+			if he.Times.LastModificationTime != nil {
+				modTime = he.Times.LastModificationTime.Time
+			}
+			history = append(history, HistoryEntry{
+				Password:         he.GetContent("Password"),
+				ModificationTime: modTime,
+				Title:            he.GetContent("Title"),
+				UserName:         he.GetContent("UserName"),
+			})
+		}
+	}
+	// Sort most recent first
+	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
+		history[i], history[j] = history[j], history[i]
+	}
+	return history
+}
+
 // UpdateEntry updates an existing entry identified by entryUUID.
 func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 	if len(d.Database.Content.Root.Groups) == 0 {
@@ -303,6 +346,25 @@ func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 	if entry == nil {
 		return fmt.Errorf("entry not found")
 	}
+
+	// Save current state to history before applying changes
+	historyClone := entry.Clone()
+	if len(entry.Histories) == 0 {
+		entry.Histories = []gokeepasslib.History{{}}
+	}
+	// Clear the clone's history to avoid nesting
+	historyClone.Histories = nil
+	entry.Histories[0].Entries = append(entry.Histories[0].Entries, historyClone)
+
+	// Trim history to max items
+	maxItems := int(d.Database.Content.Meta.HistoryMaxItems)
+	if maxItems <= 0 {
+		maxItems = 10
+	}
+	if len(entry.Histories[0].Entries) > maxItems {
+		entry.Histories[0].Entries = entry.Histories[0].Entries[len(entry.Histories[0].Entries)-maxItems:]
+	}
+
 	setEntryValue(entry, "Title", e.Title, false)
 	setEntryValue(entry, "UserName", e.UserName, false)
 	setEntryValue(entry, "Password", e.Password, true)

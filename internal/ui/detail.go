@@ -74,6 +74,9 @@ type DetailModel struct {
 // BackToBrowserMsg signals returning to the browser.
 type BackToBrowserMsg struct{}
 
+// BackToDetailMsg signals returning to the detail view from a sub-view.
+type BackToDetailMsg struct{}
+
 // CopyToClipboardMsg requests copying a value to clipboard.
 type CopyToClipboardMsg struct {
 	Field string
@@ -187,7 +190,11 @@ func (m DetailModel) footerView() string {
 		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
 		return helpStyle.Render(help)
 	}
-	help := "  p: toggle password  e: edit  o: open url  a: attachments  Q: show QR  1: copy user  2: copy pass  3: copy url"
+	help := "  p: toggle password  e: edit  o: open url  a: attachments  Q: show QR"
+	if m.entry.HistoryCount > 0 {
+		help += "  H: history"
+	}
+	help += "  1: copy user  2: copy pass  3: copy url"
 	if m.totpCode != "" {
 		help += "  4: copy totp"
 	}
@@ -555,6 +562,15 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.entry.URL != "" {
 				return m, func() tea.Msg {
 					return OpenURLMsg{URL: m.entry.URL}
+				}
+			}
+
+		case "H":
+			if m.entry.HistoryCount > 0 {
+				entryTitle := m.entry.Title
+				entryUUID := m.entry.UUID
+				return m, func() tea.Msg {
+					return ShowHistoryMsg{EntryTitle: entryTitle, EntryUUID: entryUUID}
 				}
 			}
 		}
