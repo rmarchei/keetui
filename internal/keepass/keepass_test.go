@@ -3,6 +3,7 @@ package keepass
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +92,22 @@ func TestOpenAndRead(t *testing.T) {
 	}
 	if entry.URL != "https://example.com" {
 		t.Errorf("url = %q, want %q", entry.URL, "https://example.com")
+	}
+}
+
+func TestOpenKdbFileRejected(t *testing.T) {
+	_, err := Open("/tmp/test.kdb", "password")
+	if err == nil {
+		t.Fatal("expected error opening .kdb file, got nil")
+	}
+	if !strings.Contains(err.Error(), ".kdb files are not supported") {
+		t.Errorf("error = %q, want message about .kdb not supported", err.Error())
+	}
+
+	// Also test case-insensitive matching
+	_, err = Open("/tmp/test.KDB", "password")
+	if err == nil {
+		t.Fatal("expected error opening .KDB file, got nil")
 	}
 }
 
@@ -611,6 +628,36 @@ func TestMoveEntry(t *testing.T) {
 	}
 	if targetEntries != 1 {
 		t.Errorf("target group entries = %d, want 1", targetEntries)
+	}
+}
+
+func TestMoveEntryInvalidTargetPreservesEntry(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+	entry := emailGroup.Entries[0]
+
+	// Try to move to a non-existent group
+	bogusUUID := gokeepasslib.NewUUID()
+	err = db.MoveEntry(entry.UUID, bogusUUID)
+	if err == nil {
+		t.Fatal("expected error for invalid target group, got nil")
+	}
+
+	// Entry must still exist in its original group
+	root = db.RootGroup()
+	if len(root.Groups[0].Entries) != 1 {
+		t.Fatalf("entry was lost after failed move: entries = %d, want 1", len(root.Groups[0].Entries))
 	}
 }
 
