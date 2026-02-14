@@ -39,6 +39,13 @@ type Entry struct {
 	CustomFields     []CustomField
 	CreationTime     time.Time
 	ModificationTime time.Time
+	ExpiryTime       time.Time
+	Expires          bool
+}
+
+// IsExpired returns true if the entry has an expiry date set and it is in the past.
+func (e Entry) IsExpired() bool {
+	return e.Expires && !e.ExpiryTime.IsZero() && time.Now().After(e.ExpiryTime)
 }
 
 // Group is a simplified view of a KeePass group.
@@ -172,6 +179,10 @@ func convertGroup(g gokeepasslib.Group) Group {
 		if e.Times.LastModificationTime != nil {
 			entry.ModificationTime = e.Times.LastModificationTime.Time
 		}
+		entry.Expires = e.Times.Expires.Bool
+		if e.Times.ExpiryTime != nil {
+			entry.ExpiryTime = e.Times.ExpiryTime.Time
+		}
 		entry.CustomFields = extractCustomFields(e)
 		group.Entries = append(group.Entries, entry)
 	}
@@ -275,6 +286,10 @@ func (d *DB) AddEntry(groupUUID gokeepasslib.UUID, e Entry) error {
 			entry.Values = append(entry.Values, mkValue(cf.Key, cf.Value))
 		}
 	}
+	if e.Expires {
+		entry.Times.Expires = w.NewBoolWrapper(true)
+		entry.Times.ExpiryTime = &w.TimeWrapper{Time: e.ExpiryTime}
+	}
 	g.Entries = append(g.Entries, entry)
 	return nil
 }
@@ -314,6 +329,12 @@ func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 		} else {
 			entry.Values = append(entry.Values, mkValue(cf.Key, cf.Value))
 		}
+	}
+	if e.Expires {
+		entry.Times.Expires = w.NewBoolWrapper(true)
+		entry.Times.ExpiryTime = &w.TimeWrapper{Time: e.ExpiryTime}
+	} else {
+		entry.Times.Expires = w.NewBoolWrapper(false)
 	}
 	entry.Times.LastModificationTime = &w.TimeWrapper{Time: time.Now()}
 	return nil

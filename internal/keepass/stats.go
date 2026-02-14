@@ -13,6 +13,7 @@ type DBStats struct {
 	WeakPasswords   int
 	ReusedPasswords int
 	EmptyPasswords  int
+	ExpiredEntries  int
 }
 
 // Stats computes statistics about the database.
@@ -54,6 +55,9 @@ func countGroupStats(g *Group, stats *DBStats) {
 			if result.Score <= StrengthWeak {
 				stats.WeakPasswords++
 			}
+		}
+		if e.IsExpired() {
+			stats.ExpiredEntries++
 		}
 	}
 	for i := range g.Groups {

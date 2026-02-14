@@ -494,6 +494,9 @@ func (m BrowserModel) View() string {
 				}
 			} else {
 				icon := "    "
+				if item.entry.IsExpired() {
+					icon = warnStyle.Render("[!] ")
+				}
 				name := item.name()
 				if name == "" {
 					name = "(untitled)"

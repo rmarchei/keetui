@@ -3,6 +3,7 @@ package keepass
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestStats(t *testing.T) {
@@ -95,5 +96,35 @@ func TestStatsReusedPasswords(t *testing.T) {
 	stats := db.Stats()
 	if stats.ReusedPasswords < 2 {
 		t.Errorf("reused passwords = %d, want at least 2", stats.ReusedPasswords)
+	}
+}
+
+func TestStatsExpiredEntries(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	err = db.AddEntry(root.Groups[0].UUID, Entry{
+		Title:      "Expired",
+		UserName:   "user",
+		Password:   "pass",
+		Expires:    true,
+		ExpiryTime: time.Now().Add(-24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+
+	stats := db.Stats()
+	if stats.ExpiredEntries < 1 {
+		t.Errorf("expired entries = %d, want at least 1", stats.ExpiredEntries)
 	}
 }

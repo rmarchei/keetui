@@ -105,6 +105,16 @@ func (m StatsModel) View() string {
 			successStyle.Render("0")))
 	}
 
+	if m.stats.ExpiredEntries > 0 {
+		b.WriteString(fmt.Sprintf("  %s %s\n",
+			labelStyle.Render("Expired:"),
+			errorMsgStyle.Render(fmt.Sprintf("%d", m.stats.ExpiredEntries))))
+	} else {
+		b.WriteString(fmt.Sprintf("  %s %s\n",
+			labelStyle.Render("Expired:"),
+			successStyle.Render("0")))
+	}
+
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  esc: back  q: quit"))
 	b.WriteString("\n")
