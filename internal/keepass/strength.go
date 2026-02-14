@@ -19,9 +19,14 @@ const (
 
 // StrengthResult holds the output of a password strength evaluation.
 type StrengthResult struct {
-	Score   StrengthLevel
-	Label   string
-	Entropy float64 // bits of entropy
+	Score    StrengthLevel
+	Label    string
+	Entropy  float64 // bits of entropy
+	Length   int
+	HasUpper bool
+	HasLower bool
+	HasDigit bool
+	HasSymbol bool
 }
 
 // String returns the human-readable label.
@@ -49,7 +54,7 @@ func EvaluatePasswordStrength(password string) StrengthResult {
 		return StrengthResult{Score: StrengthWeak, Label: "Weak", Entropy: 0}
 	}
 
-	entropy := calculateEntropy(password)
+	entropy, classes := calculateEntropy(password)
 
 	// Apply penalties for common patterns
 	entropy -= patternPenalty(password)
@@ -60,43 +65,53 @@ func EvaluatePasswordStrength(password string) StrengthResult {
 	score := entropyToScore(entropy)
 
 	return StrengthResult{
-		Score:   score,
-		Label:   score.String(),
-		Entropy: math.Round(entropy*10) / 10,
+		Score:     score,
+		Label:     score.String(),
+		Entropy:   math.Round(entropy*10) / 10,
+		Length:    len([]rune(password)),
+		HasUpper:  classes.upper,
+		HasLower:  classes.lower,
+		HasDigit:  classes.digit,
+		HasSymbol: classes.symbol,
 	}
+}
+
+type charClasses struct {
+	lower, upper, digit, symbol bool
 }
 
 // calculateEntropy estimates the bits of entropy in a password based on
 // the character pool size and length.
-func calculateEntropy(password string) float64 {
-	var hasLower, hasUpper, hasDigit, hasSymbol, hasUnicode bool
+func calculateEntropy(password string) (float64, charClasses) {
+	var cc charClasses
+	var hasUnicode bool
 	poolSize := 0
 
 	for _, r := range password {
 		switch {
 		case unicode.IsLower(r) && r < 128:
-			hasLower = true
+			cc.lower = true
 		case unicode.IsUpper(r) && r < 128:
-			hasUpper = true
+			cc.upper = true
 		case unicode.IsDigit(r) && r < 128:
-			hasDigit = true
+			cc.digit = true
 		case r < 128:
-			hasSymbol = true
+			cc.symbol = true
 		default:
 			hasUnicode = true
 		}
 	}
 
-	if hasLower {
+	if cc.lower {
 		poolSize += 26
 	}
-	if hasUpper {
+	if cc.upper {
 		poolSize += 26
 	}
-	if hasDigit {
+	if cc.digit {
 		poolSize += 10
 	}
-	if hasSymbol {
+	if cc.symbol {
 		poolSize += 32
 	}
 	if hasUnicode {
@@ -107,7 +122,7 @@ func calculateEntropy(password string) float64 {
 		poolSize = 1
 	}
 
-	return float64(len([]rune(password))) * math.Log2(float64(poolSize))
+	return float64(len([]rune(password))) * math.Log2(float64(poolSize)), cc
 }
 
 // patternPenalty reduces entropy for passwords with common weaknesses.

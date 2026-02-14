@@ -872,6 +872,28 @@ func renderStrength(s keepass.StrengthResult) string {
 	}
 }
 
+// renderStrengthDetail returns the strength label plus a character class breakdown.
+// Missing classes are highlighted to guide the user.
+func renderStrengthDetail(s keepass.StrengthResult) string {
+	base := renderStrength(s)
+
+	check := func(has bool, label string) string {
+		if has {
+			return successStyle.Render(label)
+		}
+		return hiddenStyle.Render(label)
+	}
+
+	classes := fmt.Sprintf(" %s %s %s %s  %s",
+		check(s.HasLower, "a-z"),
+		check(s.HasUpper, "A-Z"),
+		check(s.HasDigit, "0-9"),
+		check(s.HasSymbol, "!@#"),
+		hiddenStyle.Render(fmt.Sprintf("len:%d", s.Length)))
+
+	return base + classes
+}
+
 func formatAttachmentSize(bytes int) string {
 	if bytes < 1024 {
 		return fmt.Sprintf("%d B", bytes)
