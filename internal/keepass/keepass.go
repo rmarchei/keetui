@@ -3,6 +3,7 @@ package keepass
 
 import (
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -247,6 +248,10 @@ func (d *DB) SaveAs(path string) error {
 		return fmt.Errorf("close temp file: %w", err)
 	}
 
+	if err := createBackup(path); err != nil {
+		return fmt.Errorf("create backup: %w", err)
+	}
+
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename temp file: %w", err)
 	}
@@ -258,6 +263,34 @@ func (d *DB) SaveAs(path string) error {
 	}
 
 	success = true
+	return nil
+}
+
+// createBackup copies the original file to path + ".bak" before overwriting.
+// If the file doesn't exist (new database), it does nothing.
+func createBackup(path string) error {
+	src, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("open source: %w", err)
+	}
+	defer src.Close()
+
+	bakPath := path + ".bak"
+	dst, err := os.OpenFile(bakPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("create backup file: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("copy to backup: %w", err)
+	}
+	if err := dst.Sync(); err != nil {
+		return fmt.Errorf("sync backup: %w", err)
+	}
 	return nil
 }
 

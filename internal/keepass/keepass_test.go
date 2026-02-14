@@ -2036,6 +2036,84 @@ func TestGetRawGroupAndInsert(t *testing.T) {
 	}
 }
 
+func TestSaveCreatesBackup(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Modify something
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+	if err := db.UpdateEntry(entry.UUID, Entry{
+		Title:    "Modified",
+		UserName: entry.UserName,
+		Password: entry.Password,
+	}); err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+
+	// Save to same path
+	if err := db.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Verify .bak exists
+	bakPath := dbPath + ".bak"
+	if _, err := os.Stat(bakPath); os.IsNotExist(err) {
+		t.Fatal("backup file does not exist after save")
+	}
+
+	// Verify .bak is openable with original data
+	bakDB, err := Open(bakPath, password)
+	if err != nil {
+		t.Fatalf("Open backup: %v", err)
+	}
+	bakEntry := bakDB.RootGroup().Groups[0].Entries[0]
+	if bakEntry.Title != "Test Entry" {
+		t.Errorf("backup entry title = %q, want %q", bakEntry.Title, "Test Entry")
+	}
+
+	// Verify main file has updated data
+	db2, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open main: %v", err)
+	}
+	mainEntry := db2.RootGroup().Groups[0].Entries[0]
+	if mainEntry.Title != "Modified" {
+		t.Errorf("main entry title = %q, want %q", mainEntry.Title, "Modified")
+	}
+}
+
+func TestSaveNoBackupForNewDB(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "new.kdbx")
+	password := "testmaster"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Save to a new path that doesn't exist yet
+	newPath := filepath.Join(dir, "fresh.kdbx")
+	if err := db.SaveAs(newPath); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	// No .bak should exist for the new path since it didn't exist before
+	bakPath := newPath + ".bak"
+	if _, err := os.Stat(bakPath); !os.IsNotExist(err) {
+		t.Errorf("backup file should not exist for new database, err = %v", err)
+	}
+}
+
 func TestGetEntry(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.kdbx")
