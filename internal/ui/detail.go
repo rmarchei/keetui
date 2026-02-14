@@ -686,12 +686,17 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key == "enter":
-			// Copy selected field
+			// Copy selected field; if revealed and has a separate qrValue
+			// (e.g. TOTP secret), copy that instead of the display value.
 			if m.selectedField < len(fields) {
 				f := fields[m.selectedField]
-				if f.value != "" {
+				val := f.value
+				if f.qrValue != "" && m.revealedFields[f.label] {
+					val = f.qrValue
+				}
+				if val != "" {
 					return m, func() tea.Msg {
-						return CopyToClipboardMsg{Field: f.label, Value: f.value}
+						return CopyToClipboardMsg{Field: f.label, Value: val}
 					}
 				}
 			}
