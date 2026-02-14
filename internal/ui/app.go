@@ -26,6 +26,7 @@ const (
 	viewConfirm
 	viewPassword
 	viewStats
+	viewSettings
 )
 
 // clipboardClearMsg signals that the clipboard should be cleared.
@@ -90,6 +91,7 @@ type AppModel struct {
 	confirm      ConfirmModel
 	password     PasswordModel
 	stats        StatsModel
+	settings     SettingsModel
 	width        int
 	height       int
 	lastActivity time.Time // tracks last user interaction for auto-lock
@@ -117,14 +119,22 @@ func (m AppModel) Init() tea.Cmd {
 }
 
 func (m AppModel) scheduleAutoLock() tea.Cmd {
+	d := m.cfg.AutoLockDuration()
+	if d == 0 {
+		return nil
+	}
 	lastActivity := m.lastActivity
-	return tea.Tick(m.cfg.AutoLockDuration(), func(t time.Time) tea.Msg {
+	return tea.Tick(d, func(t time.Time) tea.Msg {
 		return autoLockMsg{at: lastActivity}
 	})
 }
 
 func (m AppModel) scheduleClearClipboard(copiedValue string) tea.Cmd {
-	return tea.Tick(m.cfg.ClipboardClearDuration(), func(t time.Time) tea.Msg {
+	d := m.cfg.ClipboardClearDuration()
+	if d == 0 {
+		return nil
+	}
+	return tea.Tick(d, func(t time.Time) tea.Msg {
 		return clipboardClearMsg{expected: copiedValue}
 	})
 }
@@ -288,6 +298,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewStats
 		return m, nil
 
+	case ShowSettingsMsg:
+		m.settings = NewSettingsModel(m.cfg)
+		m.state = viewSettings
+		return m, m.settings.Init()
+
+	case ConfigSavedMsg:
+		m.cfg = msg.Cfg
+		m.state = viewBrowser
+		return m, statusCmd("Settings saved to "+config.Path(), false)
+
 	case hibpResultMsg:
 		m.detail.hibpResult = &msg
 		m.detail.hibpChecking = false
@@ -436,6 +456,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var updated tea.Model
 		updated, cmd = m.stats.Update(msg)
 		m.stats = updated.(StatsModel)
+	case viewSettings:
+		var updated tea.Model
+		updated, cmd = m.settings.Update(msg)
+		m.settings = updated.(SettingsModel)
 	}
 
 	return m, cmd
@@ -459,6 +483,8 @@ func (m AppModel) View() string {
 		return m.password.View()
 	case viewStats:
 		return m.stats.View()
+	case viewSettings:
+		return m.settings.View()
 	}
 	return ""
 }
