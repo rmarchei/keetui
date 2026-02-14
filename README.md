@@ -8,7 +8,8 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Create new `.kdbx` databases from scratch
 - Browse groups and entries with vim-style navigation
 - Search entries across all groups by title or username
-- Entries sorted alphabetically (groups first, then entries)
+- Favorite/pin entries -- mark entries with `f` key, shown first with `[*]` indicator (uses KeePass Tags)
+- Entries sorted alphabetically (favorites first, then groups, then entries)
 - View entry details (username, password, URL, notes, custom fields)
 - Per-field password toggle -- reveal individual protected fields independently
 - TOTP/2FA support -- live code display with countdown, compatible with KeePassXC and KeePass2
@@ -17,7 +18,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Mouse support -- click to select fields and entries, scroll wheel navigation
 - Open entry URL in system browser
 - Password generator for creating strong random passwords and diceware passphrases
-- Password strength indicator and HIBP breach check
+- Password strength indicator with character class breakdown and HIBP breach check
 - Create, edit, and delete entries and groups
 - Rename groups
 - Duplicate entries
@@ -38,6 +39,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Keyboard shortcut help overlay (`?` key)
 - Save changes back to the `.kdbx` file
 - Auto-lock after 5 minutes of inactivity
+- Color themes -- dark, light, and high-contrast presets via config or settings UI
 - Configurable keybindings and settings via `~/.config/keetui/config.json`
 
 ## Installation
@@ -117,6 +119,7 @@ keetui --merge other.kdbx database.kdbx
 | `g` | New group |
 | `r` | Rename group (when cursor is on a group) |
 | `y` | Duplicate entry |
+| `f` | Toggle favorite on entry |
 | `x` | Cut entry or group (for move) |
 | `v` | Paste cut item into current group |
 | `d` | Delete entry/group |
@@ -187,7 +190,8 @@ Settings are stored in `~/.config/keetui/config.json`:
   "password_uppercase": true,
   "password_lowercase": true,
   "password_digits": true,
-  "password_symbols": true
+  "password_symbols": true,
+  "theme": "dark"
 }
 ```
 
@@ -201,6 +205,7 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `password_lowercase` | true | Include lowercase letters (a-z) in generated passwords |
 | `password_digits` | true | Include digits (0-9) in generated passwords |
 | `password_symbols` | true | Include symbols (!@#$%^&*()-_=+) in generated passwords |
+| `theme` | `"dark"` | Color theme: `dark`, `light`, or `high-contrast` |
 
 Use `keetui -config` to view current settings as JSON (including all keybindings). The output is valid JSON that can be used as a config file:
 
@@ -233,6 +238,7 @@ Run `keetui -config` to see all available keybinding names and their current val
 - **Password generator**: Generates random passwords via `crypto/rand` with configurable character sets (uppercase, lowercase, digits, symbols)
 - **Backup on save**: The original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback
 - **Read-only mode**: Open with `--read-only` to browse a database without risk of accidental modification
+- **Input validation**: Attachment extraction rejects path traversal attempts; config values are sanitized on load; URL opening restricted to http/https schemes
 
 ## Clipboard
 
