@@ -53,7 +53,7 @@ func TestStatsWeakPasswords(t *testing.T) {
 
 	// Add entry with weak password
 	root := db.RootGroup()
-	err = db.AddEntry(root.Groups[0].UUID, Entry{
+	_, err = db.AddEntry(root.Groups[0].UUID, Entry{
 		Title:    "Weak Entry",
 		UserName: "user",
 		Password: "123",
@@ -83,7 +83,7 @@ func TestStatsReusedPasswords(t *testing.T) {
 	root := db.RootGroup()
 	// Add two entries with same password
 	for i := 0; i < 2; i++ {
-		err = db.AddEntry(root.UUID, Entry{
+		_, err = db.AddEntry(root.UUID, Entry{
 			Title:    "Reused Entry",
 			UserName: "user",
 			Password: "samepassword",
@@ -112,7 +112,7 @@ func TestStatsExpiredEntries(t *testing.T) {
 	}
 
 	root := db.RootGroup()
-	err = db.AddEntry(root.Groups[0].UUID, Entry{
+	_, err = db.AddEntry(root.Groups[0].UUID, Entry{
 		Title:      "Expired",
 		UserName:   "user",
 		Password:   "pass",

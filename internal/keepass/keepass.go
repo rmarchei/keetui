@@ -267,14 +267,14 @@ func (d *DB) ChangePassword(newPassword string) {
 }
 
 // AddEntry adds a new entry to the group identified by groupUUID.
-// It searches recursively from the root group.
-func (d *DB) AddEntry(groupUUID gokeepasslib.UUID, e Entry) error {
+// It searches recursively from the root group. Returns the UUID of the new entry.
+func (d *DB) AddEntry(groupUUID gokeepasslib.UUID, e Entry) (gokeepasslib.UUID, error) {
 	if len(d.Database.Content.Root.Groups) == 0 {
-		return fmt.Errorf("database has no root group")
+		return gokeepasslib.UUID{}, fmt.Errorf("database has no root group")
 	}
 	g := findGroup(&d.Database.Content.Root.Groups[0], groupUUID)
 	if g == nil {
-		return fmt.Errorf("group not found")
+		return gokeepasslib.UUID{}, fmt.Errorf("group not found")
 	}
 	entry := gokeepasslib.NewEntry()
 	entry.Values = []gokeepasslib.ValueData{
@@ -303,7 +303,7 @@ func (d *DB) AddEntry(groupUUID gokeepasslib.UUID, e Entry) error {
 		entry.Times.ExpiryTime = &w.TimeWrapper{Time: e.ExpiryTime}
 	}
 	g.Entries = append(g.Entries, entry)
-	return nil
+	return entry.UUID, nil
 }
 
 // EntryHistory returns the password history for an entry, most recent first.
@@ -486,18 +486,19 @@ func (d *DB) PermanentlyDeleteEntry(entryUUID gokeepasslib.UUID) error {
 }
 
 // AddGroup adds a new sub-group under the group identified by parentUUID.
-func (d *DB) AddGroup(parentUUID gokeepasslib.UUID, name string) error {
+// Returns the UUID of the new group.
+func (d *DB) AddGroup(parentUUID gokeepasslib.UUID, name string) (gokeepasslib.UUID, error) {
 	if len(d.Database.Content.Root.Groups) == 0 {
-		return fmt.Errorf("database has no root group")
+		return gokeepasslib.UUID{}, fmt.Errorf("database has no root group")
 	}
 	parent := findGroup(&d.Database.Content.Root.Groups[0], parentUUID)
 	if parent == nil {
-		return fmt.Errorf("parent group not found")
+		return gokeepasslib.UUID{}, fmt.Errorf("parent group not found")
 	}
 	newGroup := gokeepasslib.NewGroup()
 	newGroup.Name = name
 	parent.Groups = append(parent.Groups, newGroup)
-	return nil
+	return newGroup.UUID, nil
 }
 
 // MoveEntry moves an entry from its current group to the group identified by targetGroupUUID.
@@ -572,16 +573,17 @@ func (d *DB) MoveGroup(groupUUID, targetGroupUUID gokeepasslib.UUID) error {
 }
 
 // DuplicateEntry creates a copy of an entry in the same group.
-func (d *DB) DuplicateEntry(entryUUID gokeepasslib.UUID) error {
+// Returns the UUID of the new entry.
+func (d *DB) DuplicateEntry(entryUUID gokeepasslib.UUID) (gokeepasslib.UUID, error) {
 	if len(d.Database.Content.Root.Groups) == 0 {
-		return fmt.Errorf("database has no root group")
+		return gokeepasslib.UUID{}, fmt.Errorf("database has no root group")
 	}
 	root := &d.Database.Content.Root.Groups[0]
 
 	// Find the entry and its parent group
 	parentGroup, entryIdx := findEntryParent(root, entryUUID)
 	if parentGroup == nil {
-		return fmt.Errorf("entry not found")
+		return gokeepasslib.UUID{}, fmt.Errorf("entry not found")
 	}
 
 	original := parentGroup.Entries[entryIdx]
@@ -610,7 +612,7 @@ func (d *DB) DuplicateEntry(entryUUID gokeepasslib.UUID) error {
 	}
 
 	parentGroup.Entries = append(parentGroup.Entries, dup)
-	return nil
+	return dup.UUID, nil
 }
 
 // RenameGroup changes the name of a group identified by groupUUID.
@@ -884,6 +886,158 @@ func extractCustomFields(e gokeepasslib.Entry) []CustomField {
 		})
 	}
 	return fields
+}
+
+// FindEntryParentUUID returns the UUID of the group containing the given entry.
+func (d *DB) FindEntryParentUUID(entryUUID gokeepasslib.UUID) (gokeepasslib.UUID, error) {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return gokeepasslib.UUID{}, fmt.Errorf("database has no root group")
+	}
+	parent, _ := findEntryParent(&d.Database.Content.Root.Groups[0], entryUUID)
+	if parent == nil {
+		return gokeepasslib.UUID{}, fmt.Errorf("entry not found")
+	}
+	return parent.UUID, nil
+}
+
+// FindGroupParentUUID returns the UUID of the parent of the given group.
+func (d *DB) FindGroupParentUUID(groupUUID gokeepasslib.UUID) (gokeepasslib.UUID, error) {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return gokeepasslib.UUID{}, fmt.Errorf("database has no root group")
+	}
+	parent := findGroupParent(&d.Database.Content.Root.Groups[0], groupUUID)
+	if parent == nil {
+		return gokeepasslib.UUID{}, fmt.Errorf("group not found or is root")
+	}
+	return parent.UUID, nil
+}
+
+// GetRawEntry returns a deep copy of the raw gokeepasslib entry, preserving its UUID.
+func (d *DB) GetRawEntry(entryUUID gokeepasslib.UUID) (*gokeepasslib.Entry, error) {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return nil, fmt.Errorf("database has no root group")
+	}
+	entry := findEntry(&d.Database.Content.Root.Groups[0], entryUUID)
+	if entry == nil {
+		return nil, fmt.Errorf("entry not found")
+	}
+	clone := cloneEntry(*entry)
+	return &clone, nil
+}
+
+// GetRawGroup returns a deep copy of the raw gokeepasslib group.
+func (d *DB) GetRawGroup(groupUUID gokeepasslib.UUID) (*gokeepasslib.Group, error) {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return nil, fmt.Errorf("database has no root group")
+	}
+	g := findGroup(&d.Database.Content.Root.Groups[0], groupUUID)
+	if g == nil {
+		return nil, fmt.Errorf("group not found")
+	}
+	clone := cloneGroup(*g)
+	return &clone, nil
+}
+
+// InsertRawEntry inserts a raw entry (preserving its UUID) into the given group.
+func (d *DB) InsertRawEntry(groupUUID gokeepasslib.UUID, entry gokeepasslib.Entry) error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	g := findGroup(&d.Database.Content.Root.Groups[0], groupUUID)
+	if g == nil {
+		return fmt.Errorf("group not found")
+	}
+	g.Entries = append(g.Entries, entry)
+	return nil
+}
+
+// InsertRawGroup inserts a raw group (preserving its UUID) into the given parent group.
+func (d *DB) InsertRawGroup(parentUUID gokeepasslib.UUID, group gokeepasslib.Group) error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	parent := findGroup(&d.Database.Content.Root.Groups[0], parentUUID)
+	if parent == nil {
+		return fmt.Errorf("parent group not found")
+	}
+	parent.Groups = append(parent.Groups, group)
+	return nil
+}
+
+// GetEntry returns a simplified Entry for the given UUID.
+func (d *DB) GetEntry(entryUUID gokeepasslib.UUID) (Entry, error) {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return Entry{}, fmt.Errorf("database has no root group")
+	}
+	raw := findEntry(&d.Database.Content.Root.Groups[0], entryUUID)
+	if raw == nil {
+		return Entry{}, fmt.Errorf("entry not found")
+	}
+	entry := Entry{
+		UUID:     raw.UUID,
+		Title:    raw.GetContent("Title"),
+		UserName: raw.GetContent("UserName"),
+		Password: raw.GetContent("Password"),
+		URL:      raw.GetContent("URL"),
+		Notes:    raw.GetContent("Notes"),
+		TOTP:     extractTOTP(*raw),
+		Expires:  raw.Times.Expires.Bool,
+	}
+	if raw.Times.CreationTime != nil {
+		entry.CreationTime = raw.Times.CreationTime.Time
+	}
+	if raw.Times.LastModificationTime != nil {
+		entry.ModificationTime = raw.Times.LastModificationTime.Time
+	}
+	if raw.Times.ExpiryTime != nil {
+		entry.ExpiryTime = raw.Times.ExpiryTime.Time
+	}
+	entry.CustomFields = extractCustomFields(*raw)
+	return entry, nil
+}
+
+func findGroupParent(g *gokeepasslib.Group, uuid gokeepasslib.UUID) *gokeepasslib.Group {
+	for i := range g.Groups {
+		if g.Groups[i].UUID.Compare(uuid) {
+			return g
+		}
+		if found := findGroupParent(&g.Groups[i], uuid); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// cloneEntry creates a deep copy of an entry preserving its UUID.
+func cloneEntry(e gokeepasslib.Entry) gokeepasslib.Entry {
+	c := e
+	c.Values = make([]gokeepasslib.ValueData, len(e.Values))
+	copy(c.Values, e.Values)
+	c.Histories = make([]gokeepasslib.History, len(e.Histories))
+	for i, h := range e.Histories {
+		ch := h
+		ch.Entries = make([]gokeepasslib.Entry, len(h.Entries))
+		for j, he := range h.Entries {
+			ch.Entries[j] = cloneEntry(he)
+		}
+		c.Histories[i] = ch
+	}
+	c.Binaries = make([]gokeepasslib.BinaryReference, len(e.Binaries))
+	copy(c.Binaries, e.Binaries)
+	return c
+}
+
+func cloneGroup(g gokeepasslib.Group) gokeepasslib.Group {
+	c := g
+	c.Entries = make([]gokeepasslib.Entry, len(g.Entries))
+	for i, e := range g.Entries {
+		c.Entries[i] = cloneEntry(e)
+	}
+	c.Groups = make([]gokeepasslib.Group, len(g.Groups))
+	for i, sg := range g.Groups {
+		c.Groups[i] = cloneGroup(sg)
+	}
+	return c
 }
 
 func checkFileExtension(path string) error {

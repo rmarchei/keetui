@@ -237,7 +237,7 @@ func (d *DB) ImportCSV(r io.Reader) (int, error) {
 			targetUUID = d.ensureGroupPath(groupPath)
 		}
 
-		if err := d.AddEntry(targetUUID, entry); err != nil {
+		if _, err := d.AddEntry(targetUUID, entry); err != nil {
 			return imported, fmt.Errorf("add entry %q: %w", entry.Title, err)
 		}
 		imported++
@@ -302,7 +302,7 @@ func (d *DB) importXMLGroup(xg *XMLGroup, parentUUID [16]byte) (int, error) {
 				})
 			}
 		}
-		if err := d.AddEntry(groupUUID, entry); err != nil {
+		if _, err := d.AddEntry(groupUUID, entry); err != nil {
 			return imported, fmt.Errorf("add entry %q: %w", entry.Title, err)
 		}
 		// Restore binary attachments
@@ -370,7 +370,7 @@ func (d *DB) ensureGroupPath(path string) [16]byte {
 			}
 		}
 		if !found {
-			_ = d.AddGroup(currentUUID, part)
+			_, _ = d.AddGroup(currentUUID, part)
 			// Re-read to get the new group's UUID
 			current = d.findGroupByUUID(currentUUID)
 			if current != nil {

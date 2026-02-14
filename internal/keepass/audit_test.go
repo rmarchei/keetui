@@ -21,7 +21,7 @@ func TestAuditWeakPasswords(t *testing.T) {
 	}
 
 	root := db.RootGroup()
-	_ = db.AddEntry(root.Groups[0].UUID, Entry{
+	_, _ = db.AddEntry(root.Groups[0].UUID, Entry{
 		Title:    "Weak",
 		UserName: "user",
 		Password: "123",
@@ -47,7 +47,7 @@ func TestAuditReusedPasswords(t *testing.T) {
 
 	root := db.RootGroup()
 	for i := 0; i < 2; i++ {
-		_ = db.AddEntry(root.UUID, Entry{
+		_, _ = db.AddEntry(root.UUID, Entry{
 			Title:    "Reused",
 			UserName: "user",
 			Password: "samepassword",
@@ -73,7 +73,7 @@ func TestAuditEmptyPasswords(t *testing.T) {
 	}
 
 	root := db.RootGroup()
-	_ = db.AddEntry(root.UUID, Entry{
+	_, _ = db.AddEntry(root.UUID, Entry{
 		Title:    "Empty",
 		UserName: "user",
 		Password: "",
@@ -98,7 +98,7 @@ func TestAuditExpiredEntries(t *testing.T) {
 	}
 
 	root := db.RootGroup()
-	_ = db.AddEntry(root.UUID, Entry{
+	_, _ = db.AddEntry(root.UUID, Entry{
 		Title:      "Expired",
 		UserName:   "user",
 		Password:   "pass",
@@ -128,7 +128,7 @@ func TestAuditSkipsRecycleBin(t *testing.T) {
 	db.Database.Content.Meta.RecycleBinEnabled = w.NewBoolWrapper(true)
 
 	root := db.RootGroup()
-	_ = db.AddEntry(root.Groups[0].UUID, Entry{
+	_, _ = db.AddEntry(root.Groups[0].UUID, Entry{
 		Title:    "Weak in Email",
 		UserName: "user",
 		Password: "123",

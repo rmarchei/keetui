@@ -32,7 +32,7 @@ func (d *DB) mergeGroup(src *Group, targetParentUUID [16]byte, result *MergeResu
 		existing := findEntry(&d.Database.Content.Root.Groups[0], srcEntry.UUID)
 		if existing == nil {
 			// Entry doesn't exist in target, add it
-			_ = d.AddEntry(targetParentUUID, srcEntry)
+			_, _ = d.AddEntry(targetParentUUID, srcEntry)
 			result.EntriesAdded++
 		} else {
 			// Entry exists, update if source is newer
@@ -62,7 +62,7 @@ func (d *DB) findOrCreateGroup(parentUUID [16]byte, name string, result *MergeRe
 	}
 
 	// Create the group
-	_ = d.AddGroup(parentUUID, name)
+	_, _ = d.AddGroup(parentUUID, name)
 	result.GroupsCreated++
 
 	// Re-read to get the UUID

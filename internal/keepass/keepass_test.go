@@ -140,7 +140,7 @@ func TestAddEntry(t *testing.T) {
 	root := db.RootGroup()
 	emailGroup := root.Groups[0]
 
-	err = db.AddEntry(emailGroup.UUID, Entry{
+	_, err = db.AddEntry(emailGroup.UUID, Entry{
 		Title:    "New Entry",
 		UserName: "newuser",
 		Password: "newpass",
@@ -277,7 +277,7 @@ func TestAddAndDeleteGroup(t *testing.T) {
 
 	root := db.RootGroup()
 
-	err = db.AddGroup(root.UUID, "New Group")
+	_, err = db.AddGroup(root.UUID, "New Group")
 	if err != nil {
 		t.Fatalf("AddGroup: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestAddEntryWithTOTP(t *testing.T) {
 	emailGroup := root.Groups[0]
 
 	// Add entry with raw base32 TOTP secret
-	err = db.AddEntry(emailGroup.UUID, Entry{
+	_, err = db.AddEntry(emailGroup.UUID, Entry{
 		Title:    "TOTP Entry",
 		UserName: "totpuser",
 		Password: "totppass",
@@ -467,7 +467,7 @@ func TestAddEntryWithOTPAuthURI(t *testing.T) {
 	emailGroup := root.Groups[0]
 
 	otpauthURI := "otpauth://totp/Example:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example"
-	err = db.AddEntry(emailGroup.UUID, Entry{
+	_, err = db.AddEntry(emailGroup.UUID, Entry{
 		Title:    "OTPAuth Entry",
 		UserName: "otpuser",
 		Password: "otppass",
@@ -535,7 +535,7 @@ func TestCreateDatabase(t *testing.T) {
 	}
 
 	// Add an entry and save to verify it's functional
-	err = db2.AddEntry(root2.UUID, Entry{
+	_, err = db2.AddEntry(root2.UUID, Entry{
 		Title:    "First Entry",
 		UserName: "user1",
 		Password: "pass1",
@@ -581,7 +581,7 @@ func TestMoveEntry(t *testing.T) {
 	entry := emailGroup.Entries[0]
 
 	// Add a second group to move into
-	err = db.AddGroup(root.UUID, "Target Group")
+	_, err = db.AddGroup(root.UUID, "Target Group")
 	if err != nil {
 		t.Fatalf("AddGroup: %v", err)
 	}
@@ -678,7 +678,7 @@ func TestDuplicateEntry(t *testing.T) {
 	root := db.RootGroup()
 	entry := root.Groups[0].Entries[0]
 
-	err = db.DuplicateEntry(entry.UUID)
+	_, err = db.DuplicateEntry(entry.UUID)
 	if err != nil {
 		t.Fatalf("DuplicateEntry: %v", err)
 	}
@@ -770,7 +770,7 @@ func TestCustomFields(t *testing.T) {
 	root := db.RootGroup()
 	emailGroup := root.Groups[0]
 
-	err = db.AddEntry(emailGroup.UUID, Entry{
+	_, err = db.AddEntry(emailGroup.UUID, Entry{
 		Title:    "Custom Entry",
 		UserName: "user",
 		Password: "pass",
@@ -878,7 +878,7 @@ func TestMoveGroup(t *testing.T) {
 	root := db.RootGroup()
 
 	// Add a second group to move the first into
-	err = db.AddGroup(root.UUID, "Target Group")
+	_, err = db.AddGroup(root.UUID, "Target Group")
 	if err != nil {
 		t.Fatalf("AddGroup: %v", err)
 	}
@@ -970,7 +970,7 @@ func TestMoveGroupIntoDescendantFails(t *testing.T) {
 	emailGroup := root.Groups[0]
 
 	// Add a sub-group under Email
-	err = db.AddGroup(emailGroup.UUID, "Sub Group")
+	_, err = db.AddGroup(emailGroup.UUID, "Sub Group")
 	if err != nil {
 		t.Fatalf("AddGroup: %v", err)
 	}
@@ -1235,7 +1235,7 @@ func TestDuplicateEntryWithAttachments(t *testing.T) {
 	}
 
 	// Duplicate the entry
-	err = db.DuplicateEntry(entry.UUID)
+	_, err = db.DuplicateEntry(entry.UUID)
 	if err != nil {
 		t.Fatalf("DuplicateEntry: %v", err)
 	}
@@ -1417,7 +1417,7 @@ func TestExpiryFields(t *testing.T) {
 	futureExpiry := time.Now().Add(30 * 24 * time.Hour)
 
 	// Add expired entry
-	err = db.AddEntry(emailGroup.UUID, Entry{
+	_, err = db.AddEntry(emailGroup.UUID, Entry{
 		Title:      "Expired Entry",
 		UserName:   "user",
 		Password:   "pass",
@@ -1429,7 +1429,7 @@ func TestExpiryFields(t *testing.T) {
 	}
 
 	// Add future-expiry entry
-	err = db.AddEntry(emailGroup.UUID, Entry{
+	_, err = db.AddEntry(emailGroup.UUID, Entry{
 		Title:      "Future Entry",
 		UserName:   "user",
 		Password:   "pass",
@@ -1441,7 +1441,7 @@ func TestExpiryFields(t *testing.T) {
 	}
 
 	// Add no-expiry entry
-	err = db.AddEntry(emailGroup.UUID, Entry{
+	_, err = db.AddEntry(emailGroup.UUID, Entry{
 		Title:    "No Expiry",
 		UserName: "user",
 		Password: "pass",
@@ -1890,5 +1890,172 @@ func TestUpdateEntryExpiry(t *testing.T) {
 	}
 	if !updated.ExpiryTime.Equal(futureExpiry) {
 		t.Errorf("ExpiryTime = %v, want %v", updated.ExpiryTime, futureExpiry)
+	}
+}
+
+func TestFindEntryParentUUID(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	createTestDB(t, dbPath, "testpass")
+	db, err := Open(dbPath, "testpass")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+	entry := emailGroup.Entries[0]
+
+	parentUUID, err := db.FindEntryParentUUID(entry.UUID)
+	if err != nil {
+		t.Fatalf("FindEntryParentUUID: %v", err)
+	}
+	if !parentUUID.Compare(emailGroup.UUID) {
+		t.Errorf("parent UUID = %v, want %v", parentUUID, emailGroup.UUID)
+	}
+}
+
+func TestFindGroupParentUUID(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	createTestDB(t, dbPath, "testpass")
+	db, err := Open(dbPath, "testpass")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+
+	parentUUID, err := db.FindGroupParentUUID(emailGroup.UUID)
+	if err != nil {
+		t.Fatalf("FindGroupParentUUID: %v", err)
+	}
+	if !parentUUID.Compare(root.UUID) {
+		t.Errorf("parent UUID = %v, want %v", parentUUID, root.UUID)
+	}
+}
+
+func TestGetRawEntryAndInsert(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	createTestDB(t, dbPath, "testpass")
+	db, err := Open(dbPath, "testpass")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+	entry := emailGroup.Entries[0]
+
+	// Get raw entry
+	raw, err := db.GetRawEntry(entry.UUID)
+	if err != nil {
+		t.Fatalf("GetRawEntry: %v", err)
+	}
+
+	// Delete the entry
+	if err := db.PermanentlyDeleteEntry(entry.UUID); err != nil {
+		t.Fatalf("PermanentlyDeleteEntry: %v", err)
+	}
+
+	// Verify deleted
+	root = db.RootGroup()
+	if len(root.Groups[0].Entries) != 0 {
+		t.Fatal("entry should be deleted")
+	}
+
+	// Re-insert
+	if err := db.InsertRawEntry(emailGroup.UUID, *raw); err != nil {
+		t.Fatalf("InsertRawEntry: %v", err)
+	}
+
+	// Verify re-inserted with same UUID
+	root = db.RootGroup()
+	if len(root.Groups[0].Entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(root.Groups[0].Entries))
+	}
+	restored := root.Groups[0].Entries[0]
+	if !restored.UUID.Compare(entry.UUID) {
+		t.Errorf("restored UUID = %v, want %v", restored.UUID, entry.UUID)
+	}
+	if restored.Title != entry.Title {
+		t.Errorf("restored Title = %q, want %q", restored.Title, entry.Title)
+	}
+}
+
+func TestGetRawGroupAndInsert(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	createTestDB(t, dbPath, "testpass")
+	db, err := Open(dbPath, "testpass")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+
+	// Get raw group
+	raw, err := db.GetRawGroup(emailGroup.UUID)
+	if err != nil {
+		t.Fatalf("GetRawGroup: %v", err)
+	}
+
+	// Delete the group
+	if err := db.PermanentlyDeleteGroup(emailGroup.UUID); err != nil {
+		t.Fatalf("PermanentlyDeleteGroup: %v", err)
+	}
+
+	// Verify deleted
+	root = db.RootGroup()
+	if len(root.Groups) != 0 {
+		t.Fatal("group should be deleted")
+	}
+
+	// Re-insert
+	if err := db.InsertRawGroup(root.UUID, *raw); err != nil {
+		t.Fatalf("InsertRawGroup: %v", err)
+	}
+
+	// Verify re-inserted with same UUID and entries preserved
+	root = db.RootGroup()
+	if len(root.Groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(root.Groups))
+	}
+	restored := root.Groups[0]
+	if !restored.UUID.Compare(emailGroup.UUID) {
+		t.Errorf("restored UUID = %v, want %v", restored.UUID, emailGroup.UUID)
+	}
+	if restored.Name != emailGroup.Name {
+		t.Errorf("restored Name = %q, want %q", restored.Name, emailGroup.Name)
+	}
+	if len(restored.Entries) != 1 {
+		t.Fatalf("restored group should have 1 entry, got %d", len(restored.Entries))
+	}
+}
+
+func TestGetEntry(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	createTestDB(t, dbPath, "testpass")
+	db, err := Open(dbPath, "testpass")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	got, err := db.GetEntry(entry.UUID)
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if got.Title != "Test Entry" {
+		t.Errorf("Title = %q, want %q", got.Title, "Test Entry")
+	}
+	if got.UserName != "testuser" {
+		t.Errorf("UserName = %q, want %q", got.UserName, "testuser")
 	}
 }
