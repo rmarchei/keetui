@@ -211,6 +211,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.searching = false
 		m.searchQuery = ""
 		m.searchInput.SetValue("")
+		m.cutEntry = nil
 		return m, nil
 
 	case StatusMsg:

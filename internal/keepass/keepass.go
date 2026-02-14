@@ -300,17 +300,18 @@ func (d *DB) MoveEntry(entryUUID, targetGroupUUID gokeepasslib.UUID) error {
 	}
 	root := &d.Database.Content.Root.Groups[0]
 
-	// Find and remove the entry from its current group
+	// Validate target group exists before extracting (to avoid data loss)
+	target := findGroup(root, targetGroupUUID)
+	if target == nil {
+		return fmt.Errorf("target group not found")
+	}
+
+	// Now safe to remove the entry from its current group
 	entry := extractEntry(root, entryUUID)
 	if entry == nil {
 		return fmt.Errorf("entry not found")
 	}
 
-	// Find the target group and add the entry
-	target := findGroup(root, targetGroupUUID)
-	if target == nil {
-		return fmt.Errorf("target group not found")
-	}
 	target.Entries = append(target.Entries, *entry)
 	return nil
 }

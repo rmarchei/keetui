@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/term"
 
 	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
@@ -52,15 +54,25 @@ func main() {
 		// Prompt for password
 		fmt.Printf("Creating new database: %s\n", dbPath)
 		fmt.Print("Enter master password: ")
-		var password string
-		fmt.Scanln(&password)
+		pwBytes, err := term.ReadPassword(int(syscall.Stdin))
+		fmt.Println()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
+			os.Exit(1)
+		}
+		password := string(pwBytes)
 		if password == "" {
 			fmt.Fprintln(os.Stderr, "Error: password cannot be empty")
 			os.Exit(1)
 		}
 		fmt.Print("Confirm master password: ")
-		var confirm string
-		fmt.Scanln(&confirm)
+		confirmBytes, err := term.ReadPassword(int(syscall.Stdin))
+		fmt.Println()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
+			os.Exit(1)
+		}
+		confirm := string(confirmBytes)
 		if password != confirm {
 			fmt.Fprintln(os.Stderr, "Error: passwords do not match")
 			os.Exit(1)
