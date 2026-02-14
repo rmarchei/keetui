@@ -165,6 +165,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.db != nil {
 			m.detail.SetAttachments(m.db.EntryAttachments(msg.Entry.UUID))
 		}
+		m.detail.SetSize(m.width, m.height)
 		m.state = viewDetail
 		return m, m.detail.Init()
 
@@ -290,6 +291,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case hibpResultMsg:
 		m.detail.hibpResult = &msg
 		m.detail.hibpChecking = false
+		m.detail.RefreshContent()
 		return m, nil
 
 	case SaveEntryMsg:
@@ -317,9 +319,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CopyToClipboardMsg:
 		if err := copyToClipboard(msg.Value); err != nil {
 			m.detail.copied = ""
+			m.detail.RefreshContent()
 			return m, statusCmd(fmt.Sprintf("Clipboard error: %s", err), true)
 		}
 		m.detail.copied = msg.Field
+		m.detail.RefreshContent()
 		return m, m.scheduleClearClipboard(msg.Value)
 
 	case clipboardClearMsg:
@@ -328,6 +332,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			clearClipboard()
 		}
 		m.detail.copied = ""
+		m.detail.RefreshContent()
 		return m, nil
 
 	case OpenURLMsg:

@@ -5,7 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/pquerna/otp/totp"
 
 	"github.com/rmarchei/keetui/internal/keepass"
@@ -34,6 +36,8 @@ type DetailModel struct {
 	hibpChecking bool
 	hibpResult   *hibpResultMsg
 	attachments  []keepass.Attachment
+	viewport     viewport.Model
+	ready        bool // true after first size is set
 }
 
 // BackToBrowserMsg signals returning to the browser.
@@ -57,6 +61,20 @@ func NewDetailModel(entry keepass.Entry) DetailModel {
 // SetAttachments sets the attachment list for display.
 func (m *DetailModel) SetAttachments(attachments []keepass.Attachment) {
 	m.attachments = attachments
+}
+
+// SetSize initializes or resizes the viewport to match the terminal dimensions.
+func (m *DetailModel) SetSize(width, height int) {
+	m.width = width
+	m.height = height
+	m.syncViewportSize()
+}
+
+// RefreshContent rebuilds the viewport content after external state changes.
+func (m *DetailModel) RefreshContent() {
+	if m.ready {
+		m.viewport.SetContent(m.buildContent())
+	}
 }
 
 func (m DetailModel) Init() tea.Cmd {
@@ -92,95 +110,43 @@ func (m *DetailModel) refreshTOTP() {
 	m.totpRemain = int(period) - int(now.Unix()%int64(period))
 }
 
-func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		return m, nil
-
-	case totpTickMsg:
-		m.refreshTOTP()
-		return m, tickTOTP()
-
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q":
-			return m, func() tea.Msg { return RequestQuitMsg{} }
-		case "ctrl+c":
-			return m, func() tea.Msg { return RequestQuitMsg{} }
-
-		case "esc", "h", "left":
-			return m, func() tea.Msg { return BackToBrowserMsg{} }
-
-		case "p":
-			m.showPassword = !m.showPassword
-
-		case "e":
-			return m, func() tea.Msg {
-				return EditEntryMsg{Entry: m.entry}
-			}
-
-		case "1":
-			return m, func() tea.Msg {
-				return CopyToClipboardMsg{Field: "username", Value: m.entry.UserName}
-			}
-
-		case "2":
-			return m, func() tea.Msg {
-				return CopyToClipboardMsg{Field: "password", Value: m.entry.Password}
-			}
-
-		case "3":
-			return m, func() tea.Msg {
-				return CopyToClipboardMsg{Field: "url", Value: m.entry.URL}
-			}
-
-		case "4":
-			if m.totpCode != "" {
-				return m, func() tea.Msg {
-					return CopyToClipboardMsg{Field: "TOTP code", Value: m.totpCode}
-				}
-			}
-
-		case "5":
-			// HIBP breach check
-			if !m.hibpChecking && m.entry.Password != "" {
-				m.hibpChecking = true
-				m.hibpResult = nil
-				pw := m.entry.Password
-				return m, func() tea.Msg {
-					result := keepass.CheckHIBP(pw)
-					return hibpResultMsg{
-						Breached: result.Breached,
-						Count:    result.Count,
-						Err:      result.Err,
-					}
-				}
-			}
-
-		case "o":
-			if m.entry.URL != "" {
-				return m, func() tea.Msg {
-					return OpenURLMsg{URL: m.entry.URL}
-				}
-			}
-		}
+func (m *DetailModel) syncViewportSize() {
+	headerHeight := lipgloss.Height(m.headerView())
+	footerHeight := lipgloss.Height(m.footerView())
+	vpHeight := m.height - headerHeight - footerHeight
+	if vpHeight < 1 {
+		vpHeight = 1
 	}
-
-	return m, nil
+	if !m.ready {
+		m.viewport = viewport.New(m.width, vpHeight)
+		m.viewport.SetContent(m.buildContent())
+		m.ready = true
+	} else {
+		m.viewport.Width = m.width
+		m.viewport.Height = vpHeight
+	}
 }
 
-func (m DetailModel) View() string {
-	var b strings.Builder
-
-	b.WriteString("\n")
+func (m DetailModel) headerView() string {
 	title := m.entry.Title
 	if title == "" {
 		title = "(untitled)"
 	}
-	b.WriteString(titleStyle.Render(fmt.Sprintf(" %s ", title)))
-	b.WriteString("\n\n")
+	return "\n" + titleStyle.Render(fmt.Sprintf(" %s ", title)) + "\n"
+}
+
+func (m DetailModel) footerView() string {
+	help := "  p: toggle password  e: edit  o: open url  1: copy user  2: copy pass  3: copy url"
+	if m.totpCode != "" {
+		help += "  4: copy totp"
+	}
+	help += "  5: HIBP check  esc: back  q: quit"
+	return helpStyle.Render(help)
+}
+
+// buildContent returns the scrollable body content (everything between title and help bar).
+func (m DetailModel) buildContent() string {
+	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("  %s %s\n",
 		labelStyle.Render("Username:"),
@@ -272,16 +238,107 @@ func (m DetailModel) View() string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\n")
-	help := "  p: toggle password  e: edit  o: open url  1: copy user  2: copy pass  3: copy url"
-	if m.totpCode != "" {
-		help += "  4: copy totp"
-	}
-	help += "  5: HIBP check  esc: back  q: quit"
-	b.WriteString(helpStyle.Render(help))
-	b.WriteString("\n")
-
 	return b.String()
+}
+
+func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.syncViewportSize()
+		return m, nil
+
+	case totpTickMsg:
+		m.refreshTOTP()
+		if m.ready {
+			m.viewport.SetContent(m.buildContent())
+		}
+		return m, tickTOTP()
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q":
+			return m, func() tea.Msg { return RequestQuitMsg{} }
+		case "ctrl+c":
+			return m, func() tea.Msg { return RequestQuitMsg{} }
+
+		case "esc", "h", "left":
+			return m, func() tea.Msg { return BackToBrowserMsg{} }
+
+		case "p":
+			m.showPassword = !m.showPassword
+			if m.ready {
+				m.viewport.SetContent(m.buildContent())
+			}
+			return m, nil
+
+		case "e":
+			return m, func() tea.Msg {
+				return EditEntryMsg{Entry: m.entry}
+			}
+
+		case "1":
+			return m, func() tea.Msg {
+				return CopyToClipboardMsg{Field: "username", Value: m.entry.UserName}
+			}
+
+		case "2":
+			return m, func() tea.Msg {
+				return CopyToClipboardMsg{Field: "password", Value: m.entry.Password}
+			}
+
+		case "3":
+			return m, func() tea.Msg {
+				return CopyToClipboardMsg{Field: "url", Value: m.entry.URL}
+			}
+
+		case "4":
+			if m.totpCode != "" {
+				return m, func() tea.Msg {
+					return CopyToClipboardMsg{Field: "TOTP code", Value: m.totpCode}
+				}
+			}
+
+		case "5":
+			// HIBP breach check
+			if !m.hibpChecking && m.entry.Password != "" {
+				m.hibpChecking = true
+				m.hibpResult = nil
+				if m.ready {
+					m.viewport.SetContent(m.buildContent())
+				}
+				pw := m.entry.Password
+				return m, func() tea.Msg {
+					result := keepass.CheckHIBP(pw)
+					return hibpResultMsg{
+						Breached: result.Breached,
+						Count:    result.Count,
+						Err:      result.Err,
+					}
+				}
+			}
+
+		case "o":
+			if m.entry.URL != "" {
+				return m, func() tea.Msg {
+					return OpenURLMsg{URL: m.entry.URL}
+				}
+			}
+		}
+	}
+
+	// Delegate all other messages to viewport for scrolling (j/k, up/down, pgup/pgdn, etc.)
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
+}
+
+func (m DetailModel) View() string {
+	if !m.ready {
+		return ""
+	}
+	return fmt.Sprintf("%s\n%s\n%s\n", m.headerView(), m.viewport.View(), m.footerView())
 }
 
 // renderStrength returns a styled strength label.
