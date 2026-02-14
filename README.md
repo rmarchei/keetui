@@ -37,6 +37,18 @@ cd keetui
 go build -o keetui ./cmd/keetui
 ```
 
+### Cross-compile with containers
+
+Requires `docker` or `podman`:
+
+```sh
+make all              # build all platforms (darwin + linux, amd64 + arm64)
+make linux-amd64      # build a single target
+make clean            # remove built binaries
+```
+
+Binaries are written to `dist/`. Override the version with `VERSION=v1.0.0 make`.
+
 ## Usage
 
 ```sh
