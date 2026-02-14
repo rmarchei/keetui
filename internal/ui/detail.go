@@ -5,10 +5,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/pquerna/otp/totp"
+	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/keepass"
 )
@@ -21,6 +23,25 @@ type hibpResultMsg struct {
 	Breached bool
 	Count    int
 	Err      error
+}
+
+// ExtractAttachmentMsg requests extracting an attachment to disk.
+type ExtractAttachmentMsg struct {
+	EntryUUID gokeepasslib.UUID
+	Name      string
+	DestPath  string
+}
+
+// DeleteAttachmentMsg requests deleting an attachment from an entry.
+type DeleteAttachmentMsg struct {
+	EntryUUID gokeepasslib.UUID
+	Name      string
+}
+
+// AddAttachmentMsg requests adding a file attachment to an entry.
+type AddAttachmentMsg struct {
+	EntryUUID gokeepasslib.UUID
+	FilePath  string
 }
 
 // DetailModel shows a read-only view of a single entry.
@@ -38,6 +59,12 @@ type DetailModel struct {
 	attachments  []keepass.Attachment
 	viewport     viewport.Model
 	ready        bool // true after first size is set
+
+	// Attachment mode state
+	attachMode       bool
+	attachIdx        int
+	addingAttachment bool            // true when file path input is shown
+	attachPathInput  textinput.Model // input for file path when adding attachment
 }
 
 // BackToBrowserMsg signals returning to the browser.
@@ -50,9 +77,16 @@ type CopyToClipboardMsg struct {
 }
 
 func NewDetailModel(entry keepass.Entry) DetailModel {
+	pi := textinput.New()
+	pi.Prompt = "  File path: "
+	pi.PromptStyle = labelStyle
+	pi.Width = 50
+	pi.Placeholder = "/path/to/file"
+
 	m := DetailModel{
-		entry:    entry,
-		strength: keepass.EvaluatePasswordStrength(entry.Password),
+		entry:           entry,
+		strength:        keepass.EvaluatePasswordStrength(entry.Password),
+		attachPathInput: pi,
 	}
 	m.refreshTOTP()
 	return m
@@ -136,7 +170,14 @@ func (m DetailModel) headerView() string {
 }
 
 func (m DetailModel) footerView() string {
-	help := "  p: toggle password  e: edit  o: open url  1: copy user  2: copy pass  3: copy url"
+	if m.addingAttachment {
+		return helpStyle.Render("  enter: add file  esc: cancel")
+	}
+	if m.attachMode {
+		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
+		return helpStyle.Render(help)
+	}
+	help := "  p: toggle password  e: edit  o: open url  a: attachments  1: copy user  2: copy pass  3: copy url"
 	if m.totpCode != "" {
 		help += "  4: copy totp"
 	}
@@ -207,12 +248,29 @@ func (m DetailModel) buildContent() string {
 
 	// Attachments
 	if len(m.attachments) > 0 {
-		b.WriteString(fmt.Sprintf("\n  %s\n", helpStyle.Render("Attachments:")))
-		for _, a := range m.attachments {
-			b.WriteString(fmt.Sprintf("    %s (%s)\n",
-				valueStyle.Render(a.Name),
+		label := "Attachments:"
+		if m.attachMode {
+			label = "Attachments (select):"
+		}
+		b.WriteString(fmt.Sprintf("\n  %s\n", helpStyle.Render(label)))
+		for i, a := range m.attachments {
+			cursor := "  "
+			nameStyle := valueStyle
+			if m.attachMode && i == m.attachIdx {
+				cursor = "> "
+				nameStyle = selectedItemStyle
+			}
+			b.WriteString(fmt.Sprintf("  %s%s (%s)\n",
+				cursor,
+				nameStyle.Render(a.Name),
 				hiddenStyle.Render(formatAttachmentSize(a.Size))))
 		}
+	}
+
+	if m.addingAttachment {
+		b.WriteString("\n")
+		b.WriteString(m.attachPathInput.View())
+		b.WriteString("\n")
 	}
 
 	// HIBP result
@@ -257,6 +315,106 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickTOTP()
 
 	case tea.KeyMsg:
+		// File path input mode for adding attachments
+		if m.addingAttachment {
+			switch msg.String() {
+			case "esc":
+				m.addingAttachment = false
+				m.attachPathInput.Blur()
+				m.attachPathInput.SetValue("")
+				if m.ready {
+					m.viewport.SetContent(m.buildContent())
+				}
+				return m, nil
+			case "enter":
+				path := m.attachPathInput.Value()
+				if path != "" {
+					m.addingAttachment = false
+					m.attachPathInput.Blur()
+					m.attachPathInput.SetValue("")
+					entryUUID := m.entry.UUID
+					return m, func() tea.Msg {
+						return AddAttachmentMsg{EntryUUID: entryUUID, FilePath: path}
+					}
+				}
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.attachPathInput, cmd = m.attachPathInput.Update(msg)
+				if m.ready {
+					m.viewport.SetContent(m.buildContent())
+				}
+				return m, cmd
+			}
+		}
+
+		// Attachment selection mode
+		if m.attachMode {
+			switch msg.String() {
+			case "esc", "h", "left":
+				m.attachMode = false
+				if m.ready {
+					m.viewport.SetContent(m.buildContent())
+				}
+				return m, nil
+			case "j", "down":
+				if m.attachIdx < len(m.attachments)-1 {
+					m.attachIdx++
+					if m.ready {
+						m.viewport.SetContent(m.buildContent())
+					}
+				}
+				return m, nil
+			case "k", "up":
+				if m.attachIdx > 0 {
+					m.attachIdx--
+					if m.ready {
+						m.viewport.SetContent(m.buildContent())
+					}
+				}
+				return m, nil
+			case "s", "enter":
+				if len(m.attachments) > 0 {
+					a := m.attachments[m.attachIdx]
+					entryUUID := m.entry.UUID
+					return m, func() tea.Msg {
+						return ExtractAttachmentMsg{
+							EntryUUID: entryUUID,
+							Name:      a.Name,
+							DestPath:  a.Name, // save to CWD with original name
+						}
+					}
+				}
+				return m, nil
+			case "d":
+				if len(m.attachments) > 0 {
+					a := m.attachments[m.attachIdx]
+					entryUUID := m.entry.UUID
+					return m, func() tea.Msg {
+						return DeleteAttachmentMsg{
+							EntryUUID: entryUUID,
+							Name:      a.Name,
+						}
+					}
+				}
+				return m, nil
+			case "+":
+				m.addingAttachment = true
+				m.attachPathInput.SetValue("")
+				m.attachPathInput.Focus()
+				if m.ready {
+					m.viewport.SetContent(m.buildContent())
+				}
+				return m, textinput.Blink
+			case "q":
+				return m, func() tea.Msg { return RequestQuitMsg{} }
+			case "ctrl+c":
+				return m, func() tea.Msg { return RequestQuitMsg{} }
+			}
+			return m, nil
+		}
+
+		// Normal detail view key handling
 		switch msg.String() {
 		case "q":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
@@ -277,6 +435,27 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg {
 				return EditEntryMsg{Entry: m.entry}
 			}
+
+		case "a":
+			// Enter attachment mode if there are attachments, or go to add mode
+			if len(m.attachments) > 0 {
+				m.attachMode = true
+				m.attachIdx = 0
+				if m.ready {
+					m.viewport.SetContent(m.buildContent())
+				}
+			} else {
+				// No attachments yet, go directly to add mode
+				m.attachMode = true
+				m.addingAttachment = true
+				m.attachPathInput.SetValue("")
+				m.attachPathInput.Focus()
+				if m.ready {
+					m.viewport.SetContent(m.buildContent())
+				}
+				return m, textinput.Blink
+			}
+			return m, nil
 
 		case "1":
 			return m, func() tea.Msg {

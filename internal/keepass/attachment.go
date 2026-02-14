@@ -93,7 +93,8 @@ func (d *DB) AddAttachmentFile(entryUUID gokeepasslib.UUID, filePath string) err
 	return d.AddAttachment(entryUUID, name, data)
 }
 
-// DeleteAttachment removes an attachment from an entry.
+// DeleteAttachment removes an attachment from an entry and cleans up
+// orphaned binary data from the database pool.
 func (d *DB) DeleteAttachment(entryUUID gokeepasslib.UUID, name string) error {
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return fmt.Errorf("database has no root group")
@@ -105,9 +106,62 @@ func (d *DB) DeleteAttachment(entryUUID gokeepasslib.UUID, name string) error {
 
 	for i, ref := range entry.Binaries {
 		if ref.Name == name {
+			binID := ref.Value.ID
 			entry.Binaries = append(entry.Binaries[:i], entry.Binaries[i+1:]...)
+			// Clean up the binary data if no other entry references it
+			if !d.isBinaryReferenced(binID) {
+				d.removeBinary(binID)
+			}
 			return nil
 		}
 	}
 	return fmt.Errorf("attachment %q not found", name)
+}
+
+// isBinaryReferenced returns true if any entry in the database references the binary ID.
+func (d *DB) isBinaryReferenced(binID int) bool {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return false
+	}
+	return groupReferencesBinary(&d.Database.Content.Root.Groups[0], binID)
+}
+
+func groupReferencesBinary(g *gokeepasslib.Group, binID int) bool {
+	for _, e := range g.Entries {
+		for _, ref := range e.Binaries {
+			if ref.Value.ID == binID {
+				return true
+			}
+		}
+	}
+	for i := range g.Groups {
+		if groupReferencesBinary(&g.Groups[i], binID) {
+			return true
+		}
+	}
+	return false
+}
+
+// removeBinary removes a binary from the database's binary pools.
+func (d *DB) removeBinary(binID int) {
+	// Remove from Meta.Binaries (KDBX 3.1)
+	if d.Database.Content.Meta != nil {
+		var kept gokeepasslib.Binaries
+		for _, b := range d.Database.Content.Meta.Binaries {
+			if b.ID != binID {
+				kept = append(kept, b)
+			}
+		}
+		d.Database.Content.Meta.Binaries = kept
+	}
+	// Remove from InnerHeader.Binaries (KDBX 4)
+	if d.Database.Content.InnerHeader != nil {
+		var kept gokeepasslib.Binaries
+		for _, b := range d.Database.Content.InnerHeader.Binaries {
+			if b.ID != binID {
+				kept = append(kept, b)
+			}
+		}
+		d.Database.Content.InnerHeader.Binaries = kept
+	}
 }

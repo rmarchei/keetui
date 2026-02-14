@@ -1,6 +1,7 @@
 package keepass
 
 import (
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/xml"
 	"fmt"
@@ -10,30 +11,36 @@ import (
 )
 
 // ExportCSV writes all entries in the database to a CSV file.
-// Columns: Group, Title, Username, Password, URL, Notes
+// Columns: Group, Title, Username, Password, URL, Notes, Attachments
 func (d *DB) ExportCSV(w io.Writer) error {
 	writer := csv.NewWriter(w)
 	defer writer.Flush()
 
 	// Write header
-	if err := writer.Write([]string{"Group", "Title", "Username", "Password", "URL", "Notes"}); err != nil {
+	if err := writer.Write([]string{"Group", "Title", "Username", "Password", "URL", "Notes", "Attachments"}); err != nil {
 		return fmt.Errorf("write CSV header: %w", err)
 	}
 
 	root := d.RootGroup()
-	return writeGroupCSV(writer, &root, root.Name)
+	return d.writeGroupCSV(writer, &root, root.Name)
 }
 
-func writeGroupCSV(w *csv.Writer, g *Group, path string) error {
+func (d *DB) writeGroupCSV(w *csv.Writer, g *Group, path string) error {
 	for _, e := range g.Entries {
-		record := []string{path, e.Title, e.UserName, e.Password, e.URL, e.Notes}
+		attachments := d.EntryAttachments(e.UUID)
+		var names []string
+		for _, a := range attachments {
+			names = append(names, a.Name)
+		}
+		attachStr := strings.Join(names, ";")
+		record := []string{path, e.Title, e.UserName, e.Password, e.URL, e.Notes, attachStr}
 		if err := w.Write(record); err != nil {
 			return fmt.Errorf("write CSV row: %w", err)
 		}
 	}
 	for i := range g.Groups {
 		subPath := path + "/" + g.Groups[i].Name
-		if err := writeGroupCSV(w, &g.Groups[i], subPath); err != nil {
+		if err := d.writeGroupCSV(w, &g.Groups[i], subPath); err != nil {
 			return err
 		}
 	}
@@ -70,7 +77,8 @@ type XMLGroup struct {
 
 // XMLEntry represents an entry in XML export.
 type XMLEntry struct {
-	Strings []XMLString `xml:"String"`
+	Strings  []XMLString `xml:"String"`
+	Binaries []XMLBinary `xml:"Binary,omitempty"`
 }
 
 // XMLString represents a key-value pair in XML export.
@@ -79,12 +87,18 @@ type XMLString struct {
 	Value string `xml:"Value"`
 }
 
+// XMLBinary represents a binary attachment in XML export.
+type XMLBinary struct {
+	Name string `xml:"Key"`
+	Data string `xml:"Value"` // base64-encoded content
+}
+
 // ExportXML writes all entries in the database to XML format.
 func (d *DB) ExportXML(w io.Writer) error {
 	root := d.RootGroup()
 	xmlDB := XMLDatabase{
 		Root: XMLRoot{
-			Group: convertGroupToXML(&root),
+			Group: d.convertGroupToXML(&root),
 		},
 	}
 
@@ -100,7 +114,7 @@ func (d *DB) ExportXML(w io.Writer) error {
 	return nil
 }
 
-func convertGroupToXML(g *Group) XMLGroup {
+func (d *DB) convertGroupToXML(g *Group) XMLGroup {
 	xg := XMLGroup{Name: g.Name}
 	for _, e := range g.Entries {
 		xe := XMLEntry{
@@ -115,12 +129,50 @@ func convertGroupToXML(g *Group) XMLGroup {
 		for _, cf := range e.CustomFields {
 			xe.Strings = append(xe.Strings, XMLString{Key: cf.Key, Value: cf.Value})
 		}
+		// Export binary attachments as base64
+		if d != nil {
+			attachments := d.EntryAttachments(e.UUID)
+			for _, a := range attachments {
+				bin := d.findBinaryByName(e.UUID, a.Name)
+				if bin != nil {
+					xe.Binaries = append(xe.Binaries, XMLBinary{
+						Name: a.Name,
+						Data: base64.StdEncoding.EncodeToString(bin),
+					})
+				}
+			}
+		}
 		xg.Entries = append(xg.Entries, xe)
 	}
 	for i := range g.Groups {
-		xg.Groups = append(xg.Groups, convertGroupToXML(&g.Groups[i]))
+		xg.Groups = append(xg.Groups, d.convertGroupToXML(&g.Groups[i]))
 	}
 	return xg
+}
+
+// findBinaryByName returns the raw bytes of an attachment by name.
+func (d *DB) findBinaryByName(entryUUID [16]byte, name string) []byte {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return nil
+	}
+	entry := findEntry(&d.Database.Content.Root.Groups[0], entryUUID)
+	if entry == nil {
+		return nil
+	}
+	for _, ref := range entry.Binaries {
+		if ref.Name == name {
+			bin := d.Database.FindBinary(ref.Value.ID)
+			if bin == nil {
+				return nil
+			}
+			data, err := bin.GetContentBytes()
+			if err != nil {
+				return nil
+			}
+			return data
+		}
+	}
+	return nil
 }
 
 // ExportXMLFile is a convenience wrapper that writes XML to a file.
@@ -252,6 +304,22 @@ func (d *DB) importXMLGroup(xg *XMLGroup, parentUUID [16]byte) (int, error) {
 		}
 		if err := d.AddEntry(groupUUID, entry); err != nil {
 			return imported, fmt.Errorf("add entry %q: %w", entry.Title, err)
+		}
+		// Restore binary attachments
+		if len(xe.Binaries) > 0 {
+			// Find the entry we just added (last entry in the group)
+			g := findGroup(&d.Database.Content.Root.Groups[0], groupUUID)
+			if g != nil && len(g.Entries) > 0 {
+				newEntry := &g.Entries[len(g.Entries)-1]
+				for _, xb := range xe.Binaries {
+					data, err := base64.StdEncoding.DecodeString(xb.Data)
+					if err != nil {
+						continue // skip malformed binary data
+					}
+					bin := d.Database.AddBinary(data)
+					newEntry.Binaries = append(newEntry.Binaries, bin.CreateReference(xb.Name))
+				}
+			}
 		}
 		imported++
 	}
