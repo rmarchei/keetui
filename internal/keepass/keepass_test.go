@@ -1,6 +1,7 @@
 package keepass
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1694,6 +1695,155 @@ func TestDeleteWithRecycleBinDisabled(t *testing.T) {
 		if g.Name == "Recycle Bin" {
 			t.Error("Recycle Bin should not be created when disabled")
 		}
+	}
+}
+
+func TestPasswordHistory(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	// Initially no history
+	history := db.EntryHistory(entry.UUID)
+	if len(history) != 0 {
+		t.Fatalf("initial history = %d, want 0", len(history))
+	}
+
+	// Update entry (should create a history record)
+	err = db.UpdateEntry(entry.UUID, Entry{
+		Title:    entry.Title,
+		UserName: entry.UserName,
+		Password: "newpassword1",
+	})
+	if err != nil {
+		t.Fatalf("UpdateEntry 1: %v", err)
+	}
+
+	history = db.EntryHistory(entry.UUID)
+	if len(history) != 1 {
+		t.Fatalf("history after first update = %d, want 1", len(history))
+	}
+	if history[0].Password != "testpass" {
+		t.Errorf("history[0].Password = %q, want %q", history[0].Password, "testpass")
+	}
+
+	// Update again
+	err = db.UpdateEntry(entry.UUID, Entry{
+		Title:    entry.Title,
+		UserName: entry.UserName,
+		Password: "newpassword2",
+	})
+	if err != nil {
+		t.Fatalf("UpdateEntry 2: %v", err)
+	}
+
+	history = db.EntryHistory(entry.UUID)
+	if len(history) != 2 {
+		t.Fatalf("history after second update = %d, want 2", len(history))
+	}
+	// Most recent first
+	if history[0].Password != "newpassword1" {
+		t.Errorf("history[0].Password = %q, want %q", history[0].Password, "newpassword1")
+	}
+	if history[1].Password != "testpass" {
+		t.Errorf("history[1].Password = %q, want %q", history[1].Password, "testpass")
+	}
+}
+
+func TestPasswordHistoryPersists(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	err = db.UpdateEntry(entry.UUID, Entry{
+		Title:    entry.Title,
+		UserName: entry.UserName,
+		Password: "newpassword",
+	})
+	if err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+
+	savePath := filepath.Join(dir, "test2.kdbx")
+	if err := db.SaveAs(savePath); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	root2 := db2.RootGroup()
+	entry2 := root2.Groups[0].Entries[0]
+
+	history := db2.EntryHistory(entry2.UUID)
+	if len(history) != 1 {
+		t.Fatalf("history after reload = %d, want 1", len(history))
+	}
+	if history[0].Password != "testpass" {
+		t.Errorf("history[0].Password = %q, want %q", history[0].Password, "testpass")
+	}
+
+	// HistoryCount should also be correct
+	if entry2.HistoryCount != 1 {
+		t.Errorf("HistoryCount = %d, want 1", entry2.HistoryCount)
+	}
+}
+
+func TestPasswordHistoryTrim(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Set max history items to 3
+	db.Database.Content.Meta.HistoryMaxItems = 3
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	// Make 5 updates
+	for i := 0; i < 5; i++ {
+		err = db.UpdateEntry(entry.UUID, Entry{
+			Title:    entry.Title,
+			UserName: entry.UserName,
+			Password: fmt.Sprintf("pass%d", i),
+		})
+		if err != nil {
+			t.Fatalf("UpdateEntry %d: %v", i, err)
+		}
+	}
+
+	history := db.EntryHistory(entry.UUID)
+	if len(history) != 3 {
+		t.Errorf("history = %d, want 3 (trimmed to max)", len(history))
 	}
 }
 
