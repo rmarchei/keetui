@@ -43,11 +43,22 @@ type Entry struct {
 	ExpiryTime       time.Time
 	Expires          bool
 	HistoryCount     int
+	Tags             string
 }
 
 // IsExpired returns true if the entry has an expiry date set and it is in the past.
 func (e Entry) IsExpired() bool {
 	return e.Expires && !e.ExpiryTime.IsZero() && time.Now().After(e.ExpiryTime)
+}
+
+// IsFavorite returns true if the entry has the "favorite" tag.
+func (e Entry) IsFavorite() bool {
+	for _, tag := range strings.Split(e.Tags, ";") {
+		if strings.TrimSpace(tag) == "favorite" {
+			return true
+		}
+	}
+	return false
 }
 
 // HistoryEntry represents a single password history record.
@@ -189,6 +200,7 @@ func convertGroup(g gokeepasslib.Group) Group {
 		if e.Times.LastModificationTime != nil {
 			entry.ModificationTime = e.Times.LastModificationTime.Time
 		}
+		entry.Tags = e.Tags
 		entry.Expires = e.Times.Expires.Bool
 		if e.Times.ExpiryTime != nil {
 			entry.ExpiryTime = e.Times.ExpiryTime.Time
@@ -317,6 +329,7 @@ func (d *DB) AddEntry(groupUUID gokeepasslib.UUID, e Entry) (gokeepasslib.UUID, 
 		mkValue("URL", e.URL),
 		mkValue("Notes", e.Notes),
 	}
+	entry.Tags = e.Tags
 	if e.TOTP != "" {
 		if strings.HasPrefix(e.TOTP, "otpauth://") {
 			entry.Values = append(entry.Values, mkProtectedValue("otp", e.TOTP))
@@ -431,7 +444,39 @@ func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 	} else {
 		entry.Times.Expires = w.NewBoolWrapper(false)
 	}
+	entry.Tags = e.Tags
 	entry.Times.LastModificationTime = &w.TimeWrapper{Time: time.Now()}
+	return nil
+}
+
+// ToggleFavorite adds or removes the "favorite" tag on an entry.
+func (d *DB) ToggleFavorite(entryUUID gokeepasslib.UUID) error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	entry := findEntry(&d.Database.Content.Root.Groups[0], entryUUID)
+	if entry == nil {
+		return fmt.Errorf("entry not found")
+	}
+	var tags []string
+	for _, t := range strings.Split(entry.Tags, ";") {
+		t = strings.TrimSpace(t)
+		if t != "" && t != "favorite" {
+			tags = append(tags, t)
+		}
+	}
+	// Check if it was a favorite before
+	isFav := false
+	for _, t := range strings.Split(entry.Tags, ";") {
+		if strings.TrimSpace(t) == "favorite" {
+			isFav = true
+			break
+		}
+	}
+	if !isFav {
+		tags = append(tags, "favorite")
+	}
+	entry.Tags = strings.Join(tags, ";")
 	return nil
 }
 
@@ -636,6 +681,7 @@ func (d *DB) DuplicateEntry(entryUUID gokeepasslib.UUID) (gokeepasslib.UUID, err
 			})
 		}
 	}
+	dup.Tags = original.Tags
 	dup.Times.CreationTime = &w.TimeWrapper{Time: time.Now()}
 	dup.Times.LastModificationTime = &w.TimeWrapper{Time: time.Now()}
 
@@ -1014,6 +1060,7 @@ func (d *DB) GetEntry(entryUUID gokeepasslib.UUID) (Entry, error) {
 		URL:      raw.GetContent("URL"),
 		Notes:    raw.GetContent("Notes"),
 		TOTP:     extractTOTP(*raw),
+		Tags:     raw.Tags,
 		Expires:  raw.Times.Expires.Bool,
 	}
 	if raw.Times.CreationTime != nil {

@@ -78,6 +78,11 @@ type OpenURLMsg struct {
 	URL string
 }
 
+// ToggleFavoriteMsg requests toggling the favorite status of an entry.
+type ToggleFavoriteMsg struct {
+	EntryUUID gokeepasslib.UUID
+}
+
 // RequestQuitMsg is sent by sub-views when the user presses q.
 // The AppModel checks for unsaved changes before actually quitting.
 type RequestQuitMsg struct{}
@@ -470,6 +475,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
 			statusCmd("Recycle bin emptied", false),
+		)
+
+	case ToggleFavoriteMsg:
+		if m.readOnly {
+			return m, statusCmd("Read-only mode", true)
+		}
+		if err := m.db.ToggleFavorite(msg.EntryUUID); err != nil {
+			return m, statusCmd(fmt.Sprintf("Error toggling favorite: %s", err), true)
+		}
+		m.undoStack.push(undoAction{
+			actionType:  undoToggleFavorite,
+			description: "Toggle favorite",
+			entryUUID:   msg.EntryUUID,
+		})
+		m.dirty = true
+		return m, tea.Batch(
+			func() tea.Msg { return RefreshMsg{} },
+			statusCmd("Favorite toggled", false),
 		)
 
 	case DuplicateEntryMsg:
@@ -873,6 +896,8 @@ func (m AppModel) handleUndo() (tea.Model, tea.Cmd) {
 		err = m.db.PermanentlyDeleteEntry(action.createdUUID)
 	case undoAddGroup:
 		err = m.db.PermanentlyDeleteGroup(action.createdUUID)
+	case undoToggleFavorite:
+		err = m.db.ToggleFavorite(action.entryUUID)
 	}
 
 	if err != nil {
