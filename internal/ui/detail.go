@@ -88,7 +88,9 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q":
+			return m, func() tea.Msg { return RequestQuitMsg{} }
+		case "ctrl+c":
 			return m, tea.Quit
 
 		case "esc", "h", "left":
@@ -179,6 +181,17 @@ func (m DetailModel) View() string {
 				strings.Repeat(" ", 13),
 				valueStyle.Render(line)))
 		}
+	}
+
+	if !m.entry.CreationTime.IsZero() {
+		b.WriteString(fmt.Sprintf("  %s %s\n",
+			labelStyle.Render("Created:"),
+			hiddenStyle.Render(m.entry.CreationTime.Local().Format("2006-01-02 15:04:05"))))
+	}
+	if !m.entry.ModificationTime.IsZero() {
+		b.WriteString(fmt.Sprintf("  %s %s\n",
+			labelStyle.Render("Modified:"),
+			hiddenStyle.Render(m.entry.ModificationTime.Local().Format("2006-01-02 15:04:05"))))
 	}
 
 	for _, cf := range m.entry.CustomFields {
