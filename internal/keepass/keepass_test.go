@@ -9,6 +9,7 @@ import (
 
 	"github.com/pquerna/otp/totp"
 	"github.com/tobischo/gokeepasslib/v3"
+	w "github.com/tobischo/gokeepasslib/v3/wrappers"
 )
 
 func createTestDB(t *testing.T, path, password string) {
@@ -1505,6 +1506,194 @@ func TestIsExpired(t *testing.T) {
 				t.Errorf("IsExpired() = %v, want %v", got, tt.expired)
 			}
 		})
+	}
+}
+
+func TestRecycleBinDelete(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Enable recycle bin
+	db.Database.Content.Meta.RecycleBinEnabled = w.NewBoolWrapper(true)
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	// Delete entry (should move to recycle bin)
+	err = db.DeleteEntry(entry.UUID)
+	if err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+
+	// Entry should be in recycle bin, not in original group
+	root = db.RootGroup()
+	emailGroup := root.Groups[0]
+	if emailGroup.Name == "Recycle Bin" {
+		emailGroup = root.Groups[1]
+	}
+	if len(emailGroup.Entries) != 0 {
+		t.Errorf("email entries = %d, want 0", len(emailGroup.Entries))
+	}
+
+	// Find recycle bin
+	var rbGroup *Group
+	for i := range root.Groups {
+		if root.Groups[i].Name == "Recycle Bin" {
+			rbGroup = &root.Groups[i]
+		}
+	}
+	if rbGroup == nil {
+		t.Fatal("Recycle Bin group not found")
+	}
+	if len(rbGroup.Entries) != 1 {
+		t.Errorf("recycle bin entries = %d, want 1", len(rbGroup.Entries))
+	}
+}
+
+func TestRecycleBinPermanentDelete(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	// Permanently delete (no recycle bin)
+	err = db.PermanentlyDeleteEntry(entry.UUID)
+	if err != nil {
+		t.Fatalf("PermanentlyDeleteEntry: %v", err)
+	}
+
+	root = db.RootGroup()
+	if len(root.Groups[0].Entries) != 0 {
+		t.Errorf("entries = %d, want 0", len(root.Groups[0].Entries))
+	}
+}
+
+func TestRecycleBinRestore(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	db.Database.Content.Meta.RecycleBinEnabled = w.NewBoolWrapper(true)
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	// Delete (move to recycle bin)
+	err = db.DeleteEntry(entry.UUID)
+	if err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+
+	// Restore to root
+	root = db.RootGroup()
+	err = db.RestoreEntry(entry.UUID, root.UUID)
+	if err != nil {
+		t.Fatalf("RestoreEntry: %v", err)
+	}
+
+	// Entry should be in root now
+	root = db.RootGroup()
+	if len(root.Entries) != 1 {
+		t.Errorf("root entries after restore = %d, want 1", len(root.Entries))
+	}
+}
+
+func TestEmptyRecycleBin(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	db.Database.Content.Meta.RecycleBinEnabled = w.NewBoolWrapper(true)
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	err = db.DeleteEntry(entry.UUID)
+	if err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+
+	err = db.EmptyRecycleBin()
+	if err != nil {
+		t.Fatalf("EmptyRecycleBin: %v", err)
+	}
+
+	// Recycle bin should be empty
+	root = db.RootGroup()
+	for _, g := range root.Groups {
+		if g.Name == "Recycle Bin" {
+			if len(g.Entries) != 0 {
+				t.Errorf("recycle bin entries = %d, want 0", len(g.Entries))
+			}
+			if len(g.Groups) != 0 {
+				t.Errorf("recycle bin groups = %d, want 0", len(g.Groups))
+			}
+		}
+	}
+}
+
+func TestDeleteWithRecycleBinDisabled(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Recycle bin is disabled by default
+	if db.RecycleBinEnabled() {
+		t.Fatal("recycle bin should be disabled by default")
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	err = db.DeleteEntry(entry.UUID)
+	if err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+
+	// Should be permanently deleted (no recycle bin group created)
+	root = db.RootGroup()
+	for _, g := range root.Groups {
+		if g.Name == "Recycle Bin" {
+			t.Error("Recycle Bin should not be created when disabled")
+		}
 	}
 }
 

@@ -340,8 +340,80 @@ func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 	return nil
 }
 
-// DeleteEntry removes an entry identified by entryUUID from its parent group.
+// RecycleBinEnabled returns whether the recycle bin is enabled in database metadata.
+func (d *DB) RecycleBinEnabled() bool {
+	return d.Database.Content.Meta.RecycleBinEnabled.Bool
+}
+
+// RecycleBinUUID returns the UUID of the recycle bin group.
+func (d *DB) RecycleBinUUID() gokeepasslib.UUID {
+	return d.Database.Content.Meta.RecycleBinUUID
+}
+
+// IsRecycleBin returns true if the group with the given UUID is the recycle bin.
+func (d *DB) IsRecycleBin(groupUUID gokeepasslib.UUID) bool {
+	if !d.RecycleBinEnabled() {
+		return false
+	}
+	return d.RecycleBinUUID().Compare(groupUUID)
+}
+
+// ensureRecycleBin creates a Recycle Bin group if one doesn't exist and returns its UUID.
+func (d *DB) ensureRecycleBin() gokeepasslib.UUID {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return gokeepasslib.UUID{}
+	}
+	root := &d.Database.Content.Root.Groups[0]
+	rbUUID := d.RecycleBinUUID()
+
+	// Check if the recycle bin group already exists
+	if g := findGroup(root, rbUUID); g != nil {
+		return rbUUID
+	}
+
+	// Create the recycle bin group
+	rbGroup := gokeepasslib.NewGroup()
+	rbGroup.Name = "Recycle Bin"
+	root.Groups = append(root.Groups, rbGroup)
+
+	// Set metadata
+	d.Database.Content.Meta.RecycleBinEnabled = w.NewBoolWrapper(true)
+	d.Database.Content.Meta.RecycleBinUUID = rbGroup.UUID
+	now := w.Now()
+	d.Database.Content.Meta.RecycleBinChanged = &now
+
+	return rbGroup.UUID
+}
+
+// DeleteEntry removes an entry. If recycle bin is enabled, moves to recycle bin instead.
 func (d *DB) DeleteEntry(entryUUID gokeepasslib.UUID) error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	if d.RecycleBinEnabled() {
+		// Check if entry is already in recycle bin
+		root := &d.Database.Content.Root.Groups[0]
+		rbUUID := d.RecycleBinUUID()
+		rbGroup := findGroup(root, rbUUID)
+		if rbGroup != nil {
+			for _, e := range rbGroup.Entries {
+				if e.UUID.Compare(entryUUID) {
+					// Already in recycle bin, permanently delete
+					return d.PermanentlyDeleteEntry(entryUUID)
+				}
+			}
+		}
+		rbUUID = d.ensureRecycleBin()
+		return d.MoveEntry(entryUUID, rbUUID)
+	}
+	if !removeEntry(&d.Database.Content.Root.Groups[0], entryUUID) {
+		return fmt.Errorf("entry not found")
+	}
+	return nil
+}
+
+// PermanentlyDeleteEntry removes an entry without using the recycle bin.
+func (d *DB) PermanentlyDeleteEntry(entryUUID gokeepasslib.UUID) error {
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return fmt.Errorf("database has no root group")
 	}
@@ -492,14 +564,69 @@ func (d *DB) RenameGroup(groupUUID gokeepasslib.UUID, newName string) error {
 	return nil
 }
 
-// DeleteGroup removes a sub-group identified by groupUUID.
+// DeleteGroup removes a sub-group. If recycle bin is enabled, moves to recycle bin instead.
 func (d *DB) DeleteGroup(groupUUID gokeepasslib.UUID) error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	if d.RecycleBinEnabled() {
+		// Don't move the recycle bin itself
+		if d.IsRecycleBin(groupUUID) {
+			return fmt.Errorf("cannot delete the recycle bin group")
+		}
+		// Check if group is already in recycle bin
+		root := &d.Database.Content.Root.Groups[0]
+		rbGroup := findGroup(root, d.RecycleBinUUID())
+		if rbGroup != nil {
+			for i := range rbGroup.Groups {
+				if rbGroup.Groups[i].UUID.Compare(groupUUID) {
+					// Already in recycle bin, permanently delete
+					return d.PermanentlyDeleteGroup(groupUUID)
+				}
+			}
+		}
+		rbUUID := d.ensureRecycleBin()
+		return d.MoveGroup(groupUUID, rbUUID)
+	}
+	if !removeGroup(&d.Database.Content.Root.Groups[0], groupUUID) {
+		return fmt.Errorf("group not found")
+	}
+	return nil
+}
+
+// PermanentlyDeleteGroup removes a group without using the recycle bin.
+func (d *DB) PermanentlyDeleteGroup(groupUUID gokeepasslib.UUID) error {
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return fmt.Errorf("database has no root group")
 	}
 	if !removeGroup(&d.Database.Content.Root.Groups[0], groupUUID) {
 		return fmt.Errorf("group not found")
 	}
+	return nil
+}
+
+// RestoreEntry moves an entry from the recycle bin to the given target group.
+func (d *DB) RestoreEntry(entryUUID, targetGroupUUID gokeepasslib.UUID) error {
+	return d.MoveEntry(entryUUID, targetGroupUUID)
+}
+
+// RestoreGroup moves a group from the recycle bin to the given target group.
+func (d *DB) RestoreGroup(groupUUID, targetGroupUUID gokeepasslib.UUID) error {
+	return d.MoveGroup(groupUUID, targetGroupUUID)
+}
+
+// EmptyRecycleBin removes all entries and sub-groups from the recycle bin.
+func (d *DB) EmptyRecycleBin() error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	root := &d.Database.Content.Root.Groups[0]
+	rbGroup := findGroup(root, d.RecycleBinUUID())
+	if rbGroup == nil {
+		return fmt.Errorf("recycle bin not found")
+	}
+	rbGroup.Entries = nil
+	rbGroup.Groups = nil
 	return nil
 }
 
