@@ -125,6 +125,7 @@ func NewApp(filePath, keyFilePath string, cfg config.Config, readOnly ...bool) A
 	if len(readOnly) > 0 {
 		ro = readOnly[0]
 	}
+	ApplyTheme(GetTheme(cfg.Theme()))
 	return AppModel{
 		state:        viewUnlock,
 		unlock:       NewUnlockModel(filePath, keyFilePath),

@@ -215,6 +215,20 @@ func TestSaveAndLoad(t *testing.T) {
 	}
 }
 
+func TestThemeDefault(t *testing.T) {
+	cfg := Default()
+	if got := cfg.Theme(); got != "dark" {
+		t.Errorf("Theme() = %q, want %q", got, "dark")
+	}
+}
+
+func TestThemeCustom(t *testing.T) {
+	cfg := Config{ThemeName: "light"}
+	if got := cfg.Theme(); got != "light" {
+		t.Errorf("Theme() = %q, want %q", got, "light")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

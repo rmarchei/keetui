@@ -21,6 +21,7 @@ const (
 	settingPWLowercase
 	settingPWDigits
 	settingPWSymbols
+	settingTheme
 	settingCount
 )
 
@@ -33,6 +34,7 @@ var settingLabels = [settingCount]string{
 	"Lowercase (a-z)",
 	"Digits (0-9)",
 	"Symbols (!@#...)",
+	"Theme",
 }
 
 var settingDescriptions = [settingCount]string{
@@ -44,6 +46,7 @@ var settingDescriptions = [settingCount]string{
 	"Include lowercase letters in generated passwords (1: on, 0: off)",
 	"Include digits in generated passwords (1: on, 0: off)",
 	"Include symbols in generated passwords (1: on, 0: off)",
+	"Color theme: dark, light, high-contrast",
 }
 
 // ShowSettingsMsg requests showing the settings view.
@@ -101,6 +104,9 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 	inputs[settingPWDigits].CharLimit = 1
 	inputs[settingPWSymbols].SetValue(boolToStr(cfg.PasswordHasSymbols()))
 	inputs[settingPWSymbols].CharLimit = 1
+
+	inputs[settingTheme].SetValue(cfg.Theme())
+	inputs[settingTheme].CharLimit = 15
 
 	inputs[0].Focus()
 
@@ -227,6 +233,20 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	themeName := strings.TrimSpace(m.inputs[settingTheme].Value())
+	validTheme := false
+	for _, name := range ThemeNames() {
+		if themeName == name {
+			validTheme = true
+			break
+		}
+	}
+	if !validTheme {
+		m.status = "Theme must be one of: dark, light, high-contrast"
+		m.isError = true
+		return m, nil
+	}
+
 	boolPtr := func(b bool) *bool { return &b }
 
 	newCfg := config.Config{
@@ -238,6 +258,7 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		PasswordLowercase:     boolPtr(lower),
 		PasswordDigits:        boolPtr(digits),
 		PasswordSymbols:       boolPtr(symbols),
+		ThemeName:             themeName,
 	}
 
 	if err := newCfg.Save(); err != nil {
@@ -246,6 +267,7 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	ApplyTheme(GetTheme(themeName))
 	m.cfg = newCfg
 	m.inputs[settingClipboardClear].SetValue(strconv.Itoa(clipSec))
 	m.inputs[settingAutoLock].SetValue(strconv.Itoa(lockMin))
