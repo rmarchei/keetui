@@ -14,9 +14,10 @@ import (
 
 // listItem represents either a group or entry in the browser list.
 type listItem struct {
-	isGroup bool
-	group   keepass.Group
-	entry   keepass.Entry
+	isGroup   bool
+	group     keepass.Group
+	entry     keepass.Entry
+	groupPath string // parent group path for search results (e.g., "Root > Email")
 }
 
 func (l listItem) name() string {
@@ -46,8 +47,9 @@ type BrowserModel struct {
 	searching   bool
 	searchInput textinput.Model
 	searchQuery string
-	allItems    []listItem              // unfiltered items for search
-	cutEntry    *gokeepasslib.UUID      // entry UUID in the clipboard for move
+	allItems    []listItem         // unfiltered items for search
+	cutEntry    *gokeepasslib.UUID // entry UUID in the clipboard for move
+	cutGroup    *gokeepasslib.UUID // group UUID in the clipboard for move
 }
 
 // ViewEntryMsg requests viewing the detail of an entry.
@@ -133,12 +135,17 @@ func sortItems(items []listItem) {
 
 // collectAllEntries recursively gathers all entries from a group tree.
 func collectAllEntries(g keepass.Group) []listItem {
+	return collectAllEntriesWithPath(g, g.Name)
+}
+
+func collectAllEntriesWithPath(g keepass.Group, path string) []listItem {
 	var items []listItem
 	for _, e := range g.Entries {
-		items = append(items, listItem{isGroup: false, entry: e})
+		items = append(items, listItem{isGroup: false, entry: e, groupPath: path})
 	}
 	for _, sg := range g.Groups {
-		items = append(items, collectAllEntries(sg)...)
+		subPath := path + " > " + sg.Name
+		items = append(items, collectAllEntriesWithPath(sg, subPath)...)
 	}
 	return items
 }
@@ -205,13 +212,19 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		root := m.db.RootGroup()
 		// Rebuild the stack from UUIDs
 		m.stack = []stackFrame{{group: root, cursor: 0, offset: 0}}
-		m.items = buildItems(root)
-		m.cursor = 0
-		m.offset = 0
-		m.searching = false
-		m.searchQuery = ""
-		m.searchInput.SetValue("")
-		m.cutEntry = nil
+		if m.searchQuery != "" {
+			// Re-run the search to preserve results
+			m.allItems = collectAllEntries(root)
+			sortItems(m.allItems)
+			m.searchInput.SetValue(m.searchQuery)
+			m.applySearch()
+		} else {
+			m.items = buildItems(root)
+			m.cursor = 0
+			m.offset = 0
+			m.searching = false
+			m.searchInput.SetValue("")
+		}
 		return m, nil
 
 	case StatusMsg:
@@ -250,7 +263,9 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Normal mode key handling
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q":
+			return m, func() tea.Msg { return RequestQuitMsg{} }
+		case "ctrl+c":
 			return m, tea.Quit
 
 		case "/":
@@ -357,24 +372,37 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "x":
-			// Cut entry for move
+			// Cut entry or group for move
 			if len(m.items) == 0 {
 				break
 			}
 			item := m.items[m.cursor]
-			if !item.isGroup {
+			if item.isGroup {
+				uuid := item.group.UUID
+				m.cutGroup = &uuid
+				m.cutEntry = nil
+				m.status = successStyle.Render(fmt.Sprintf("Cut group: %s (navigate to target group and press v to paste)", item.group.Name))
+			} else {
 				uuid := item.entry.UUID
 				m.cutEntry = &uuid
+				m.cutGroup = nil
 				m.status = successStyle.Render(fmt.Sprintf("Cut: %s (navigate to target group and press v to paste)", item.entry.Title))
 			}
 
 		case "v":
-			// Paste cut entry into current group
+			// Paste cut entry or group into current group
 			if m.cutEntry != nil {
 				entryUUID := *m.cutEntry
 				cg := m.currentGroup()
 				return m, func() tea.Msg {
 					return PasteEntryMsg{EntryUUID: entryUUID, TargetGroupUUID: cg.UUID}
+				}
+			}
+			if m.cutGroup != nil {
+				groupUUID := *m.cutGroup
+				cg := m.currentGroup()
+				return m, func() tea.Msg {
+					return PasteGroupMsg{GroupUUID: groupUUID, TargetGroupUUID: cg.UUID}
 				}
 			}
 
@@ -390,6 +418,11 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, func() tea.Msg {
 				return DeleteEntryMsg{EntryUUID: item.entry.UUID}
+			}
+
+		case "P":
+			return m, func() tea.Msg {
+				return ChangePasswordStartMsg{}
 			}
 
 		case "s", "ctrl+s":
@@ -455,10 +488,19 @@ func (m BrowserModel) View() string {
 				if name == "" {
 					name = "(untitled)"
 				}
-				if i == m.cursor {
-					line = fmt.Sprintf("%s%s%s", cursor, icon, selectedItemStyle.Render(name))
+				if item.groupPath != "" {
+					suffix := hiddenStyle.Render(fmt.Sprintf("  (%s)", item.groupPath))
+					if i == m.cursor {
+						line = fmt.Sprintf("%s%s%s%s", cursor, icon, selectedItemStyle.Render(name), suffix)
+					} else {
+						line = fmt.Sprintf("%s%s%s%s", cursor, icon, entryStyle.Render(name), suffix)
+					}
 				} else {
-					line = fmt.Sprintf("%s%s%s", cursor, icon, entryStyle.Render(name))
+					if i == m.cursor {
+						line = fmt.Sprintf("%s%s%s", cursor, icon, selectedItemStyle.Render(name))
+					} else {
+						line = fmt.Sprintf("%s%s%s", cursor, icon, entryStyle.Render(name))
+					}
 				}
 			}
 			b.WriteString(line)
@@ -480,7 +522,7 @@ func (m BrowserModel) View() string {
 	if m.searching {
 		b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
 	} else {
-		help := "  j/k: nav  enter/l: open  h/esc: back  /: search  n: new  g: group  r: rename  y: dup  x: cut  v: paste  d: del  s: save  q: quit"
+		help := "  j/k: nav  enter/l: open  h/esc: back  /: search  n: new  g: group  r: rename  y: dup  x: cut  v: paste  d: del  s: save  P: password  q: quit"
 		b.WriteString(helpStyle.Render(help))
 	}
 	b.WriteString("\n")
