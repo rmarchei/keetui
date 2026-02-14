@@ -1,6 +1,9 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // KeyBindings holds configurable key mappings for the TUI.
 // Empty strings are filled from defaults via Merge.
@@ -246,4 +249,57 @@ func (kb KeyBindings) Validate() error {
 		return fmt.Errorf("duplicate keybindings: %s", dupes)
 	}
 	return nil
+}
+
+// String returns a human-readable table of all keybindings.
+func (kb KeyBindings) String() string {
+	var b strings.Builder
+	section := func(title string, bindings []struct{ name, key string }) {
+		b.WriteString(title + ":\n")
+		for _, bind := range bindings {
+			b.WriteString(fmt.Sprintf("  %-20s %s\n", bind.name, bind.key))
+		}
+	}
+
+	section("Browser", []struct{ name, key string }{
+		{"nav_up", kb.NavUp},
+		{"nav_down", kb.NavDown},
+		{"open", kb.Open},
+		{"back", kb.Back},
+		{"search", kb.Search},
+		{"new_entry", kb.NewEntry},
+		{"new_group", kb.NewGroup},
+		{"rename_group", kb.RenameGroup},
+		{"delete", kb.Delete},
+		{"duplicate", kb.Duplicate},
+		{"cut", kb.Cut},
+		{"paste", kb.Paste},
+		{"save", kb.Save},
+		{"show_stats", kb.ShowStats},
+		{"show_audit", kb.ShowAudit},
+		{"show_settings", kb.ShowSettings},
+		{"change_password", kb.ChangePassword},
+		{"quit", kb.Quit},
+	})
+
+	section("Detail", []struct{ name, key string }{
+		{"toggle_password", kb.TogglePassword},
+		{"edit", kb.Edit},
+		{"open_url", kb.OpenURL},
+		{"attachments", kb.Attachments},
+		{"copy_username", kb.CopyUsername},
+		{"copy_password", kb.CopyPassword},
+		{"copy_url", kb.CopyURL},
+		{"copy_totp", kb.CopyTOTP},
+		{"hibp_check", kb.HIBPCheck},
+		{"show_qr", kb.ShowQR},
+		{"show_history", kb.ShowHistory},
+	})
+
+	section("Recycle Bin", []struct{ name, key string }{
+		{"restore", kb.Restore},
+		{"empty_recycle_bin", kb.EmptyRecycleBin},
+	})
+
+	return b.String()
 }
