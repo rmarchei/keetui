@@ -37,17 +37,24 @@ cd keetui
 go build -o keetui ./cmd/keetui
 ```
 
-### Cross-compile with containers
-
-Requires `docker` or `podman`:
+### Build with Make
 
 ```sh
-make all              # build all platforms (darwin + linux, amd64 + arm64)
+make                  # build for current OS/arch (uses container if available)
+make test             # run tests (uses container if available)
+make all              # cross-compile all platforms (requires docker/podman/container)
 make linux-amd64      # build a single target
+make install          # install to /usr/local/bin
 make clean            # remove built binaries
 ```
 
-Binaries are written to `dist/`. Override the version with `VERSION=v1.0.0 make`.
+Binaries are written to `dist/`. Override variables as needed:
+
+```sh
+VERSION=v1.0.0 make
+CONTAINER_RUNTIME=podman make
+CONTAINER_RUNTIME= make       # skip container, use local go
+```
 
 ## Usage
 
@@ -122,15 +129,19 @@ Settings are stored in `~/.config/keetui/config.json`:
 {
   "clipboard_clear_seconds": 15,
   "auto_lock_minutes": 5,
-  "password_length": 20
+  "password_length": 20,
+  "show_password_strength": true
 }
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `clipboard_clear_seconds` | 15 | Seconds before clipboard is automatically cleared |
-| `auto_lock_minutes` | 5 | Minutes of inactivity before the database locks |
+| `clipboard_clear_seconds` | 15 | Seconds before clipboard is automatically cleared (0: disable) |
+| `auto_lock_minutes` | 5 | Minutes of inactivity before the database locks (0: disable) |
 | `password_length` | 20 | Length of generated passwords (minimum 8) |
+| `show_password_strength` | true | Show password strength indicator in detail and editor views |
+
+Use `keetui -config` to view current settings. Settings can also be edited from the TUI (press `S` in the browser).
 
 ## Security
 
