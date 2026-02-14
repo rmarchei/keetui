@@ -302,7 +302,7 @@ func (m EditorModel) View() string {
 
 	for i := range m.inputs {
 		b.WriteString(m.inputs[i].View())
-		if i == fieldPassword {
+		if i == fieldPassword && m.cfg.ShowPasswordStrength {
 			// Show password strength inline
 			pw := m.inputs[fieldPassword].Value()
 			if pw != "" {
