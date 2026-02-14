@@ -56,7 +56,7 @@ func (m GroupInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC:
-			return m, tea.Quit
+			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case tea.KeyEsc:
 			return m, func() tea.Msg { return CancelEditMsg{} }
 		case tea.KeyEnter:
