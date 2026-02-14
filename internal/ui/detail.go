@@ -48,9 +48,9 @@ type AddAttachmentMsg struct {
 
 // DetailModel shows a read-only view of a single entry.
 type DetailModel struct {
-	entry        keepass.Entry
-	showPassword bool
-	showQR       bool
+	entry          keepass.Entry
+	revealedFields map[string]bool // per-field password visibility, keyed by field label
+	showQR         bool
 	qrLabel      string // label of the field currently shown as QR
 	totpCode     string
 	totpRemain   int // seconds remaining in current TOTP period
@@ -78,27 +78,104 @@ type DetailModel struct {
 
 // selectableField represents a field the user can highlight and act on.
 type selectableField struct {
-	label   string
-	value   string // used for copy
-	qrValue string // used for QR; if empty, falls back to value
+	label     string
+	value     string // used for copy
+	qrValue   string // used for QR; if empty, falls back to value
+	protected bool   // true for password-type fields that can be revealed
 }
 
 // selectableFields returns the ordered list of fields the cursor can move through.
 func (m DetailModel) selectableFields() []selectableField {
 	var f []selectableField
 	f = append(f, selectableField{label: "username", value: m.entry.UserName})
-	f = append(f, selectableField{label: "password", value: m.entry.Password})
+	f = append(f, selectableField{label: "password", value: m.entry.Password, protected: true})
 	f = append(f, selectableField{label: "URL", value: m.entry.URL})
 	if m.totpCode != "" {
-		f = append(f, selectableField{label: "TOTP", value: m.totpCode, qrValue: m.entry.TOTP})
+		f = append(f, selectableField{label: "TOTP", value: m.totpCode, qrValue: m.entry.TOTP, protected: true})
 	}
 	if m.entry.Notes != "" {
 		f = append(f, selectableField{label: "notes", value: m.entry.Notes})
 	}
 	for _, cf := range m.entry.CustomFields {
-		f = append(f, selectableField{label: cf.Key, value: cf.Value})
+		f = append(f, selectableField{label: cf.Key, value: cf.Value, protected: cf.Protected})
 	}
 	return f
+}
+
+// fieldAtLine returns the selectable field index for a given content line number.
+// Returns (index, true) if the line corresponds to a selectable field, or (0, false) otherwise.
+func (m DetailModel) fieldAtLine(line int) (int, bool) {
+	if line < 0 {
+		return 0, false
+	}
+	fieldIdx := 0
+	currentLine := 0
+
+	// Username (1 line)
+	if line == currentLine {
+		return fieldIdx, true
+	}
+	fieldIdx++
+	currentLine++
+
+	// Password (1 line)
+	if line == currentLine {
+		return fieldIdx, true
+	}
+	fieldIdx++
+	currentLine++
+
+	// URL (1 line)
+	if line == currentLine {
+		return fieldIdx, true
+	}
+	fieldIdx++
+	currentLine++
+
+	// TOTP (1 line, optional)
+	if m.totpCode != "" {
+		if line == currentLine {
+			return fieldIdx, true
+		}
+		fieldIdx++
+		currentLine++
+	}
+
+	// Notes (1 label line + N body lines, optional)
+	if m.entry.Notes != "" {
+		bodyLines := len(strings.Split(m.entry.Notes, "\n"))
+		totalNotesLines := 1 + bodyLines // label + body
+		if line == currentLine {
+			return fieldIdx, true // click on "Notes:" label
+		}
+		if line > currentLine && line < currentLine+totalNotesLines {
+			return fieldIdx, true // click on notes body
+		}
+		fieldIdx++
+		currentLine += totalNotesLines
+	}
+
+	// Non-selectable timestamp lines
+	if !m.entry.CreationTime.IsZero() {
+		currentLine++
+	}
+	if !m.entry.ModificationTime.IsZero() {
+		currentLine++
+	}
+	if m.entry.Expires {
+		currentLine++
+	}
+
+	// Custom fields (1 line each)
+	for range m.entry.CustomFields {
+		if line == currentLine {
+			return fieldIdx, true
+		}
+		fieldIdx++
+		currentLine++
+	}
+
+	return 0, false
 }
 
 // BackToBrowserMsg signals returning to the browser.
@@ -124,6 +201,7 @@ func NewDetailModel(entry keepass.Entry, cfg config.Config) DetailModel {
 		entry:           entry,
 		cfg:             cfg,
 		keys:            cfg.Keys(),
+		revealedFields:  make(map[string]bool),
 		attachPathInput: pi,
 	}
 	if cfg.ShowPasswordStrength {
@@ -301,7 +379,7 @@ func (m DetailModel) buildContent() string {
 		valueStyle.Render(m.entry.UserName)))
 
 	pw := strings.Repeat("*", len(m.entry.Password))
-	if m.showPassword {
+	if m.revealedFields["password"] {
 		pw = m.entry.Password
 	}
 	if m.cfg.ShowPasswordStrength {
@@ -324,12 +402,19 @@ func (m DetailModel) buildContent() string {
 		valueStyle.Render(m.entry.URL)))
 
 	if m.totpCode != "" {
-		bar := totpCountdownBar(m.totpRemain, int(keepass.TOTPPeriod(m.entry.TOTP)))
-		b.WriteString(fmt.Sprintf("%s%s %s  %s\n",
-			cursor(),
-			labelStyle.Render("TOTP:"),
-			valueStyle.Render(m.totpCode),
-			helpStyle.Render(fmt.Sprintf("%s %ds", bar, m.totpRemain))))
+		if m.revealedFields["TOTP"] {
+			b.WriteString(fmt.Sprintf("%s%s %s\n",
+				cursor(),
+				labelStyle.Render("TOTP:"),
+				valueStyle.Render(m.entry.TOTP)))
+		} else {
+			bar := totpCountdownBar(m.totpRemain, int(keepass.TOTPPeriod(m.entry.TOTP)))
+			b.WriteString(fmt.Sprintf("%s%s %s  %s\n",
+				cursor(),
+				labelStyle.Render("TOTP:"),
+				valueStyle.Render(m.totpCode),
+				helpStyle.Render(fmt.Sprintf("%s %ds", bar, m.totpRemain))))
+		}
 	}
 
 	if m.entry.Notes != "" {
@@ -368,7 +453,7 @@ func (m DetailModel) buildContent() string {
 
 	for _, cf := range m.entry.CustomFields {
 		val := cf.Value
-		if cf.Protected && !m.showPassword {
+		if cf.Protected && !m.revealedFields[cf.Key] {
 			val = strings.Repeat("*", len(cf.Value))
 		}
 		b.WriteString(fmt.Sprintf("%s%s %s\n",
@@ -446,7 +531,20 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickTOTP()
 
 	case tea.MouseMsg:
-		// Delegate mouse to viewport for scroll support
+		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && !m.showQR && !m.attachMode && !m.addingAttachment {
+			// Map click Y to selectable field index.
+			// The viewport content starts at the row after the header's last
+			// visible line. strings.Count gives the number of newlines, which
+			// equals the Y offset where viewport content begins.
+			vpStartY := strings.Count(m.headerView(), "\n")
+			vpRow := msg.Y - vpStartY + m.viewport.YOffset
+			if idx, ok := m.fieldAtLine(vpRow); ok {
+				m.selectedField = idx
+				m.refreshContentAndFollow()
+			}
+			return m, nil
+		}
+		// Delegate other mouse events to viewport for scroll support
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
@@ -603,9 +701,14 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return BackToBrowserMsg{} }
 
 		case key == m.keys.TogglePassword:
-			m.showPassword = !m.showPassword
-			if m.ready {
-				m.viewport.SetContent(m.buildContent())
+			if m.selectedField < len(fields) {
+				f := fields[m.selectedField]
+				if f.protected {
+					m.revealedFields[f.label] = !m.revealedFields[f.label]
+					if m.ready {
+						m.viewport.SetContent(m.buildContent())
+					}
+				}
 			}
 			return m, nil
 
