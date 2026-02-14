@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -82,6 +83,61 @@ func TestPasswordLen(t *testing.T) {
 				t.Errorf("PasswordLen() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPasswordCharsetDefaults(t *testing.T) {
+	cfg := Default()
+	charset := cfg.PasswordCharset()
+	if !strings.Contains(charset, "a") {
+		t.Error("default charset missing lowercase")
+	}
+	if !strings.Contains(charset, "A") {
+		t.Error("default charset missing uppercase")
+	}
+	if !strings.Contains(charset, "0") {
+		t.Error("default charset missing digits")
+	}
+	if !strings.Contains(charset, "!") {
+		t.Error("default charset missing symbols")
+	}
+}
+
+func TestPasswordCharsetCustom(t *testing.T) {
+	f := false
+	tr := true
+	cfg := Config{
+		PasswordUppercase: &f,
+		PasswordLowercase: &tr,
+		PasswordDigits:    &f,
+		PasswordSymbols:   &f,
+	}
+	charset := cfg.PasswordCharset()
+	if strings.ContainsAny(charset, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+		t.Error("charset should not contain uppercase")
+	}
+	if !strings.Contains(charset, "a") {
+		t.Error("charset should contain lowercase")
+	}
+	if strings.ContainsAny(charset, "0123456789") {
+		t.Error("charset should not contain digits")
+	}
+	if strings.ContainsAny(charset, "!@#$%^&*()-_=+") {
+		t.Error("charset should not contain symbols")
+	}
+}
+
+func TestPasswordCharsetAllDisabledFallback(t *testing.T) {
+	f := false
+	cfg := Config{
+		PasswordUppercase: &f,
+		PasswordLowercase: &f,
+		PasswordDigits:    &f,
+		PasswordSymbols:   &f,
+	}
+	charset := cfg.PasswordCharset()
+	if charset != "abcdefghijklmnopqrstuvwxyz" {
+		t.Errorf("all-disabled charset = %q, want lowercase fallback", charset)
 	}
 }
 
