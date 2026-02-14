@@ -2137,3 +2137,58 @@ func TestGetEntry(t *testing.T) {
 		t.Errorf("UserName = %q, want %q", got.UserName, "testuser")
 	}
 }
+
+func TestIsFavorite(t *testing.T) {
+	tests := []struct {
+		tags string
+		want bool
+	}{
+		{"", false},
+		{"favorite", true},
+		{"tag1;favorite;tag2", true},
+		{"tag1;tag2", false},
+		{" favorite ", true},
+		{"favorites", false},
+	}
+	for _, tt := range tests {
+		e := Entry{Tags: tt.tags}
+		if got := e.IsFavorite(); got != tt.want {
+			t.Errorf("IsFavorite(%q) = %v, want %v", tt.tags, got, tt.want)
+		}
+	}
+}
+
+func TestToggleFavorite(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "fav.kdbx")
+	createTestDB(t, dbPath, "testpass")
+	db, err := Open(dbPath, "testpass")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	// Initially not a favorite
+	if entry.IsFavorite() {
+		t.Error("entry should not be a favorite initially")
+	}
+
+	// Toggle on
+	if err := db.ToggleFavorite(entry.UUID); err != nil {
+		t.Fatalf("ToggleFavorite (on): %v", err)
+	}
+	got, _ := db.GetEntry(entry.UUID)
+	if !got.IsFavorite() {
+		t.Error("entry should be a favorite after toggle on")
+	}
+
+	// Toggle off
+	if err := db.ToggleFavorite(entry.UUID); err != nil {
+		t.Fatalf("ToggleFavorite (off): %v", err)
+	}
+	got, _ = db.GetEntry(entry.UUID)
+	if got.IsFavorite() {
+		t.Error("entry should not be a favorite after toggle off")
+	}
+}

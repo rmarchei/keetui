@@ -19,6 +19,7 @@ const (
 	undoDuplicateEntry
 	undoAddEntry
 	undoAddGroup
+	undoToggleFavorite
 )
 
 // undoAction captures a reversible operation.

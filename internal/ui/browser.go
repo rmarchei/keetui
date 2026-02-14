@@ -179,6 +179,14 @@ func sortItems(items []listItem) {
 				return jIsRB // recycle bin goes last
 			}
 		}
+		// Favorites first among entries
+		if !items[i].isGroup && !items[j].isGroup {
+			iFav := items[i].entry.IsFavorite()
+			jFav := items[j].entry.IsFavorite()
+			if iFav != jFav {
+				return iFav
+			}
+		}
 		return strings.ToLower(items[i].name()) < strings.ToLower(items[j].name())
 	})
 }
@@ -628,6 +636,22 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key == "?":
 			return m, func() tea.Msg { return ShowHelpMsg{} }
 
+		case key == m.keys.Favorite:
+			if m.readOnly {
+				m.status = errorMsgStyle.Render("Read-only mode")
+				break
+			}
+			if len(m.items) == 0 {
+				break
+			}
+			item := m.items[m.cursor]
+			if !item.isGroup {
+				entryUUID := item.entry.UUID
+				return m, func() tea.Msg {
+					return ToggleFavoriteMsg{EntryUUID: entryUUID}
+				}
+			}
+
 		case key == m.keys.Save || key == "ctrl+s":
 			if m.readOnly {
 				m.status = errorMsgStyle.Render("Read-only mode")
@@ -696,6 +720,8 @@ func (m BrowserModel) View() string {
 				icon := "    "
 				if item.entry.IsExpired() {
 					icon = warnStyle.Render("[!] ")
+				} else if item.entry.IsFavorite() {
+					icon = warnStyle.Render("[*] ")
 				}
 				name := item.name()
 				if name == "" {
@@ -746,10 +772,10 @@ func (m BrowserModel) View() string {
 			m.keys.Save, m.keys.Quit)
 		b.WriteString(helpStyle.Render(help))
 	} else {
-		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: new  %s: group  %s: rename  %s: dup  %s: cut  %s: paste  %s: del  %s: info  %s: audit  %s: config  %s: save  %s: password  %s: quit",
+		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: new  %s: group  %s: rename  %s: dup  %s: fav  %s: cut  %s: paste  %s: del  %s: info  %s: audit  %s: config  %s: save  %s: password  %s: quit",
 			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
 			m.keys.Search, m.keys.NewEntry, m.keys.NewGroup,
-			m.keys.RenameGroup, m.keys.Duplicate, m.keys.Cut, m.keys.Paste,
+			m.keys.RenameGroup, m.keys.Duplicate, m.keys.Favorite, m.keys.Cut, m.keys.Paste,
 			m.keys.Delete, m.keys.ShowStats, m.keys.ShowAudit,
 			m.keys.ShowSettings, m.keys.Save, m.keys.ChangePassword, m.keys.Quit)
 		b.WriteString(helpStyle.Render(help))

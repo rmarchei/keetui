@@ -69,6 +69,7 @@ func (m HelpModel) buildContent() string {
 		{k.RenameGroup, "Rename group"},
 		{k.Delete, "Delete entry/group"},
 		{k.Duplicate, "Duplicate entry"},
+		{k.Favorite, "Toggle favorite"},
 		{k.Cut, "Cut entry/group"},
 		{k.Paste, "Paste entry/group"},
 		{k.Save + "/ctrl+s", "Save database"},
