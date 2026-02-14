@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -48,14 +49,24 @@ func main() {
 	if *showConfig {
 		cfg, err := config.Load()
 		fmt.Fprintf(os.Stderr, "Config file: %s\n\n", config.Path())
-		fmt.Println(cfg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "\nWarning: %s\n", err)
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
 			fmt.Fprintln(os.Stderr, "Using default values. Fix the file or delete it to regenerate.")
+		}
+		// Output must be valid JSON so that `keetui -config > config.json` works.
+		// Populate keybindings with effective (merged) values so they appear in output.
+		keys := cfg.Keys()
+		cfg.KeyBindingsPtr = &keys
+		output := cfg.String()
+		// Sanity check: verify the output is valid JSON.
+		if !json.Valid([]byte(output)) {
+			fmt.Fprintln(os.Stderr, "Error: config output is not valid JSON")
 			os.Exit(1)
 		}
-		fmt.Println("\nKeybindings:")
-		fmt.Print(cfg.Keys())
+		fmt.Println(output)
+		if err != nil {
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
