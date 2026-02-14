@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/sha256"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"syscall"
@@ -37,6 +39,9 @@ func main() {
 
 	if *showVersion {
 		fmt.Printf("keetui %s\n", version)
+		if h, err := selfHash(); err == nil {
+			fmt.Printf("sha256: %s\n", h)
+		}
 		os.Exit(0)
 	}
 
@@ -222,4 +227,22 @@ func zeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+// selfHash returns the SHA256 hex digest of the running binary.
+func selfHash() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	f, err := os.Open(exe)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
