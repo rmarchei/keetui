@@ -9,19 +9,19 @@ LDFLAGS  := -s -w -X main.version=$(VERSION)
 
 PLATFORMS := darwin-amd64 darwin-arm64 linux-amd64 linux-arm64
 
-# Auto-detect container runtime
+# Auto-detect container runtime (only required for cross-platform builds)
 CONTAINER_RUNTIME := $(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null)
-ifeq ($(CONTAINER_RUNTIME),)
-  $(error No container runtime found. Install docker or podman.)
-endif
 
-.PHONY: all clean $(PLATFORMS)
+PREFIX   ?= /usr/local
+
+.PHONY: all clean install $(PLATFORMS)
 
 all: $(PLATFORMS)
 
 define BUILD_PLATFORM
 $(1): $(DIST)/$(APP)-$(1)
 $(DIST)/$(APP)-$(1):
+	@if [ -z "$(CONTAINER_RUNTIME)" ]; then echo "Error: No container runtime found. Install docker or podman." >&2; exit 1; fi
 	@mkdir -p $(DIST)
 	$(CONTAINER_RUNTIME) run --rm \
 		-v $(CURDIR):/src:Z \
@@ -34,6 +34,13 @@ $(DIST)/$(APP)-$(1):
 endef
 
 $(foreach p,$(PLATFORMS),$(eval $(call BUILD_PLATFORM,$(p))))
+
+HOST_OS   := $(shell uname -s | tr '[:upper:]' '[:lower:]')
+HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/')
+
+install: $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH)
+	install -d $(PREFIX)/bin
+	install -m 755 $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH) $(PREFIX)/bin/$(APP)
 
 clean:
 	rm -rf $(DIST)
