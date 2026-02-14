@@ -828,6 +828,9 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case key == "?":
+			return m, func() tea.Msg { return ShowHelpMsg{} }
+
 		case key == m.keys.ShowHistory:
 			if m.entry.HistoryCount > 0 {
 				entryTitle := m.entry.Title

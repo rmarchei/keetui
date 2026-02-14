@@ -625,6 +625,9 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return ShowSettingsMsg{}
 			}
 
+		case key == "?":
+			return m, func() tea.Msg { return ShowHelpMsg{} }
+
 		case key == m.keys.Save || key == "ctrl+s":
 			if m.readOnly {
 				m.status = errorMsgStyle.Render("Read-only mode")
