@@ -35,6 +35,21 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case tea.MouseMsg:
+		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+			// Buttons are on line 5 (0-indexed): newline, title, newline, message, newline, buttons
+			if msg.Y == 5 {
+				// No button roughly at x < 14, Yes button after
+				if msg.X < 14 {
+					m.selected = false
+					return m, func() tea.Msg { return CancelEditMsg{} }
+				}
+				m.selected = true
+				return m, m.onConfirm
+			}
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":

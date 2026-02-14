@@ -349,6 +349,12 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tickTOTP()
 
+	case tea.MouseMsg:
+		// Delegate mouse to viewport for scroll support
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
 	case tea.KeyMsg:
 		// File path input mode for adding attachments
 		if m.addingAttachment {
