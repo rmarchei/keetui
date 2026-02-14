@@ -80,6 +80,9 @@ func Create(path, password string) (*DB, error) {
 
 // Open reads and decodes a .kdbx file with the given password.
 func Open(path, password string) (*DB, error) {
+	if err := checkFileExtension(path); err != nil {
+		return nil, err
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
@@ -104,6 +107,9 @@ func Open(path, password string) (*DB, error) {
 
 // OpenWithKeyFile reads and decodes a .kdbx file with password and key file.
 func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
+	if err := checkFileExtension(path); err != nil {
+		return nil, err
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
@@ -294,17 +300,18 @@ func (d *DB) MoveEntry(entryUUID, targetGroupUUID gokeepasslib.UUID) error {
 	}
 	root := &d.Database.Content.Root.Groups[0]
 
-	// Find and remove the entry from its current group
+	// Validate target group exists before extracting (to avoid data loss)
+	target := findGroup(root, targetGroupUUID)
+	if target == nil {
+		return fmt.Errorf("target group not found")
+	}
+
+	// Now safe to remove the entry from its current group
 	entry := extractEntry(root, entryUUID)
 	if entry == nil {
 		return fmt.Errorf("entry not found")
 	}
 
-	// Find the target group and add the entry
-	target := findGroup(root, targetGroupUUID)
-	if target == nil {
-		return fmt.Errorf("target group not found")
-	}
 	target.Entries = append(target.Entries, *entry)
 	return nil
 }
@@ -544,6 +551,13 @@ func extractCustomFields(e gokeepasslib.Entry) []CustomField {
 		})
 	}
 	return fields
+}
+
+func checkFileExtension(path string) error {
+	if strings.HasSuffix(strings.ToLower(path), ".kdb") {
+		return fmt.Errorf("KeePass 1.x .kdb files are not supported; please convert to .kdbx format using KeePass 2 or KeePassXC")
+	}
+	return nil
 }
 
 func mkValue(key, value string) gokeepasslib.ValueData {
