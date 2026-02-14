@@ -2,6 +2,7 @@ package ui
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,13 +24,13 @@ func createTestApp(t *testing.T) AppModel {
 	}
 
 	root := db.RootGroup()
-	if err := db.AddGroup(root.UUID, "Email"); err != nil {
+	if _, err := db.AddGroup(root.UUID, "Email"); err != nil {
 		t.Fatalf("AddGroup: %v", err)
 	}
 
 	root = db.RootGroup()
 	emailGroup := root.Groups[0]
-	if err := db.AddEntry(emailGroup.UUID, keepass.Entry{
+	if _, err := db.AddEntry(emailGroup.UUID, keepass.Entry{
 		Title:    "Gmail",
 		UserName: "user@gmail.com",
 		Password: "gmailpass",
@@ -37,7 +38,7 @@ func createTestApp(t *testing.T) AppModel {
 	}); err != nil {
 		t.Fatalf("AddEntry: %v", err)
 	}
-	if err := db.AddEntry(root.UUID, keepass.Entry{
+	if _, err := db.AddEntry(root.UUID, keepass.Entry{
 		Title:    "Root Entry",
 		UserName: "rootuser",
 		Password: "rootpass",
@@ -447,5 +448,236 @@ func TestAppChangePasswordDirty(t *testing.T) {
 	}
 	if m.state != viewBrowser {
 		t.Errorf("state = %d, want viewBrowser", m.state)
+	}
+}
+
+func TestStatusBarContent(t *testing.T) {
+	m := createTestApp(t)
+	m.refreshEntryCount()
+
+	bar := m.statusBar()
+	if !strings.Contains(bar, "test.kdbx") {
+		t.Error("status bar should contain filename")
+	}
+	if !strings.Contains(bar, "entries") {
+		t.Error("status bar should contain entry count")
+	}
+	if strings.Contains(bar, "[modified]") {
+		t.Error("status bar should not show [modified] when not dirty")
+	}
+
+	m.dirty = true
+	bar = m.statusBar()
+	if !strings.Contains(bar, "[modified]") {
+		t.Error("status bar should show [modified] when dirty")
+	}
+}
+
+func TestStatusBarNotOnUnlock(t *testing.T) {
+	m := NewApp("/tmp/test.kdbx", "", config.Default())
+	m.width = 80
+	m.height = 24
+
+	view := m.View()
+	if strings.Contains(view, "entries") {
+		t.Error("unlock view should not contain status bar")
+	}
+}
+
+func TestStatusBarOnBrowser(t *testing.T) {
+	m := createTestApp(t)
+	m.refreshEntryCount()
+
+	view := m.View()
+	if !strings.Contains(view, "test.kdbx") {
+		t.Error("browser view should contain status bar with filename")
+	}
+}
+
+func TestUndoDeleteEntry(t *testing.T) {
+	m := createTestApp(t)
+
+	root := m.db.RootGroup()
+	entries := root.Entries
+	if len(entries) == 0 {
+		t.Fatal("expected at least one entry")
+	}
+	entryUUID := entries[0].UUID
+	entryTitle := entries[0].Title
+
+	// Delete the entry
+	updated, _ := m.Update(confirmDeleteEntryMsg{UUID: entryUUID})
+	m = updated.(AppModel)
+
+	if !m.dirty {
+		t.Fatal("should be dirty after delete")
+	}
+	if m.undoStack.length() != 1 {
+		t.Fatalf("undo stack length = %d, want 1", m.undoStack.length())
+	}
+
+	// Verify entry is gone
+	root = m.db.RootGroup()
+	for _, e := range root.Entries {
+		if e.Title == entryTitle {
+			t.Fatal("entry should be deleted")
+		}
+	}
+
+	// Undo
+	m2, _ := m.handleUndo()
+	m = m2.(AppModel)
+
+	if m.undoStack.length() != 0 {
+		t.Errorf("undo stack length = %d, want 0 after undo", m.undoStack.length())
+	}
+
+	// Verify entry is restored
+	root = m.db.RootGroup()
+	found := false
+	for _, e := range root.Entries {
+		if e.Title == entryTitle {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("entry should be restored after undo")
+	}
+}
+
+func TestUndoEditEntry(t *testing.T) {
+	m := createTestApp(t)
+
+	root := m.db.RootGroup()
+	emailGroup := root.Groups[0]
+	entries := emailGroup.Entries
+	if len(entries) == 0 {
+		t.Fatal("expected at least one entry in email group")
+	}
+	entryUUID := entries[0].UUID
+	originalTitle := entries[0].Title
+
+	// Edit the entry
+	updated, _ := m.Update(SaveEntryMsg{
+		IsNew:     false,
+		EntryUUID: entryUUID,
+		Entry: keepass.Entry{
+			Title:    "Changed Title",
+			UserName: entries[0].UserName,
+			Password: entries[0].Password,
+		},
+	})
+	m = updated.(AppModel)
+
+	if m.undoStack.length() != 1 {
+		t.Fatalf("undo stack length = %d, want 1", m.undoStack.length())
+	}
+
+	// Verify edit took effect
+	entry, _ := m.db.GetEntry(entryUUID)
+	if entry.Title != "Changed Title" {
+		t.Fatalf("title = %q, want %q", entry.Title, "Changed Title")
+	}
+
+	// Undo
+	m2, _ := m.handleUndo()
+	m = m2.(AppModel)
+
+	// Verify original title restored
+	entry, _ = m.db.GetEntry(entryUUID)
+	if entry.Title != originalTitle {
+		t.Errorf("title after undo = %q, want %q", entry.Title, originalTitle)
+	}
+}
+
+func TestUndoRenameGroup(t *testing.T) {
+	m := createTestApp(t)
+
+	root := m.db.RootGroup()
+	emailGroup := root.Groups[0]
+	originalName := emailGroup.Name
+
+	// Rename the group
+	updated, _ := m.Update(RenameGroupMsg{
+		GroupUUID: emailGroup.UUID,
+		NewName:   "Renamed Email",
+	})
+	m = updated.(AppModel)
+
+	if m.undoStack.length() != 1 {
+		t.Fatalf("undo stack length = %d, want 1", m.undoStack.length())
+	}
+
+	// Undo
+	m2, _ := m.handleUndo()
+	m = m2.(AppModel)
+
+	// Verify name restored
+	root = m.db.RootGroup()
+	if root.Groups[0].Name != originalName {
+		t.Errorf("name after undo = %q, want %q", root.Groups[0].Name, originalName)
+	}
+}
+
+func TestUndoDuplicateEntry(t *testing.T) {
+	m := createTestApp(t)
+
+	root := m.db.RootGroup()
+	entries := root.Entries
+	if len(entries) == 0 {
+		t.Fatal("expected at least one entry")
+	}
+	originalCount := len(entries)
+
+	// Duplicate
+	updated, _ := m.Update(DuplicateEntryMsg{EntryUUID: entries[0].UUID})
+	m = updated.(AppModel)
+
+	root = m.db.RootGroup()
+	if len(root.Entries) != originalCount+1 {
+		t.Fatalf("entries = %d, want %d", len(root.Entries), originalCount+1)
+	}
+
+	// Undo
+	m2, _ := m.handleUndo()
+	m = m2.(AppModel)
+
+	root = m.db.RootGroup()
+	if len(root.Entries) != originalCount {
+		t.Errorf("entries after undo = %d, want %d", len(root.Entries), originalCount)
+	}
+}
+
+func TestUndoNothingToUndo(t *testing.T) {
+	m := createTestApp(t)
+
+	_, cmd := m.handleUndo()
+	if cmd == nil {
+		t.Fatal("handleUndo should return a status command")
+	}
+	msg := cmd()
+	statusMsg, ok := msg.(StatusMsg)
+	if !ok {
+		t.Fatalf("expected StatusMsg, got %T", msg)
+	}
+	if !strings.Contains(statusMsg.Text, "Nothing to undo") {
+		t.Errorf("status = %q, want 'Nothing to undo'", statusMsg.Text)
+	}
+}
+
+func TestUndoStackClearedOnDatabaseOpen(t *testing.T) {
+	m := createTestApp(t)
+
+	// Push something
+	m.undoStack.push(undoAction{description: "test"})
+	if m.undoStack.length() != 1 {
+		t.Fatal("stack should have 1 item")
+	}
+
+	// Simulate database open
+	m.undoStack.clear()
+	if m.undoStack.length() != 0 {
+		t.Error("stack should be empty after clear")
 	}
 }

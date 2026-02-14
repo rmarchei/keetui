@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -106,6 +107,8 @@ type AppModel struct {
 	cfg          config.Config
 	dirty        bool      // true when in-memory changes haven't been saved
 	returnState  viewState // view to return to after confirm dialog
+	entryCount   int       // cached entry count for status bar
+	undoStack    undoStack // undo history
 }
 
 // NewApp creates the application starting at the unlock screen.
@@ -150,6 +153,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = wsm.Width
 		m.height = wsm.Height
+		// Reduce height for sub-views to make room for the status bar
+		if m.state != viewUnlock {
+			msg = tea.WindowSizeMsg{Width: wsm.Width, Height: wsm.Height - 1}
+		}
 	}
 
 	// Track user activity for auto-lock (any key press or mouse event)
@@ -157,6 +164,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case tea.KeyMsg, tea.MouseMsg:
 			m.lastActivity = time.Now()
+		}
+	}
+
+	// Handle undo (ctrl+z) in non-text-input views
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "ctrl+z" {
+		switch m.state {
+		case viewBrowser, viewDetail, viewStats, viewHistory, viewAudit:
+			return m.handleUndo()
 		}
 	}
 
@@ -184,7 +199,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.db != nil {
 			m.detail.SetAttachments(m.db.EntryAttachments(msg.Entry.UUID))
 		}
-		m.detail.SetSize(m.width, m.height)
+		m.detail.SetSize(m.width, m.viewHeight())
 		m.state = viewDetail
 		return m, m.detail.Init()
 
@@ -204,9 +219,22 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.groupInput.Init()
 
 	case RenameGroupMsg:
+		rawGroup, _ := m.db.GetRawGroup(msg.GroupUUID)
+		oldName := ""
+		if rawGroup != nil {
+			oldName = rawGroup.Name
+		}
 		if err := m.db.RenameGroup(msg.GroupUUID, msg.NewName); err != nil {
 			m.state = viewBrowser
 			return m, statusCmd(fmt.Sprintf("Error renaming group: %s", err), true)
+		}
+		if oldName != "" && oldName != msg.NewName {
+			m.undoStack.push(undoAction{
+				actionType:  undoRenameGroup,
+				description: fmt.Sprintf("Rename group '%s' to '%s'", oldName, msg.NewName),
+				groupUUID:   msg.GroupUUID,
+				oldName:     oldName,
+			})
 		}
 		m.dirty = true
 		m.state = viewBrowser
@@ -236,14 +264,40 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case confirmDeleteEntryMsg:
+		// Capture undo state before deletion
+		parentUUID, _ := m.db.FindEntryParentUUID(msg.UUID)
+		rawEntry, _ := m.db.GetRawEntry(msg.UUID)
+		entry, _ := m.db.GetEntry(msg.UUID)
+		recycleBin := m.db.RecycleBinEnabled()
+
 		if err := m.db.DeleteEntry(msg.UUID); err != nil {
 			m.state = viewBrowser
 			return m, statusCmd(err.Error(), true)
 		}
 		m.dirty = true
+		m.refreshEntryCount()
 		m.state = viewBrowser
+
+		if rawEntry != nil {
+			if recycleBin {
+				m.undoStack.push(undoAction{
+					actionType:  undoMoveEntry,
+					description: fmt.Sprintf("Delete '%s'", entry.Title),
+					entryUUID:   msg.UUID,
+					sourceUUID:  parentUUID,
+				})
+			} else {
+				m.undoStack.push(undoAction{
+					actionType:  undoDeleteEntry,
+					description: fmt.Sprintf("Delete '%s'", entry.Title),
+					rawEntry:    rawEntry,
+					parentUUID:  parentUUID,
+				})
+			}
+		}
+
 		statusText := "Entry deleted"
-		if m.db.RecycleBinEnabled() {
+		if recycleBin {
 			statusText = "Moved to Recycle Bin"
 		}
 		return m, tea.Batch(
@@ -252,14 +306,43 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case confirmDeleteGroupMsg:
+		// Capture undo state before deletion
+		parentUUID, _ := m.db.FindGroupParentUUID(msg.UUID)
+		rawGroup, _ := m.db.GetRawGroup(msg.UUID)
+		recycleBinG := m.db.RecycleBinEnabled()
+		groupName := ""
+		if rawGroup != nil {
+			groupName = rawGroup.Name
+		}
+
 		if err := m.db.DeleteGroup(msg.UUID); err != nil {
 			m.state = viewBrowser
 			return m, statusCmd(err.Error(), true)
 		}
 		m.dirty = true
+		m.refreshEntryCount()
 		m.state = viewBrowser
+
+		if rawGroup != nil {
+			if recycleBinG {
+				m.undoStack.push(undoAction{
+					actionType:  undoMoveGroup,
+					description: fmt.Sprintf("Delete group '%s'", groupName),
+					groupUUID:   msg.UUID,
+					sourceUUID:  parentUUID,
+				})
+			} else {
+				m.undoStack.push(undoAction{
+					actionType:  undoDeleteGroup,
+					description: fmt.Sprintf("Delete group '%s'", groupName),
+					rawGroup:    rawGroup,
+					parentUUID:  parentUUID,
+				})
+			}
+		}
+
 		statusText := "Group deleted"
-		if m.db.RecycleBinEnabled() {
+		if recycleBinG {
 			statusText = "Moved to Recycle Bin"
 		}
 		return m, tea.Batch(
@@ -340,6 +423,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, statusCmd(err.Error(), true)
 		}
 		m.dirty = true
+		m.refreshEntryCount()
 		m.state = viewBrowser
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
@@ -347,19 +431,33 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case DuplicateEntryMsg:
-		if err := m.db.DuplicateEntry(msg.EntryUUID); err != nil {
+		newUUID, err := m.db.DuplicateEntry(msg.EntryUUID)
+		if err != nil {
 			return m, statusCmd(fmt.Sprintf("Error duplicating: %s", err), true)
 		}
+		m.undoStack.push(undoAction{
+			actionType:  undoDuplicateEntry,
+			description: "Duplicate entry",
+			createdUUID: newUUID,
+		})
 		m.dirty = true
+		m.refreshEntryCount()
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
 			statusCmd("Entry duplicated (use 's' to save to file)", false),
 		)
 
 	case PasteEntryMsg:
+		sourceUUID, _ := m.db.FindEntryParentUUID(msg.EntryUUID)
 		if err := m.db.MoveEntry(msg.EntryUUID, msg.TargetGroupUUID); err != nil {
 			return m, statusCmd(fmt.Sprintf("Error moving entry: %s", err), true)
 		}
+		m.undoStack.push(undoAction{
+			actionType:  undoMoveEntry,
+			description: "Move entry",
+			entryUUID:   msg.EntryUUID,
+			sourceUUID:  sourceUUID,
+		})
 		m.dirty = true
 		m.browser.cutEntry = nil
 		return m, tea.Batch(
@@ -368,9 +466,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case PasteGroupMsg:
+		sourceUUID, _ := m.db.FindGroupParentUUID(msg.GroupUUID)
 		if err := m.db.MoveGroup(msg.GroupUUID, msg.TargetGroupUUID); err != nil {
 			return m, statusCmd(fmt.Sprintf("Error moving group: %s", err), true)
 		}
+		m.undoStack.push(undoAction{
+			actionType:  undoMoveGroup,
+			description: "Move group",
+			groupUUID:   msg.GroupUUID,
+			sourceUUID:  sourceUUID,
+		})
 		m.dirty = true
 		m.browser.cutGroup = nil
 		return m, tea.Batch(
@@ -393,7 +498,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result := m.db.Audit()
 		m.audit = NewAuditModel(result)
 		m.audit.width = m.width
-		m.audit.height = m.height
+		m.audit.height = m.viewHeight()
 		m.state = viewAudit
 		return m, nil
 
@@ -420,7 +525,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		history := m.db.EntryHistory(msg.EntryUUID)
 		m.history = NewHistoryModel(msg.EntryTitle, history)
 		m.history.width = m.width
-		m.history.height = m.height
+		m.history.height = m.viewHeight()
 		m.state = viewHistory
 		return m, nil
 
@@ -540,6 +645,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			clearClipboard()
 			m.db = nil
+			m.undoStack.clear()
 			m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
 			m.unlock.err = fmt.Errorf("locked due to inactivity")
 			m.state = viewUnlock
@@ -601,31 +707,100 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) View() string {
+	var view string
 	switch m.state {
 	case viewUnlock:
 		return m.unlock.View()
 	case viewBrowser:
-		return m.browser.View()
+		view = m.browser.View()
 	case viewDetail:
-		return m.detail.View()
+		view = m.detail.View()
 	case viewEditor:
-		return m.editor.View()
+		view = m.editor.View()
 	case viewGroupInput:
-		return m.groupInput.View()
+		view = m.groupInput.View()
 	case viewConfirm:
-		return m.confirm.View()
+		view = m.confirm.View()
 	case viewPassword:
-		return m.password.View()
+		view = m.password.View()
 	case viewStats:
-		return m.stats.View()
+		view = m.stats.View()
 	case viewSettings:
-		return m.settings.View()
+		view = m.settings.View()
 	case viewHistory:
-		return m.history.View()
+		view = m.history.View()
 	case viewAudit:
-		return m.audit.View()
+		view = m.audit.View()
 	}
-	return ""
+	return view + "\n" + m.statusBar()
+}
+
+func (m *AppModel) refreshEntryCount() {
+	if m.db != nil {
+		m.entryCount = m.db.Stats().TotalEntries
+	}
+}
+
+func (m AppModel) statusBar() string {
+	filename := filepath.Base(m.filePath)
+	parts := []string{filename, fmt.Sprintf("%d entries", m.entryCount)}
+	if m.dirty {
+		parts = append(parts, statusBarModifiedStyle.Render("[modified]"))
+	}
+	if m.undoStack.length() > 0 {
+		parts = append(parts, helpStyle.Render(fmt.Sprintf("ctrl+z: undo (%d)", m.undoStack.length())))
+	}
+	content := strings.Join(parts, "  ")
+	return statusBarBgStyle.Width(m.width).Render(content)
+}
+
+func (m AppModel) viewHeight() int {
+	if m.state == viewUnlock {
+		return m.height
+	}
+	return m.height - 1
+}
+
+func (m AppModel) handleUndo() (tea.Model, tea.Cmd) {
+	action, ok := m.undoStack.pop()
+	if !ok {
+		return m, statusCmd("Nothing to undo", false)
+	}
+
+	var err error
+	switch action.actionType {
+	case undoDeleteEntry:
+		err = m.db.InsertRawEntry(action.parentUUID, *action.rawEntry)
+	case undoDeleteGroup:
+		err = m.db.InsertRawGroup(action.parentUUID, *action.rawGroup)
+	case undoEditEntry:
+		err = m.db.UpdateEntry(action.entryUUID, *action.prevEntry)
+	case undoRenameGroup:
+		err = m.db.RenameGroup(action.groupUUID, action.oldName)
+	case undoMoveEntry:
+		err = m.db.MoveEntry(action.entryUUID, action.sourceUUID)
+	case undoMoveGroup:
+		err = m.db.MoveGroup(action.groupUUID, action.sourceUUID)
+	case undoDuplicateEntry:
+		err = m.db.PermanentlyDeleteEntry(action.createdUUID)
+	case undoAddEntry:
+		err = m.db.PermanentlyDeleteEntry(action.createdUUID)
+	case undoAddGroup:
+		err = m.db.PermanentlyDeleteGroup(action.createdUUID)
+	}
+
+	if err != nil {
+		return m, statusCmd(fmt.Sprintf("Undo failed: %s", err), true)
+	}
+
+	m.dirty = true
+	m.refreshEntryCount()
+	m.state = viewBrowser
+
+	return m, tea.Batch(
+		func() tea.Msg { return RefreshMsg{} },
+		statusCmd(fmt.Sprintf("Undone: %s", action.description), false),
+	)
 }
 
 func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cmd) {
@@ -644,22 +819,41 @@ func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cm
 	m.unlock.input.SetValue("")
 	m.unlock.input.Reset()
 	m.browser = NewBrowserModel(db, m.cfg.Keys())
+	m.browser.width = m.width
+	m.browser.height = m.viewHeight()
 	m.state = viewBrowser
 	m.lastActivity = time.Now()
+	m.refreshEntryCount()
+	m.undoStack.clear()
 	return m, m.scheduleAutoLock()
 }
 
 func (m AppModel) handleSaveEntry(msg SaveEntryMsg) (tea.Model, tea.Cmd) {
 	if msg.IsNew {
-		if err := m.db.AddEntry(msg.GroupUUID, msg.Entry); err != nil {
+		newUUID, err := m.db.AddEntry(msg.GroupUUID, msg.Entry)
+		if err != nil {
 			m.state = viewBrowser
 			return m, statusCmd(fmt.Sprintf("Error adding entry: %s", err), true)
 		}
+		m.undoStack.push(undoAction{
+			actionType:  undoAddEntry,
+			description: fmt.Sprintf("Add entry '%s'", msg.Entry.Title),
+			createdUUID: newUUID,
+		})
+		m.refreshEntryCount()
 	} else {
+		// Capture previous state for undo
+		prevEntry, _ := m.db.GetEntry(msg.EntryUUID)
 		if err := m.db.UpdateEntry(msg.EntryUUID, msg.Entry); err != nil {
 			m.state = viewBrowser
 			return m, statusCmd(fmt.Sprintf("Error updating entry: %s", err), true)
 		}
+		m.undoStack.push(undoAction{
+			actionType:  undoEditEntry,
+			description: fmt.Sprintf("Edit '%s'", prevEntry.Title),
+			entryUUID:   msg.EntryUUID,
+			prevEntry:   &prevEntry,
+		})
 	}
 	m.dirty = true
 	m.state = viewBrowser
@@ -671,9 +865,23 @@ func (m AppModel) handleSaveEntry(msg SaveEntryMsg) (tea.Model, tea.Cmd) {
 
 func (m AppModel) handleSaveGroup(msg SaveGroupMsg) (tea.Model, tea.Cmd) {
 	if msg.Rename {
+		// Capture old name for undo
+		rawGroup, _ := m.db.GetRawGroup(msg.ParentUUID)
+		oldName := ""
+		if rawGroup != nil {
+			oldName = rawGroup.Name
+		}
 		if err := m.db.RenameGroup(msg.ParentUUID, msg.Name); err != nil {
 			m.state = viewBrowser
 			return m, statusCmd(fmt.Sprintf("Error renaming group: %s", err), true)
+		}
+		if oldName != "" && oldName != msg.Name {
+			m.undoStack.push(undoAction{
+				actionType:  undoRenameGroup,
+				description: fmt.Sprintf("Rename group '%s' to '%s'", oldName, msg.Name),
+				groupUUID:   msg.ParentUUID,
+				oldName:     oldName,
+			})
 		}
 		m.dirty = true
 		m.state = viewBrowser
@@ -682,10 +890,16 @@ func (m AppModel) handleSaveGroup(msg SaveGroupMsg) (tea.Model, tea.Cmd) {
 			statusCmd("Group renamed (use 's' to save to file)", false),
 		)
 	}
-	if err := m.db.AddGroup(msg.ParentUUID, msg.Name); err != nil {
+	newUUID, err := m.db.AddGroup(msg.ParentUUID, msg.Name)
+	if err != nil {
 		m.state = viewBrowser
 		return m, statusCmd(fmt.Sprintf("Error adding group: %s", err), true)
 	}
+	m.undoStack.push(undoAction{
+		actionType:  undoAddGroup,
+		description: fmt.Sprintf("Add group '%s'", msg.Name),
+		createdUUID: newUUID,
+	})
 	m.dirty = true
 	m.state = viewBrowser
 	return m, tea.Batch(

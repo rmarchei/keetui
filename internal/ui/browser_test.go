@@ -23,7 +23,7 @@ func createTestUIDB(t *testing.T) *keepass.DB {
 	root := db.RootGroup()
 
 	// Add a group
-	if err := db.AddGroup(root.UUID, "Email"); err != nil {
+	if _, err := db.AddGroup(root.UUID, "Email"); err != nil {
 		t.Fatalf("AddGroup: %v", err)
 	}
 
@@ -31,7 +31,7 @@ func createTestUIDB(t *testing.T) *keepass.DB {
 	emailGroup := root.Groups[0]
 
 	// Add entries
-	if err := db.AddEntry(emailGroup.UUID, keepass.Entry{
+	if _, err := db.AddEntry(emailGroup.UUID, keepass.Entry{
 		Title:    "Gmail",
 		UserName: "user@gmail.com",
 		Password: "gmailpass",
@@ -40,7 +40,7 @@ func createTestUIDB(t *testing.T) *keepass.DB {
 		t.Fatalf("AddEntry: %v", err)
 	}
 
-	if err := db.AddEntry(root.UUID, keepass.Entry{
+	if _, err := db.AddEntry(root.UUID, keepass.Entry{
 		Title:    "Root Entry",
 		UserName: "rootuser",
 		Password: "rootpass",
@@ -213,7 +213,7 @@ func TestBrowserRefresh(t *testing.T) {
 
 	// Add a new entry directly to DB
 	root := db.RootGroup()
-	_ = db.AddEntry(root.UUID, keepass.Entry{
+	_, _ = db.AddEntry(root.UUID, keepass.Entry{
 		Title:    "New",
 		UserName: "new",
 		Password: "new",

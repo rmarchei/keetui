@@ -86,4 +86,14 @@ var (
 	// Input field blurred
 	blurredStyle = lipgloss.NewStyle().
 			Foreground(mutedColor)
+
+	// Persistent status bar (bottom of screen)
+	statusBarBgStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#FAFAFA")).
+				Background(lipgloss.Color("#3C3C3C")).
+				Padding(0, 1)
+
+	statusBarModifiedStyle = lipgloss.NewStyle().
+				Foreground(warnColor).
+				Bold(true)
 )
