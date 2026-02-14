@@ -71,8 +71,7 @@ type AppModel struct {
 	confirm      ConfirmModel
 	width        int
 	height       int
-	pendingDel   interface{} // stores the UUID for pending delete
-	lastActivity time.Time   // tracks last user interaction for auto-lock
+	lastActivity time.Time // tracks last user interaction for auto-lock
 	filePath     string      // remember file path for re-lock
 	keyFilePath  string      // remember key file path for re-lock
 	cfg          config.Config
@@ -162,7 +161,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.groupInput.Init()
 
 	case DeleteEntryMsg:
-		m.pendingDel = msg.EntryUUID
 		m.confirm = NewConfirmModel("Delete this entry?", func() tea.Msg {
 			return confirmDeleteEntryMsg{UUID: msg.EntryUUID}
 		})
@@ -170,7 +168,6 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case DeleteGroupMsg:
-		m.pendingDel = msg.GroupUUID
 		m.confirm = NewConfirmModel("Delete this group and all its contents?", func() tea.Msg {
 			return confirmDeleteGroupMsg{UUID: msg.GroupUUID}
 		})
@@ -236,7 +233,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CopyToClipboardMsg:
-		copyToClipboard(msg.Value)
+		if err := copyToClipboard(msg.Value); err != nil {
+			m.detail.copied = ""
+			return m, statusCmd(fmt.Sprintf("Clipboard error: %s", err), true)
+		}
 		m.detail.copied = msg.Field
 		return m, m.scheduleClearClipboard()
 
@@ -246,7 +246,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case OpenURLMsg:
-		openURL(msg.URL)
+		if err := openURL(msg.URL); err != nil {
+			return m, statusCmd(fmt.Sprintf("Error: %s", err), true)
+		}
 		return m, nil
 
 	case autoLockMsg:
@@ -400,7 +402,7 @@ type RenameGroupStartMsg struct {
 	CurrentName string
 }
 
-func copyToClipboard(text string) {
+func copyToClipboard(text string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -414,31 +416,36 @@ func copyToClipboard(text string) {
 		} else if _, err := exec.LookPath("wl-copy"); err == nil {
 			cmd = exec.Command("wl-copy")
 		} else {
-			return
+			return fmt.Errorf("no clipboard utility found (install xclip, xsel, or wl-copy)")
 		}
 	default:
-		return
+		return fmt.Errorf("clipboard not supported on %s", runtime.GOOS)
 	}
 	cmd.Stdin = nil
 	pipe, err := cmd.StdinPipe()
 	if err != nil {
-		return
+		return fmt.Errorf("clipboard: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return
+		return fmt.Errorf("clipboard: %w", err)
 	}
-	pipe.Write([]byte(text))
+	if _, err := pipe.Write([]byte(text)); err != nil {
+		return fmt.Errorf("clipboard write: %w", err)
+	}
 	pipe.Close()
-	cmd.Wait()
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("clipboard: %w", err)
+	}
+	return nil
 }
 
 func clearClipboard() {
-	copyToClipboard("")
+	_ = copyToClipboard("")
 }
 
-func openURL(u string) {
+func openURL(u string) error {
 	if u == "" {
-		return
+		return nil
 	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -447,7 +454,10 @@ func openURL(u string) {
 	case "linux":
 		cmd = exec.Command("xdg-open", u)
 	default:
-		return
+		return fmt.Errorf("open URL not supported on %s", runtime.GOOS)
 	}
-	cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("open URL: %w", err)
+	}
+	return nil
 }

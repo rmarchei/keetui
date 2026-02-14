@@ -631,6 +631,36 @@ func TestMoveEntry(t *testing.T) {
 	}
 }
 
+func TestMoveEntryInvalidTargetPreservesEntry(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	emailGroup := root.Groups[0]
+	entry := emailGroup.Entries[0]
+
+	// Try to move to a non-existent group
+	bogusUUID := gokeepasslib.NewUUID()
+	err = db.MoveEntry(entry.UUID, bogusUUID)
+	if err == nil {
+		t.Fatal("expected error for invalid target group, got nil")
+	}
+
+	// Entry must still exist in its original group
+	root = db.RootGroup()
+	if len(root.Groups[0].Entries) != 1 {
+		t.Fatalf("entry was lost after failed move: entries = %d, want 1", len(root.Groups[0].Entries))
+	}
+}
+
 func TestDuplicateEntry(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.kdbx")
