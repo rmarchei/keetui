@@ -294,6 +294,53 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.RefreshContent()
 		return m, nil
 
+	case ExtractAttachmentMsg:
+		if err := m.db.ExtractAttachment(msg.EntryUUID, msg.Name, msg.DestPath); err != nil {
+			return m, statusCmd(fmt.Sprintf("Error extracting attachment: %s", err), true)
+		}
+		m.detail.copied = ""
+		m.detail.RefreshContent()
+		return m, statusCmd(fmt.Sprintf("Attachment saved to %s", msg.DestPath), false)
+
+	case DeleteAttachmentMsg:
+		m.confirm = NewConfirmModel(fmt.Sprintf("Delete attachment %q?", msg.Name), func() tea.Msg {
+			return confirmDeleteAttachmentMsg{EntryUUID: msg.EntryUUID, Name: msg.Name}
+		})
+		m.returnState = viewDetail
+		m.state = viewConfirm
+		return m, nil
+
+	case confirmDeleteAttachmentMsg:
+		if err := m.db.DeleteAttachment(msg.EntryUUID, msg.Name); err != nil {
+			m.state = viewDetail
+			return m, statusCmd(fmt.Sprintf("Error deleting attachment: %s", err), true)
+		}
+		m.dirty = true
+		// Refresh attachments in detail view
+		m.detail.attachments = m.db.EntryAttachments(msg.EntryUUID)
+		if m.detail.attachIdx >= len(m.detail.attachments) {
+			m.detail.attachIdx = len(m.detail.attachments) - 1
+			if m.detail.attachIdx < 0 {
+				m.detail.attachIdx = 0
+				m.detail.attachMode = false
+			}
+		}
+		m.detail.RefreshContent()
+		m.state = viewDetail
+		return m, statusCmd("Attachment deleted (use 's' to save to file)", false)
+
+	case AddAttachmentMsg:
+		if err := m.db.AddAttachmentFile(msg.EntryUUID, msg.FilePath); err != nil {
+			return m, statusCmd(fmt.Sprintf("Error adding attachment: %s", err), true)
+		}
+		m.dirty = true
+		// Refresh attachments in detail view
+		m.detail.attachments = m.db.EntryAttachments(msg.EntryUUID)
+		m.detail.attachMode = true
+		m.detail.attachIdx = len(m.detail.attachments) - 1
+		m.detail.RefreshContent()
+		return m, statusCmd("Attachment added (use 's' to save to file)", false)
+
 	case SaveEntryMsg:
 		return m.handleSaveEntry(msg)
 
@@ -503,6 +550,11 @@ type confirmDeleteEntryMsg struct {
 
 type confirmDeleteGroupMsg struct {
 	UUID gokeepasslib.UUID
+}
+
+type confirmDeleteAttachmentMsg struct {
+	EntryUUID gokeepasslib.UUID
+	Name      string
 }
 
 // RenameGroupStartMsg is sent to initiate group renaming.
