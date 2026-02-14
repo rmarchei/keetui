@@ -15,6 +15,7 @@ const (
 	settingClipboardClear = iota
 	settingAutoLock
 	settingPasswordLength
+	settingPasswordStrength
 	settingCount
 )
 
@@ -22,12 +23,14 @@ var settingLabels = [settingCount]string{
 	"Clipboard clear (sec)",
 	"Auto-lock (min)",
 	"Password length",
+	"Password strength",
 }
 
 var settingDescriptions = [settingCount]string{
 	"Seconds before clipboard is cleared after copying (0: disable, min: 15)",
 	"Minutes of inactivity before database is locked (0: disable, min: 5)",
 	"Default length for generated passwords (min: 8)",
+	"Show password strength indicator (1: on, 0: off)",
 }
 
 // ShowSettingsMsg requests showing the settings view.
@@ -63,6 +66,12 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 	inputs[settingClipboardClear].SetValue(strconv.Itoa(cfg.ClipboardClearSeconds))
 	inputs[settingAutoLock].SetValue(strconv.Itoa(cfg.AutoLockMinutes))
 	inputs[settingPasswordLength].SetValue(strconv.Itoa(cfg.PasswordLength))
+	if cfg.ShowPasswordStrength {
+		inputs[settingPasswordStrength].SetValue("1")
+	} else {
+		inputs[settingPasswordStrength].SetValue("0")
+	}
+	inputs[settingPasswordStrength].CharLimit = 1
 
 	inputs[0].Focus()
 
@@ -148,10 +157,18 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	strengthVal := strings.TrimSpace(m.inputs[settingPasswordStrength].Value())
+	if strengthVal != "0" && strengthVal != "1" {
+		m.status = "Password strength must be 1 (on) or 0 (off)"
+		m.isError = true
+		return m, nil
+	}
+
 	newCfg := config.Config{
 		ClipboardClearSeconds: clipSec,
 		AutoLockMinutes:       lockMin,
 		PasswordLength:        pwLen,
+		ShowPasswordStrength:  strengthVal == "1",
 	}
 
 	if err := newCfg.Save(); err != nil {

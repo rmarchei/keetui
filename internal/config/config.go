@@ -11,9 +11,10 @@ import (
 
 // Config holds all configurable settings.
 type Config struct {
-	ClipboardClearSeconds int `json:"clipboard_clear_seconds"`
-	AutoLockMinutes       int `json:"auto_lock_minutes"`
-	PasswordLength        int `json:"password_length"`
+	ClipboardClearSeconds int  `json:"clipboard_clear_seconds"`
+	AutoLockMinutes       int  `json:"auto_lock_minutes"`
+	PasswordLength        int  `json:"password_length"`
+	ShowPasswordStrength  bool `json:"show_password_strength"`
 }
 
 // Default returns the default configuration.
@@ -22,6 +23,7 @@ func Default() Config {
 		ClipboardClearSeconds: 15,
 		AutoLockMinutes:       5,
 		PasswordLength:        20,
+		ShowPasswordStrength:  true,
 	}
 }
 

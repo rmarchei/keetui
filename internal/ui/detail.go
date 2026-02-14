@@ -12,6 +12,7 @@ import (
 	"github.com/pquerna/otp/totp"
 	"github.com/tobischo/gokeepasslib/v3"
 
+	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
 )
 
@@ -59,6 +60,7 @@ type DetailModel struct {
 	attachments  []keepass.Attachment
 	viewport     viewport.Model
 	ready        bool // true after first size is set
+	cfg          config.Config
 
 	// Attachment mode state
 	attachMode       bool
@@ -76,7 +78,7 @@ type CopyToClipboardMsg struct {
 	Value string
 }
 
-func NewDetailModel(entry keepass.Entry) DetailModel {
+func NewDetailModel(entry keepass.Entry, cfg config.Config) DetailModel {
 	pi := textinput.New()
 	pi.Prompt = "  File path: "
 	pi.PromptStyle = labelStyle
@@ -85,8 +87,11 @@ func NewDetailModel(entry keepass.Entry) DetailModel {
 
 	m := DetailModel{
 		entry:           entry,
-		strength:        keepass.EvaluatePasswordStrength(entry.Password),
+		cfg:             cfg,
 		attachPathInput: pi,
+	}
+	if cfg.ShowPasswordStrength {
+		m.strength = keepass.EvaluatePasswordStrength(entry.Password)
 	}
 	m.refreshTOTP()
 	return m
@@ -197,11 +202,17 @@ func (m DetailModel) buildContent() string {
 	if m.showPassword {
 		pw = m.entry.Password
 	}
-	strengthStr := renderStrength(m.strength)
-	b.WriteString(fmt.Sprintf("  %s %s  %s\n",
-		labelStyle.Render("Password:"),
-		hiddenStyle.Render(pw),
-		strengthStr))
+	if m.cfg.ShowPasswordStrength {
+		strengthStr := renderStrength(m.strength)
+		b.WriteString(fmt.Sprintf("  %s %s  %s\n",
+			labelStyle.Render("Password:"),
+			hiddenStyle.Render(pw),
+			strengthStr))
+	} else {
+		b.WriteString(fmt.Sprintf("  %s %s\n",
+			labelStyle.Render("Password:"),
+			hiddenStyle.Render(pw)))
+	}
 
 	b.WriteString(fmt.Sprintf("  %s %s\n",
 		labelStyle.Render("URL:"),

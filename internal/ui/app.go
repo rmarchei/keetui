@@ -171,7 +171,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleDatabaseOpened(msg)
 
 	case ViewEntryMsg:
-		m.detail = NewDetailModel(msg.Entry)
+		m.detail = NewDetailModel(msg.Entry, m.cfg)
 		if m.db != nil {
 			m.detail.SetAttachments(m.db.EntryAttachments(msg.Entry.UUID))
 		}
