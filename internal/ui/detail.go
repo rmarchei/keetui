@@ -69,6 +69,7 @@ type DetailModel struct {
 	attachIdx        int
 	addingAttachment bool            // true when file path input is shown
 	attachPathInput  textinput.Model // input for file path when adding attachment
+	keys             config.KeyBindings
 }
 
 // BackToBrowserMsg signals returning to the browser.
@@ -93,6 +94,7 @@ func NewDetailModel(entry keepass.Entry, cfg config.Config) DetailModel {
 	m := DetailModel{
 		entry:           entry,
 		cfg:             cfg,
+		keys:            cfg.Keys(),
 		attachPathInput: pi,
 	}
 	if cfg.ShowPasswordStrength {
@@ -181,7 +183,7 @@ func (m DetailModel) headerView() string {
 
 func (m DetailModel) footerView() string {
 	if m.showQR {
-		return helpStyle.Render("  esc: close QR  Q: close QR")
+		return helpStyle.Render(fmt.Sprintf("  esc: close QR  %s: close QR", m.keys.ShowQR))
 	}
 	if m.addingAttachment {
 		return helpStyle.Render("  enter: add file  esc: cancel")
@@ -190,15 +192,17 @@ func (m DetailModel) footerView() string {
 		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
 		return helpStyle.Render(help)
 	}
-	help := "  p: toggle password  e: edit  o: open url  a: attachments  Q: show QR"
+	help := fmt.Sprintf("  %s: toggle password  %s: edit  %s: open url  %s: attachments  %s: show QR",
+		m.keys.TogglePassword, m.keys.Edit, m.keys.OpenURL, m.keys.Attachments, m.keys.ShowQR)
 	if m.entry.HistoryCount > 0 {
-		help += "  H: history"
+		help += fmt.Sprintf("  %s: history", m.keys.ShowHistory)
 	}
-	help += "  1: copy user  2: copy pass  3: copy url"
+	help += fmt.Sprintf("  %s: copy user  %s: copy pass  %s: copy url",
+		m.keys.CopyUsername, m.keys.CopyPassword, m.keys.CopyURL)
 	if m.totpCode != "" {
-		help += "  4: copy totp"
+		help += fmt.Sprintf("  %s: copy totp", m.keys.CopyTOTP)
 	}
-	help += "  5: HIBP check  esc: back  q: quit"
+	help += fmt.Sprintf("  %s: HIBP check  esc: back  %s: quit", m.keys.HIBPCheck, m.keys.Quit)
 	return helpStyle.Render(help)
 }
 
@@ -466,28 +470,31 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Normal detail view key handling
-		switch msg.String() {
-		case "q":
+		key := msg.String()
+		switch key {
+		case m.keys.Quit:
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
+		}
 
-		case "esc", "h", "left":
+		switch {
+		case key == "esc" || key == m.keys.Back || key == "left":
 			return m, func() tea.Msg { return BackToBrowserMsg{} }
 
-		case "p":
+		case key == m.keys.TogglePassword:
 			m.showPassword = !m.showPassword
 			if m.ready {
 				m.viewport.SetContent(m.buildContent())
 			}
 			return m, nil
 
-		case "e":
+		case key == m.keys.Edit:
 			return m, func() tea.Msg {
 				return EditEntryMsg{Entry: m.entry}
 			}
 
-		case "a":
+		case key == m.keys.Attachments:
 			// Enter attachment mode if there are attachments, or go to add mode
 			if len(m.attachments) > 0 {
 				m.attachMode = true
@@ -508,29 +515,29 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "1":
+		case key == m.keys.CopyUsername:
 			return m, func() tea.Msg {
 				return CopyToClipboardMsg{Field: "username", Value: m.entry.UserName}
 			}
 
-		case "2":
+		case key == m.keys.CopyPassword:
 			return m, func() tea.Msg {
 				return CopyToClipboardMsg{Field: "password", Value: m.entry.Password}
 			}
 
-		case "3":
+		case key == m.keys.CopyURL:
 			return m, func() tea.Msg {
 				return CopyToClipboardMsg{Field: "url", Value: m.entry.URL}
 			}
 
-		case "4":
+		case key == m.keys.CopyTOTP:
 			if m.totpCode != "" {
 				return m, func() tea.Msg {
 					return CopyToClipboardMsg{Field: "TOTP code", Value: m.totpCode}
 				}
 			}
 
-		case "5":
+		case key == m.keys.HIBPCheck:
 			// HIBP breach check
 			if !m.hibpChecking && m.entry.Password != "" {
 				m.hibpChecking = true
@@ -549,7 +556,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "Q":
+		case key == m.keys.ShowQR:
 			if m.entry.Password == "" {
 				m.copied = ""
 				if m.ready {
@@ -564,14 +571,14 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "o":
+		case key == m.keys.OpenURL:
 			if m.entry.URL != "" {
 				return m, func() tea.Msg {
 					return OpenURLMsg{URL: m.entry.URL}
 				}
 			}
 
-		case "H":
+		case key == m.keys.ShowHistory:
 			if m.entry.HistoryCount > 0 {
 				entryTitle := m.entry.Title
 				entryUUID := m.entry.UUID

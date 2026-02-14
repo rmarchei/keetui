@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tobischo/gokeepasslib/v3"
 
+	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
 )
 
@@ -50,6 +51,7 @@ type BrowserModel struct {
 	allItems    []listItem         // unfiltered items for search
 	cutEntry    *gokeepasslib.UUID // entry UUID in the clipboard for move
 	cutGroup    *gokeepasslib.UUID // group UUID in the clipboard for move
+	keys        config.KeyBindings
 }
 
 // ViewEntryMsg requests viewing the detail of an entry.
@@ -117,7 +119,7 @@ type StatusMsg struct {
 	IsError bool
 }
 
-func NewBrowserModel(db *keepass.DB) BrowserModel {
+func NewBrowserModel(db *keepass.DB, keys ...config.KeyBindings) BrowserModel {
 	root := db.RootGroup()
 	si := textinput.New()
 	si.Prompt = "  / "
@@ -125,9 +127,17 @@ func NewBrowserModel(db *keepass.DB) BrowserModel {
 	si.Width = 40
 	si.Placeholder = "search..."
 
+	var kb config.KeyBindings
+	if len(keys) > 0 {
+		kb = keys[0]
+	} else {
+		kb = config.DefaultKeyBindings()
+	}
+
 	m := BrowserModel{
 		db:          db,
 		searchInput: si,
+		keys:        kb,
 	}
 	m.items = m.buildItemsWithDB(root)
 	m.stack = []stackFrame{{group: root, cursor: 0, offset: 0}}
@@ -360,13 +370,14 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Normal mode key handling
-		switch msg.String() {
-		case "q":
+		key := msg.String()
+		switch key {
+		case m.keys.Quit:
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 
-		case "/":
+		case m.keys.Search:
 			m.searching = true
 			m.allItems = collectAllEntries(m.db.RootGroup())
 			sortItems(m.allItems)
@@ -376,8 +387,10 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 			m.offset = 0
 			return m, textinput.Blink
+		}
 
-		case "up", "k":
+		switch {
+		case key == "up" || key == m.keys.NavUp:
 			if m.cursor > 0 {
 				m.cursor--
 				if m.cursor < m.offset {
@@ -385,7 +398,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "down", "j":
+		case key == "down" || key == m.keys.NavDown:
 			if m.cursor < len(m.items)-1 {
 				m.cursor++
 				vis := m.visibleHeight()
@@ -394,7 +407,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "enter", "l", "right":
+		case key == "enter" || key == m.keys.Open || key == "right":
 			if len(m.items) == 0 {
 				break
 			}
@@ -414,7 +427,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "esc", "h", "left":
+		case key == "esc" || key == m.keys.Back || key == "left":
 			if m.searchQuery != "" {
 				// Clear search results and go back to normal browsing
 				m.searchQuery = ""
@@ -431,7 +444,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.offset = frame.offset
 			}
 
-		case "n":
+		case key == m.keys.NewEntry:
 			if m.inRecycleBin() {
 				break
 			}
@@ -441,7 +454,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return NewEntryMsg{GroupUUID: cg.UUID}
 			}
 
-		case "g":
+		case key == m.keys.NewGroup:
 			if m.inRecycleBin() {
 				break
 			}
@@ -451,7 +464,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return NewGroupMsg{ParentUUID: cg.UUID}
 			}
 
-		case "r":
+		case key == m.keys.RenameGroup:
 			// Rename group
 			if len(m.items) == 0 {
 				break
@@ -463,7 +476,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "y":
+		case key == m.keys.Duplicate:
 			// Duplicate entry
 			if len(m.items) == 0 {
 				break
@@ -475,7 +488,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "x":
+		case key == m.keys.Cut:
 			// Cut entry or group for move
 			if len(m.items) == 0 {
 				break
@@ -485,15 +498,15 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				uuid := item.group.UUID
 				m.cutGroup = &uuid
 				m.cutEntry = nil
-				m.status = successStyle.Render(fmt.Sprintf("Cut group: %s (navigate to target group and press v to paste)", item.group.Name))
+				m.status = successStyle.Render(fmt.Sprintf("Cut group: %s (navigate to target group and press %s to paste)", item.group.Name, m.keys.Paste))
 			} else {
 				uuid := item.entry.UUID
 				m.cutEntry = &uuid
 				m.cutGroup = nil
-				m.status = successStyle.Render(fmt.Sprintf("Cut: %s (navigate to target group and press v to paste)", item.entry.Title))
+				m.status = successStyle.Render(fmt.Sprintf("Cut: %s (navigate to target group and press %s to paste)", item.entry.Title, m.keys.Paste))
 			}
 
-		case "v":
+		case key == m.keys.Paste:
 			// Paste cut entry or group into current group
 			if m.cutEntry != nil {
 				entryUUID := *m.cutEntry
@@ -510,7 +523,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "d":
+		case key == m.keys.Delete:
 			if len(m.items) == 0 {
 				break
 			}
@@ -535,7 +548,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return DeleteEntryMsg{EntryUUID: item.entry.UUID}
 			}
 
-		case "R":
+		case key == m.keys.Restore:
 			// Restore from recycle bin
 			if !m.inRecycleBin() || len(m.items) == 0 {
 				break
@@ -550,7 +563,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return RestoreEntryMsg{EntryUUID: item.entry.UUID}
 			}
 
-		case "E":
+		case key == m.keys.EmptyRecycleBin:
 			// Empty recycle bin
 			if !m.inRecycleBin() {
 				break
@@ -559,27 +572,27 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return EmptyRecycleBinMsg{}
 			}
 
-		case "P":
+		case key == m.keys.ChangePassword:
 			return m, func() tea.Msg {
 				return ChangePasswordStartMsg{}
 			}
 
-		case "i":
+		case key == m.keys.ShowStats:
 			return m, func() tea.Msg {
 				return ShowStatsMsg{}
 			}
 
-		case "I":
+		case key == m.keys.ShowAudit:
 			return m, func() tea.Msg {
 				return ShowAuditMsg{}
 			}
 
-		case "c":
+		case key == m.keys.ShowSettings:
 			return m, func() tea.Msg {
 				return ShowSettingsMsg{}
 			}
 
-		case "s", "ctrl+s":
+		case key == m.keys.Save || key == "ctrl+s":
 			return m, func() tea.Msg {
 				return SaveMsg{}
 			}
@@ -682,10 +695,18 @@ func (m BrowserModel) View() string {
 	if m.searching {
 		b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
 	} else if m.inRecycleBin() {
-		help := "  j/k: nav  enter/l: open  h/esc: back  d: delete permanently  R: restore  E: empty bin  s: save  q: quit"
+		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: delete permanently  %s: restore  %s: empty bin  %s: save  %s: quit",
+			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
+			m.keys.Delete, m.keys.Restore, m.keys.EmptyRecycleBin,
+			m.keys.Save, m.keys.Quit)
 		b.WriteString(helpStyle.Render(help))
 	} else {
-		help := "  j/k: nav  enter/l: open  h/esc: back  /: search  n: new  g: group  r: rename  y: dup  x: cut  v: paste  d: del  i: info  I: audit  c: config  s: save  P: password  q: quit"
+		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: new  %s: group  %s: rename  %s: dup  %s: cut  %s: paste  %s: del  %s: info  %s: audit  %s: config  %s: save  %s: password  %s: quit",
+			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
+			m.keys.Search, m.keys.NewEntry, m.keys.NewGroup,
+			m.keys.RenameGroup, m.keys.Duplicate, m.keys.Cut, m.keys.Paste,
+			m.keys.Delete, m.keys.ShowStats, m.keys.ShowAudit,
+			m.keys.ShowSettings, m.keys.Save, m.keys.ChangePassword, m.keys.Quit)
 		b.WriteString(helpStyle.Render(help))
 	}
 	b.WriteString("\n")

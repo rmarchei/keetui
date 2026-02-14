@@ -643,7 +643,7 @@ func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cm
 	m.db = db
 	m.unlock.input.SetValue("")
 	m.unlock.input.Reset()
-	m.browser = NewBrowserModel(db)
+	m.browser = NewBrowserModel(db, m.cfg.Keys())
 	m.state = viewBrowser
 	m.lastActivity = time.Now()
 	return m, m.scheduleAutoLock()

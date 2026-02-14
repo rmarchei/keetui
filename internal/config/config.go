@@ -11,10 +11,11 @@ import (
 
 // Config holds all configurable settings.
 type Config struct {
-	ClipboardClearSeconds int  `json:"clipboard_clear_seconds"`
-	AutoLockMinutes       int  `json:"auto_lock_minutes"`
-	PasswordLength        int  `json:"password_length"`
-	ShowPasswordStrength  bool `json:"show_password_strength"`
+	ClipboardClearSeconds int          `json:"clipboard_clear_seconds"`
+	AutoLockMinutes       int          `json:"auto_lock_minutes"`
+	PasswordLength        int          `json:"password_length"`
+	ShowPasswordStrength  bool         `json:"show_password_strength"`
+	KeyBindingsPtr        *KeyBindings `json:"keybindings,omitempty"`
 }
 
 // Default returns the default configuration.
@@ -62,6 +63,16 @@ func (c Config) PasswordLen() int {
 		return 20
 	}
 	return c.PasswordLength
+}
+
+// Keys returns the merged keybindings (custom overrides + defaults).
+// If no custom keybindings are set, all defaults are returned.
+func (c Config) Keys() KeyBindings {
+	defaults := DefaultKeyBindings()
+	if c.KeyBindingsPtr == nil {
+		return defaults
+	}
+	return c.KeyBindingsPtr.Merge(defaults)
 }
 
 // String returns the config as indented JSON.
