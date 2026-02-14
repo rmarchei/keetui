@@ -430,6 +430,11 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return ShowStatsMsg{}
 			}
 
+		case "c":
+			return m, func() tea.Msg {
+				return ShowSettingsMsg{}
+			}
+
 		case "s", "ctrl+s":
 			return m, func() tea.Msg {
 				return SaveMsg{}
@@ -527,7 +532,7 @@ func (m BrowserModel) View() string {
 	if m.searching {
 		b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
 	} else {
-		help := "  j/k: nav  enter/l: open  h/esc: back  /: search  n: new  g: group  r: rename  y: dup  x: cut  v: paste  d: del  i: info  s: save  P: password  q: quit"
+		help := "  j/k: nav  enter/l: open  h/esc: back  /: search  n: new  g: group  r: rename  y: dup  x: cut  v: paste  d: del  i: info  c: config  s: save  P: password  q: quit"
 		b.WriteString(helpStyle.Render(help))
 	}
 	b.WriteString("\n")
