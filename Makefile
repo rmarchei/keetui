@@ -9,12 +9,30 @@ LDFLAGS  := -s -w -X main.version=$(VERSION)
 
 PLATFORMS := darwin-amd64 darwin-arm64 linux-amd64 linux-arm64
 
-# Auto-detect container runtime (only required for cross-platform builds)
-CONTAINER_RUNTIME := $(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null)
+# Auto-detect container runtime (docker, podman, or container)
+CONTAINER_RUNTIME := $(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null || command -v container 2>/dev/null)
+
+HOST_OS   := $(shell uname -s | tr '[:upper:]' '[:lower:]')
+HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/')
 
 PREFIX   ?= /usr/local
 
-.PHONY: all clean install $(PLATFORMS)
+.PHONY: build all clean install $(PLATFORMS)
+
+build:
+	@mkdir -p $(DIST)
+	@if [ -n "$(CONTAINER_RUNTIME)" ]; then \
+		$(CONTAINER_RUNTIME) run --rm \
+			-v $(CURDIR):/src:Z \
+			-w /src \
+			-e CGO_ENABLED=0 \
+			-e GOOS=$(HOST_OS) \
+			-e GOARCH=$(HOST_ARCH) \
+			$(GOIMAGE) \
+			go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH) $(CMD); \
+	else \
+		CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH) $(CMD); \
+	fi
 
 all: $(PLATFORMS)
 
@@ -35,10 +53,7 @@ endef
 
 $(foreach p,$(PLATFORMS),$(eval $(call BUILD_PLATFORM,$(p))))
 
-HOST_OS   := $(shell uname -s | tr '[:upper:]' '[:lower:]')
-HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/')
-
-install: $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH)
+install: build
 	install -d $(PREFIX)/bin
 	install -m 755 $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH) $(PREFIX)/bin/$(APP)
 
