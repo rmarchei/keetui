@@ -51,6 +51,43 @@ func TestEvaluatePasswordStrengthAllDigits(t *testing.T) {
 	}
 }
 
+func TestEvaluatePasswordStrengthCharClasses(t *testing.T) {
+	tests := []struct {
+		name      string
+		password  string
+		wantUpper bool
+		wantLower bool
+		wantDigit bool
+		wantSymbol bool
+		wantLen   int
+	}{
+		{"mixed", "aB1!", true, true, true, true, 4},
+		{"lower only", "abcdef", false, true, false, false, 6},
+		{"upper+digits", "ABC123", true, false, true, false, 6},
+		{"symbols only", "!@#$%^", false, false, false, true, 6},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := EvaluatePasswordStrength(tt.password)
+			if r.HasUpper != tt.wantUpper {
+				t.Errorf("HasUpper = %v, want %v", r.HasUpper, tt.wantUpper)
+			}
+			if r.HasLower != tt.wantLower {
+				t.Errorf("HasLower = %v, want %v", r.HasLower, tt.wantLower)
+			}
+			if r.HasDigit != tt.wantDigit {
+				t.Errorf("HasDigit = %v, want %v", r.HasDigit, tt.wantDigit)
+			}
+			if r.HasSymbol != tt.wantSymbol {
+				t.Errorf("HasSymbol = %v, want %v", r.HasSymbol, tt.wantSymbol)
+			}
+			if r.Length != tt.wantLen {
+				t.Errorf("Length = %d, want %d", r.Length, tt.wantLen)
+			}
+		})
+	}
+}
+
 func TestStrengthLevelString(t *testing.T) {
 	tests := []struct {
 		level StrengthLevel
