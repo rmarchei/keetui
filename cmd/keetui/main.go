@@ -54,6 +54,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Using default values. Fix the file or delete it to regenerate.")
 			os.Exit(1)
 		}
+		fmt.Println("\nKeybindings:")
+		fmt.Print(cfg.Keys())
 		os.Exit(0)
 	}
 
