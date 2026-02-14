@@ -143,7 +143,7 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `password_length` | 20 | Length of generated passwords (minimum 8) |
 | `show_password_strength` | true | Show password strength indicator in detail and editor views |
 
-Use `keetui -config` to view current settings. Settings can also be edited from the TUI (press `S` in the browser).
+Use `keetui -config` to view current settings. Settings can also be edited from the TUI (press `c` in the browser).
 
 ## Security
 
