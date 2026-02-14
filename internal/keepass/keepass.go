@@ -80,6 +80,9 @@ func Create(path, password string) (*DB, error) {
 
 // Open reads and decodes a .kdbx file with the given password.
 func Open(path, password string) (*DB, error) {
+	if err := checkFileExtension(path); err != nil {
+		return nil, err
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
@@ -104,6 +107,9 @@ func Open(path, password string) (*DB, error) {
 
 // OpenWithKeyFile reads and decodes a .kdbx file with password and key file.
 func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
+	if err := checkFileExtension(path); err != nil {
+		return nil, err
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
@@ -544,6 +550,13 @@ func extractCustomFields(e gokeepasslib.Entry) []CustomField {
 		})
 	}
 	return fields
+}
+
+func checkFileExtension(path string) error {
+	if strings.HasSuffix(strings.ToLower(path), ".kdb") {
+		return fmt.Errorf("KeePass 1.x .kdb files are not supported; please convert to .kdbx format using KeePass 2 or KeePassXC")
+	}
+	return nil
 }
 
 func mkValue(key, value string) gokeepasslib.ValueData {

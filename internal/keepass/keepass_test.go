@@ -3,6 +3,7 @@ package keepass
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,6 +92,22 @@ func TestOpenAndRead(t *testing.T) {
 	}
 	if entry.URL != "https://example.com" {
 		t.Errorf("url = %q, want %q", entry.URL, "https://example.com")
+	}
+}
+
+func TestOpenKdbFileRejected(t *testing.T) {
+	_, err := Open("/tmp/test.kdb", "password")
+	if err == nil {
+		t.Fatal("expected error opening .kdb file, got nil")
+	}
+	if !strings.Contains(err.Error(), ".kdb files are not supported") {
+		t.Errorf("error = %q, want message about .kdb not supported", err.Error())
+	}
+
+	// Also test case-insensitive matching
+	_, err = Open("/tmp/test.KDB", "password")
+	if err == nil {
+		t.Fatal("expected error opening .KDB file, got nil")
 	}
 }
 
