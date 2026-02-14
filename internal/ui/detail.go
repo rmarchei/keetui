@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/boombuler/barcode/qr"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -49,6 +50,7 @@ type AddAttachmentMsg struct {
 type DetailModel struct {
 	entry        keepass.Entry
 	showPassword bool
+	showQR       bool
 	totpCode     string
 	totpRemain   int // seconds remaining in current TOTP period
 	width        int
@@ -175,6 +177,9 @@ func (m DetailModel) headerView() string {
 }
 
 func (m DetailModel) footerView() string {
+	if m.showQR {
+		return helpStyle.Render("  esc: close QR  Q: close QR")
+	}
 	if m.addingAttachment {
 		return helpStyle.Render("  enter: add file  esc: cancel")
 	}
@@ -182,7 +187,7 @@ func (m DetailModel) footerView() string {
 		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
 		return helpStyle.Render(help)
 	}
-	help := "  p: toggle password  e: edit  o: open url  a: attachments  1: copy user  2: copy pass  3: copy url"
+	help := "  p: toggle password  e: edit  o: open url  a: attachments  Q: show QR  1: copy user  2: copy pass  3: copy url"
 	if m.totpCode != "" {
 		help += "  4: copy totp"
 	}
@@ -320,7 +325,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case totpTickMsg:
 		m.refreshTOTP()
-		if m.ready {
+		if m.ready && !m.showQR {
 			m.viewport.SetContent(m.buildContent())
 		}
 		return m, tickTOTP()
@@ -425,6 +430,16 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// QR code display mode
+		if m.showQR {
+			switch msg.String() {
+			case "esc", "Q":
+				m.showQR = false
+				m.viewport.SetContent(m.buildContent())
+			}
+			return m, nil
+		}
+
 		// Normal detail view key handling
 		switch msg.String() {
 		case "q":
@@ -509,6 +524,21 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "Q":
+			if m.entry.Password == "" {
+				m.copied = ""
+				if m.ready {
+					m.viewport.SetContent(m.buildContent())
+				}
+				return m, nil
+			}
+			m.showQR = true
+			if m.ready {
+				m.viewport.GotoTop()
+				m.viewport.SetContent(m.renderQR(m.entry.Password, m.width, m.viewport.Height))
+			}
+			return m, nil
+
 		case "o":
 			if m.entry.URL != "" {
 				return m, func() tea.Msg {
@@ -553,6 +583,74 @@ func formatAttachmentSize(bytes int) string {
 		return fmt.Sprintf("%d B", bytes)
 	}
 	return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+}
+
+// renderQR renders the given text as a QR code using Unicode half-block characters.
+func (m DetailModel) renderQR(text string, maxWidth, maxHeight int) string {
+	qrCode, err := qr.Encode(text, qr.M, qr.Auto)
+	if err != nil {
+		return errorMsgStyle.Render(fmt.Sprintf("  QR encode error: %s", err))
+	}
+
+	bounds := qrCode.Bounds()
+	w := bounds.Max.X - bounds.Min.X
+	h := bounds.Max.Y - bounds.Min.Y
+
+	// Add 1-module quiet zone on each side
+	totalW := w + 2
+	totalH := h + 2
+
+	// Each character is 1 module wide, 2 modules tall (half-block)
+	charH := (totalH + 1) / 2
+
+	if totalW > maxWidth || charH > maxHeight {
+		return errorMsgStyle.Render("  QR code too large for terminal")
+	}
+
+	// Check if a module is black (data); quiet zone pixels are white
+	isBlack := func(x, y int) bool {
+		qx := x - 1 + bounds.Min.X
+		qy := y - 1 + bounds.Min.Y
+		if qx < bounds.Min.X || qx >= bounds.Max.X || qy < bounds.Min.Y || qy >= bounds.Max.Y {
+			return false
+		}
+		r, _, _, _ := qrCode.At(qx, qy).RGBA()
+		return r == 0
+	}
+
+	blackFgWhiteBg := lipgloss.NewStyle().Foreground(lipgloss.Color("#000000")).Background(lipgloss.Color("#FFFFFF"))
+	whiteFgBlackBg := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Background(lipgloss.Color("#000000"))
+	whiteBg := lipgloss.NewStyle().Background(lipgloss.Color("#FFFFFF"))
+	blackBg := lipgloss.NewStyle().Background(lipgloss.Color("#000000"))
+
+	pad := ""
+	if totalW < maxWidth {
+		pad = strings.Repeat(" ", (maxWidth-totalW)/2)
+	}
+
+	var lines []string
+	for row := 0; row < totalH; row += 2 {
+		var line strings.Builder
+		line.WriteString(pad)
+		for col := 0; col < totalW; col++ {
+			topBlack := isBlack(col, row)
+			bottomBlack := row+1 < totalH && isBlack(col, row+1)
+
+			switch {
+			case topBlack && bottomBlack:
+				line.WriteString(blackBg.Render(" "))
+			case !topBlack && !bottomBlack:
+				line.WriteString(whiteBg.Render(" "))
+			case topBlack && !bottomBlack:
+				line.WriteString(blackFgWhiteBg.Render("▀"))
+			default: // !topBlack && bottomBlack
+				line.WriteString(whiteFgBlackBg.Render("▀"))
+			}
+		}
+		lines = append(lines, line.String())
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // totpCountdownBar renders a visual progress bar for the TOTP countdown.
