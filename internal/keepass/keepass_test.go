@@ -1013,3 +1013,385 @@ func TestSaveAsAtomic(t *testing.T) {
 		t.Errorf("root name = %q, want %q", root.Name, "Root")
 	}
 }
+
+func TestAddAndListAttachments(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	// Initially no attachments
+	attachments := db.EntryAttachments(entry.UUID)
+	if len(attachments) != 0 {
+		t.Fatalf("initial attachments = %d, want 0", len(attachments))
+	}
+
+	// Add an attachment
+	data := []byte("hello world")
+	err = db.AddAttachment(entry.UUID, "test.txt", data)
+	if err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+
+	attachments = db.EntryAttachments(entry.UUID)
+	if len(attachments) != 1 {
+		t.Fatalf("attachments after add = %d, want 1", len(attachments))
+	}
+	if attachments[0].Name != "test.txt" {
+		t.Errorf("attachment name = %q, want %q", attachments[0].Name, "test.txt")
+	}
+	if attachments[0].Size != len(data) {
+		t.Errorf("attachment size = %d, want %d", attachments[0].Size, len(data))
+	}
+}
+
+func TestAddAttachmentFile(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	// Create a file to attach
+	attachFile := filepath.Join(dir, "document.pdf")
+	content := []byte("fake pdf content")
+	if err := os.WriteFile(attachFile, content, 0600); err != nil {
+		t.Fatalf("write attachment file: %v", err)
+	}
+
+	err = db.AddAttachmentFile(entry.UUID, attachFile)
+	if err != nil {
+		t.Fatalf("AddAttachmentFile: %v", err)
+	}
+
+	attachments := db.EntryAttachments(entry.UUID)
+	if len(attachments) != 1 {
+		t.Fatalf("attachments = %d, want 1", len(attachments))
+	}
+	if attachments[0].Name != "document.pdf" {
+		t.Errorf("attachment name = %q, want %q", attachments[0].Name, "document.pdf")
+	}
+	if attachments[0].Size != len(content) {
+		t.Errorf("attachment size = %d, want %d", attachments[0].Size, len(content))
+	}
+}
+
+func TestExtractAttachment(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	data := []byte("secret document content")
+	err = db.AddAttachment(entry.UUID, "secret.txt", data)
+	if err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+
+	// Save and reopen to ensure attachment persists
+	savePath := filepath.Join(dir, "test2.kdbx")
+	err = db.SaveAs(savePath)
+	if err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	root2 := db2.RootGroup()
+	entry2 := root2.Groups[0].Entries[0]
+
+	// Extract the attachment
+	destPath := filepath.Join(dir, "extracted.txt")
+	err = db2.ExtractAttachment(entry2.UUID, "secret.txt", destPath)
+	if err != nil {
+		t.Fatalf("ExtractAttachment: %v", err)
+	}
+
+	extracted, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatalf("read extracted: %v", err)
+	}
+	if string(extracted) != string(data) {
+		t.Errorf("extracted content = %q, want %q", string(extracted), string(data))
+	}
+}
+
+func TestDeleteAttachment(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	// Add two attachments
+	err = db.AddAttachment(entry.UUID, "file1.txt", []byte("content1"))
+	if err != nil {
+		t.Fatalf("AddAttachment file1: %v", err)
+	}
+	err = db.AddAttachment(entry.UUID, "file2.txt", []byte("content2"))
+	if err != nil {
+		t.Fatalf("AddAttachment file2: %v", err)
+	}
+
+	attachments := db.EntryAttachments(entry.UUID)
+	if len(attachments) != 2 {
+		t.Fatalf("attachments = %d, want 2", len(attachments))
+	}
+
+	// Delete one
+	err = db.DeleteAttachment(entry.UUID, "file1.txt")
+	if err != nil {
+		t.Fatalf("DeleteAttachment: %v", err)
+	}
+
+	attachments = db.EntryAttachments(entry.UUID)
+	if len(attachments) != 1 {
+		t.Fatalf("attachments after delete = %d, want 1", len(attachments))
+	}
+	if attachments[0].Name != "file2.txt" {
+		t.Errorf("remaining attachment = %q, want %q", attachments[0].Name, "file2.txt")
+	}
+}
+
+func TestDeleteAttachmentNotFound(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	err = db.DeleteAttachment(entry.UUID, "nonexistent.txt")
+	if err == nil {
+		t.Fatal("expected error deleting nonexistent attachment, got nil")
+	}
+}
+
+func TestDuplicateEntryWithAttachments(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	// Add an attachment to the original entry
+	err = db.AddAttachment(entry.UUID, "readme.md", []byte("# README"))
+	if err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+
+	// Duplicate the entry
+	err = db.DuplicateEntry(entry.UUID)
+	if err != nil {
+		t.Fatalf("DuplicateEntry: %v", err)
+	}
+
+	// Save and reopen
+	savePath := filepath.Join(dir, "test2.kdbx")
+	err = db.SaveAs(savePath)
+	if err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	entries := db2.RootGroup().Groups[0].Entries
+	if len(entries) != 2 {
+		t.Fatalf("entries after dup = %d, want 2", len(entries))
+	}
+
+	// Find the duplicate
+	for _, e := range entries {
+		if e.Title == "Test Entry (copy)" {
+			attachments := db2.EntryAttachments(e.UUID)
+			if len(attachments) != 1 {
+				t.Fatalf("dup attachments = %d, want 1", len(attachments))
+			}
+			if attachments[0].Name != "readme.md" {
+				t.Errorf("dup attachment name = %q, want %q", attachments[0].Name, "readme.md")
+			}
+			return
+		}
+	}
+	t.Fatal("duplicate entry not found")
+}
+
+func TestExportCSVWithAttachments(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	err = db.AddAttachment(entry.UUID, "doc.pdf", []byte("pdf data"))
+	if err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+	err = db.AddAttachment(entry.UUID, "key.pem", []byte("key data"))
+	if err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+
+	var buf strings.Builder
+	err = db.ExportCSV(&buf)
+	if err != nil {
+		t.Fatalf("ExportCSV: %v", err)
+	}
+
+	csv := buf.String()
+	if !strings.Contains(csv, "Attachments") {
+		t.Error("CSV header missing Attachments column")
+	}
+	if !strings.Contains(csv, "doc.pdf;key.pem") {
+		t.Errorf("CSV missing attachment names, got:\n%s", csv)
+	}
+}
+
+func TestExportImportXMLWithAttachments(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	entry := root.Groups[0].Entries[0]
+
+	attachData := []byte("attachment content for xml test")
+	err = db.AddAttachment(entry.UUID, "notes.txt", attachData)
+	if err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+
+	// Export to XML
+	var buf strings.Builder
+	err = db.ExportXML(&buf)
+	if err != nil {
+		t.Fatalf("ExportXML: %v", err)
+	}
+
+	xmlContent := buf.String()
+	if !strings.Contains(xmlContent, "notes.txt") {
+		t.Error("XML export missing attachment name")
+	}
+
+	// Import into a fresh database
+	dbPath2 := filepath.Join(dir, "import.kdbx")
+	db2, err := Create(dbPath2, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	n, err := db2.ImportXML(strings.NewReader(xmlContent))
+	if err != nil {
+		t.Fatalf("ImportXML: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("imported = %d, want 1", n)
+	}
+
+	// Find the imported entry and check attachments
+	root2 := db2.RootGroup()
+	var found *Entry
+	for i := range root2.Groups {
+		for j := range root2.Groups[i].Entries {
+			if root2.Groups[i].Entries[j].Title == "Test Entry" {
+				found = &root2.Groups[i].Entries[j]
+			}
+		}
+	}
+	if found == nil {
+		t.Fatal("imported entry not found")
+	}
+
+	attachments := db2.EntryAttachments(found.UUID)
+	if len(attachments) != 1 {
+		t.Fatalf("imported attachments = %d, want 1", len(attachments))
+	}
+	if attachments[0].Name != "notes.txt" {
+		t.Errorf("imported attachment name = %q, want %q", attachments[0].Name, "notes.txt")
+	}
+
+	// Verify we can extract and the content matches
+	destPath := filepath.Join(dir, "extracted.txt")
+	err = db2.ExtractAttachment(found.UUID, "notes.txt", destPath)
+	if err != nil {
+		t.Fatalf("ExtractAttachment: %v", err)
+	}
+
+	extracted, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatalf("read extracted: %v", err)
+	}
+	if string(extracted) != string(attachData) {
+		t.Errorf("extracted content = %q, want %q", string(extracted), string(attachData))
+	}
+}

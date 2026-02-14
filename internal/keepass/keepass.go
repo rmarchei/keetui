@@ -449,6 +449,11 @@ func (d *DB) DuplicateEntry(entryUUID gokeepasslib.UUID) error {
 	dup.Times.CreationTime = &w.TimeWrapper{Time: time.Now()}
 	dup.Times.LastModificationTime = &w.TimeWrapper{Time: time.Now()}
 
+	// Copy binary attachment references
+	for _, binRef := range original.Binaries {
+		dup.Binaries = append(dup.Binaries, binRef)
+	}
+
 	parentGroup.Entries = append(parentGroup.Entries, dup)
 	return nil
 }
