@@ -51,6 +51,7 @@ type DetailModel struct {
 	entry        keepass.Entry
 	showPassword bool
 	showQR       bool
+	qrLabel      string // label of the field currently shown as QR
 	totpCode     string
 	totpRemain   int // seconds remaining in current TOTP period
 	width        int
@@ -64,12 +65,40 @@ type DetailModel struct {
 	ready        bool // true after first size is set
 	cfg          config.Config
 
+	// Field selection
+	selectedField int // index into selectableFields()
+
 	// Attachment mode state
 	attachMode       bool
 	attachIdx        int
 	addingAttachment bool            // true when file path input is shown
 	attachPathInput  textinput.Model // input for file path when adding attachment
 	keys             config.KeyBindings
+}
+
+// selectableField represents a field the user can highlight and act on.
+type selectableField struct {
+	label   string
+	value   string // used for copy
+	qrValue string // used for QR; if empty, falls back to value
+}
+
+// selectableFields returns the ordered list of fields the cursor can move through.
+func (m DetailModel) selectableFields() []selectableField {
+	var f []selectableField
+	f = append(f, selectableField{label: "username", value: m.entry.UserName})
+	f = append(f, selectableField{label: "password", value: m.entry.Password})
+	f = append(f, selectableField{label: "URL", value: m.entry.URL})
+	if m.totpCode != "" {
+		f = append(f, selectableField{label: "TOTP", value: m.totpCode, qrValue: m.entry.TOTP})
+	}
+	if m.entry.Notes != "" {
+		f = append(f, selectableField{label: "notes", value: m.entry.Notes})
+	}
+	for _, cf := range m.entry.CustomFields {
+		f = append(f, selectableField{label: cf.Key, value: cf.Value})
+	}
+	return f
 }
 
 // BackToBrowserMsg signals returning to the browser.
@@ -120,6 +149,57 @@ func (m *DetailModel) SetSize(width, height int) {
 func (m *DetailModel) RefreshContent() {
 	if m.ready {
 		m.viewport.SetContent(m.buildContent())
+	}
+}
+
+// refreshContentAndFollow rebuilds the viewport content and scrolls to keep
+// the selected field visible.
+func (m *DetailModel) refreshContentAndFollow() {
+	if !m.ready {
+		return
+	}
+	m.viewport.SetContent(m.buildContent())
+	// Estimate the line number of the selected field. Each selectable field
+	// occupies one line, with non-selectable metadata lines interspersed.
+	line := m.selectedField // rough lower bound
+	// Account for notes taking multiple lines
+	if m.entry.Notes != "" {
+		notesFieldIdx := 3 // username=0, password=1, URL=2, notes=3 (or 4 with TOTP)
+		if m.totpCode != "" {
+			notesFieldIdx = 4
+		}
+		if m.selectedField > notesFieldIdx {
+			extra := len(strings.Split(m.entry.Notes, "\n")) // note body lines
+			line += extra
+		}
+	}
+	// Account for timestamp lines (not selectable, come after notes)
+	timestampLines := 0
+	if !m.entry.CreationTime.IsZero() {
+		timestampLines++
+	}
+	if !m.entry.ModificationTime.IsZero() {
+		timestampLines++
+	}
+	if m.entry.Expires {
+		timestampLines++
+	}
+	baseFields := 3 // username, password, URL
+	if m.totpCode != "" {
+		baseFields++
+	}
+	if m.entry.Notes != "" {
+		baseFields++
+	}
+	if m.selectedField >= baseFields {
+		line += timestampLines
+	}
+	// Scroll viewport to keep the selected field visible
+	vpHeight := m.viewport.Height
+	if line < m.viewport.YOffset {
+		m.viewport.SetYOffset(line)
+	} else if line >= m.viewport.YOffset+vpHeight {
+		m.viewport.SetYOffset(line - vpHeight + 1)
 	}
 }
 
@@ -183,7 +263,7 @@ func (m DetailModel) headerView() string {
 
 func (m DetailModel) footerView() string {
 	if m.showQR {
-		return helpStyle.Render(fmt.Sprintf("  esc: close QR  %s: close QR", m.keys.ShowQR))
+		return helpStyle.Render(fmt.Sprintf("  QR: %s  esc: close  %s: close", m.qrLabel, m.keys.ShowQR))
 	}
 	if m.addingAttachment {
 		return helpStyle.Render("  enter: add file  esc: cancel")
@@ -192,17 +272,12 @@ func (m DetailModel) footerView() string {
 		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
 		return helpStyle.Render(help)
 	}
-	help := fmt.Sprintf("  %s: toggle password  %s: edit  %s: open url  %s: attachments  %s: show QR",
-		m.keys.TogglePassword, m.keys.Edit, m.keys.OpenURL, m.keys.Attachments, m.keys.ShowQR)
+	help := fmt.Sprintf("  j/k: select  enter: copy  %s: QR  %s: toggle pw  %s: edit  %s: url  %s: attach",
+		m.keys.ShowQR, m.keys.TogglePassword, m.keys.Edit, m.keys.OpenURL, m.keys.Attachments)
 	if m.entry.HistoryCount > 0 {
 		help += fmt.Sprintf("  %s: history", m.keys.ShowHistory)
 	}
-	help += fmt.Sprintf("  %s: copy user  %s: copy pass  %s: copy url",
-		m.keys.CopyUsername, m.keys.CopyPassword, m.keys.CopyURL)
-	if m.totpCode != "" {
-		help += fmt.Sprintf("  %s: copy totp", m.keys.CopyTOTP)
-	}
-	help += fmt.Sprintf("  %s: HIBP check  esc: back  %s: quit", m.keys.HIBPCheck, m.keys.Quit)
+	help += fmt.Sprintf("  %s: HIBP  esc: back  %s: quit", m.keys.HIBPCheck, m.keys.Quit)
 	return helpStyle.Render(help)
 }
 
@@ -210,7 +285,18 @@ func (m DetailModel) footerView() string {
 func (m DetailModel) buildContent() string {
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("  %s %s\n",
+	fieldIdx := 0
+	cursor := func() string {
+		if fieldIdx == m.selectedField {
+			fieldIdx++
+			return selectedItemStyle.Render("▸ ")
+		}
+		fieldIdx++
+		return "  "
+	}
+
+	b.WriteString(fmt.Sprintf("%s%s %s\n",
+		cursor(),
 		labelStyle.Render("Username:"),
 		valueStyle.Render(m.entry.UserName)))
 
@@ -220,30 +306,35 @@ func (m DetailModel) buildContent() string {
 	}
 	if m.cfg.ShowPasswordStrength {
 		strengthStr := renderStrength(m.strength)
-		b.WriteString(fmt.Sprintf("  %s %s  %s\n",
+		b.WriteString(fmt.Sprintf("%s%s %s  %s\n",
+			cursor(),
 			labelStyle.Render("Password:"),
 			hiddenStyle.Render(pw),
 			strengthStr))
 	} else {
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		b.WriteString(fmt.Sprintf("%s%s %s\n",
+			cursor(),
 			labelStyle.Render("Password:"),
 			hiddenStyle.Render(pw)))
 	}
 
-	b.WriteString(fmt.Sprintf("  %s %s\n",
+	b.WriteString(fmt.Sprintf("%s%s %s\n",
+		cursor(),
 		labelStyle.Render("URL:"),
 		valueStyle.Render(m.entry.URL)))
 
 	if m.totpCode != "" {
 		bar := totpCountdownBar(m.totpRemain, int(keepass.TOTPPeriod(m.entry.TOTP)))
-		b.WriteString(fmt.Sprintf("  %s %s  %s\n",
+		b.WriteString(fmt.Sprintf("%s%s %s  %s\n",
+			cursor(),
 			labelStyle.Render("TOTP:"),
 			valueStyle.Render(m.totpCode),
 			helpStyle.Render(fmt.Sprintf("%s %ds", bar, m.totpRemain))))
 	}
 
 	if m.entry.Notes != "" {
-		b.WriteString(fmt.Sprintf("  %s\n",
+		b.WriteString(fmt.Sprintf("%s%s\n",
+			cursor(),
 			labelStyle.Render("Notes:")))
 		for _, line := range strings.Split(m.entry.Notes, "\n") {
 			b.WriteString(fmt.Sprintf("  %s%s\n",
@@ -280,7 +371,8 @@ func (m DetailModel) buildContent() string {
 		if cf.Protected && !m.showPassword {
 			val = strings.Repeat("*", len(cf.Value))
 		}
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		b.WriteString(fmt.Sprintf("%s%s %s\n",
+			cursor(),
 			labelStyle.Render(cf.Key+":"),
 			valueStyle.Render(val)))
 	}
@@ -478,7 +570,35 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		}
 
+		fields := m.selectableFields()
+
 		switch {
+		case key == "j" || key == "down":
+			if m.selectedField < len(fields)-1 {
+				m.selectedField++
+				m.refreshContentAndFollow()
+			}
+			return m, nil
+
+		case key == "k" || key == "up":
+			if m.selectedField > 0 {
+				m.selectedField--
+				m.refreshContentAndFollow()
+			}
+			return m, nil
+
+		case key == "enter":
+			// Copy selected field
+			if m.selectedField < len(fields) {
+				f := fields[m.selectedField]
+				if f.value != "" {
+					return m, func() tea.Msg {
+						return CopyToClipboardMsg{Field: f.label, Value: f.value}
+					}
+				}
+			}
+			return m, nil
+
 		case key == "esc" || key == m.keys.Back || key == "left":
 			return m, func() tea.Msg { return BackToBrowserMsg{} }
 
@@ -557,17 +677,21 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key == m.keys.ShowQR:
-			if m.entry.Password == "" {
-				m.copied = ""
-				if m.ready {
-					m.viewport.SetContent(m.buildContent())
+			if m.selectedField < len(fields) {
+				f := fields[m.selectedField]
+				val := f.qrValue
+				if val == "" {
+					val = f.value
 				}
-				return m, nil
-			}
-			m.showQR = true
-			if m.ready {
-				m.viewport.GotoTop()
-				m.viewport.SetContent(m.renderQR(m.entry.Password, m.width, m.viewport.Height))
+				if val == "" {
+					return m, nil
+				}
+				m.showQR = true
+				m.qrLabel = f.label
+				if m.ready {
+					m.viewport.GotoTop()
+					m.viewport.SetContent(m.renderQR(val, m.width, m.viewport.Height))
+				}
 			}
 			return m, nil
 
@@ -589,7 +713,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Delegate all other messages to viewport for scrolling (j/k, up/down, pgup/pgdn, etc.)
+	// Delegate remaining messages to viewport (pgup/pgdn, mouse, etc.)
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	return m, cmd

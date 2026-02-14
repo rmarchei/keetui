@@ -180,6 +180,86 @@ func TestDetailAttachmentMode(t *testing.T) {
 	}
 }
 
+func TestDetailFieldNavigation(t *testing.T) {
+	entry := testEntry()
+	m := NewDetailModel(entry, config.Default())
+	m.SetSize(80, 24)
+
+	// Starts on field 0 (username)
+	if m.selectedField != 0 {
+		t.Errorf("initial selectedField = %d, want 0", m.selectedField)
+	}
+
+	// Move down
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = updated.(DetailModel)
+	if m.selectedField != 1 {
+		t.Errorf("selectedField after j = %d, want 1", m.selectedField)
+	}
+
+	// Move up
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	m = updated.(DetailModel)
+	if m.selectedField != 0 {
+		t.Errorf("selectedField after k = %d, want 0", m.selectedField)
+	}
+
+	// Should not go below 0
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	m = updated.(DetailModel)
+	if m.selectedField != 0 {
+		t.Errorf("selectedField should not go below 0, got %d", m.selectedField)
+	}
+}
+
+func TestDetailEnterCopiesSelected(t *testing.T) {
+	entry := testEntry()
+	m := NewDetailModel(entry, config.Default())
+	m.SetSize(80, 24)
+
+	// Field 0 = username
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter should produce a copy command")
+	}
+	msg := cmd()
+	copyMsg, ok := msg.(CopyToClipboardMsg)
+	if !ok {
+		t.Fatalf("expected CopyToClipboardMsg, got %T", msg)
+	}
+	if copyMsg.Field != "username" {
+		t.Errorf("field = %q, want %q", copyMsg.Field, "username")
+	}
+	if copyMsg.Value != "testuser" {
+		t.Errorf("value = %q, want %q", copyMsg.Value, "testuser")
+	}
+}
+
+func TestDetailQRSelectedField(t *testing.T) {
+	entry := testEntry()
+	m := NewDetailModel(entry, config.Default())
+	m.SetSize(80, 24)
+
+	// Move to URL field (index 2)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = updated.(DetailModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	m = updated.(DetailModel)
+	if m.selectedField != 2 {
+		t.Fatalf("selectedField = %d, want 2 (URL)", m.selectedField)
+	}
+
+	// Show QR
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Q'}})
+	m = updated.(DetailModel)
+	if !m.showQR {
+		t.Error("QR should be shown")
+	}
+	if m.qrLabel != "URL" {
+		t.Errorf("qrLabel = %q, want %q", m.qrLabel, "URL")
+	}
+}
+
 func TestDetailView(t *testing.T) {
 	entry := testEntry()
 	m := NewDetailModel(entry, config.Default())
