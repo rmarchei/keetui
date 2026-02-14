@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -37,6 +38,11 @@ func main() {
 	}
 
 	dbPath := flag.Arg(0)
+
+	if strings.HasSuffix(strings.ToLower(dbPath), ".kdb") {
+		fmt.Fprintln(os.Stderr, "Error: KeePass 1.x .kdb files are not supported. Please convert to .kdbx format using KeePass 2 or KeePassXC.")
+		os.Exit(1)
+	}
 
 	if *newDB {
 		if _, err := os.Stat(dbPath); err == nil {
