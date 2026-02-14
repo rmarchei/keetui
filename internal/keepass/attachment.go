@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tobischo/gokeepasslib/v3"
 )
@@ -42,7 +43,16 @@ func (d *DB) EntryAttachments(entryUUID gokeepasslib.UUID) []Attachment {
 }
 
 // ExtractAttachment saves an attachment to disk.
+// The destPath is validated to reject path traversal attempts.
 func (d *DB) ExtractAttachment(entryUUID gokeepasslib.UUID, name, destPath string) error {
+	// Reject paths containing ".." to prevent directory traversal
+	destPath = filepath.Clean(destPath)
+	for _, part := range strings.Split(destPath, string(filepath.Separator)) {
+		if part == ".." {
+			return fmt.Errorf("invalid destination path (directory traversal): %q", destPath)
+		}
+	}
+
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return fmt.Errorf("database has no root group")
 	}
@@ -85,6 +95,7 @@ func (d *DB) AddAttachment(entryUUID gokeepasslib.UUID, name string, data []byte
 
 // AddAttachmentFile adds a file attachment from a file path.
 func (d *DB) AddAttachmentFile(entryUUID gokeepasslib.UUID, filePath string) error {
+	filePath = filepath.Clean(filePath)
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("read attachment file: %w", err)
