@@ -12,6 +12,9 @@ keetui/
 │   └── keetui/
 │       └── main.go              # CLI entry point, argument parsing
 ├── internal/
+│   ├── config/
+│   │   ├── config.go            # Configuration loading, saving, defaults
+│   │   └── config_test.go       # Tests for config package
 │   ├── keepass/
 │   │   ├── keepass.go           # KeePass DB operations (open, save, CRUD)
 │   │   └── keepass_test.go      # Tests for keepass package
@@ -22,6 +25,7 @@ keetui/
 │       ├── detail.go            # Read-only entry detail view
 │       ├── editor.go            # Entry create/edit form
 │       ├── group_input.go       # New group name input
+│       ├── settings.go          # Settings editor view
 │       ├── styles.go            # Lip Gloss style definitions
 │       └── unlock.go            # Password entry / unlock screen
 ├── go.mod
@@ -56,6 +60,8 @@ UnlockModel → BrowserModel ↔ DetailModel
               GroupInputModel  EditorModel
                    ↕              ↕
               ConfirmModel    ConfirmModel
+                   ↕
+              SettingsModel
 ```
 
 ### Message Passing
@@ -76,6 +82,7 @@ go build -o keetui ./cmd/keetui         # build binary
 ```sh
 ./keetui database.kdbx
 ./keetui -keyfile key.key database.kdbx
+./keetui -config                        # print config path and current settings
 ```
 
 ### Testing
@@ -91,6 +98,20 @@ go test -v ./internal/keepass/...       # run keepass tests with verbose output
 gofmt -w .
 go vet ./...
 ```
+
+## Configuration
+
+Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keetui/config.json`).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `clipboard_clear_seconds` | 15 | Seconds before clipboard is cleared after copying (min: 15) |
+| `auto_lock_minutes` | 5 | Minutes of inactivity before database is locked (min: 5) |
+| `password_length` | 20 | Default length for generated passwords (min: 8) |
+
+- **CLI**: Run `keetui -config` to display the config file path and current settings.
+- **TUI**: Press `c` in the browser view to open the settings editor. Changes are saved to disk and take effect immediately.
+- If the config file does not exist, defaults are used. The file is created automatically when settings are saved from the TUI.
 
 ## Code Conventions
 
