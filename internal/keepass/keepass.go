@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -59,7 +60,7 @@ func Create(path, password string) (*DB, error) {
 
 	db.LockProtectedEntries()
 
-	file, err := os.Create(path)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("create file: %w", err)
 	}
@@ -174,20 +175,52 @@ func (d *DB) Save() error {
 	return d.SaveAs(d.Path)
 }
 
-// SaveAs writes the database to the given path.
+// SaveAs writes the database to the given path using atomic file replacement.
+// It writes to a temporary file first, then renames it to the target path
+// to avoid data loss if the process is interrupted during save.
 func (d *DB) SaveAs(path string) error {
 	d.Database.LockProtectedEntries()
 	defer d.Database.UnlockProtectedEntries()
 
-	file, err := os.Create(path)
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, ".keetui-save-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create file: %w", err)
+		return fmt.Errorf("create temp file: %w", err)
 	}
-	defer file.Close()
+	tmpPath := tmpFile.Name()
 
-	if err := gokeepasslib.NewEncoder(file).Encode(d.Database); err != nil {
+	// Ensure temp file is cleaned up on failure
+	success := false
+	defer func() {
+		if !success {
+			os.Remove(tmpPath)
+		}
+	}()
+
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("set file permissions: %w", err)
+	}
+
+	if err := gokeepasslib.NewEncoder(tmpFile).Encode(d.Database); err != nil {
+		tmpFile.Close()
 		return fmt.Errorf("encode database: %w", err)
 	}
+
+	if err := tmpFile.Sync(); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("sync file: %w", err)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("rename temp file: %w", err)
+	}
+
+	success = true
 	return nil
 }
 

@@ -61,6 +61,7 @@ func main() {
 			os.Exit(1)
 		}
 		password := string(pwBytes)
+		zeroBytes(pwBytes)
 		if password == "" {
 			fmt.Fprintln(os.Stderr, "Error: password cannot be empty")
 			os.Exit(1)
@@ -73,6 +74,7 @@ func main() {
 			os.Exit(1)
 		}
 		confirm := string(confirmBytes)
+		zeroBytes(confirmBytes)
 		if password != confirm {
 			fmt.Fprintln(os.Stderr, "Error: passwords do not match")
 			os.Exit(1)
@@ -95,5 +97,12 @@ func main() {
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// zeroBytes overwrites a byte slice with zeros to reduce sensitive data exposure in memory.
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
 	}
 }
