@@ -19,6 +19,7 @@ type Config struct {
 	PasswordLowercase     *bool        `json:"password_lowercase,omitempty"`
 	PasswordDigits        *bool        `json:"password_digits,omitempty"`
 	PasswordSymbols       *bool        `json:"password_symbols,omitempty"`
+	ThemeName             string       `json:"theme,omitempty"`
 	KeyBindingsPtr        *KeyBindings `json:"keybindings,omitempty"`
 }
 
@@ -101,6 +102,14 @@ func (c Config) PasswordCharset() string {
 		charset = "abcdefghijklmnopqrstuvwxyz"
 	}
 	return charset
+}
+
+// Theme returns the configured theme name, defaulting to "dark".
+func (c Config) Theme() string {
+	if c.ThemeName == "" {
+		return "dark"
+	}
+	return c.ThemeName
 }
 
 // Keys returns the merged keybindings (custom overrides + defaults).
