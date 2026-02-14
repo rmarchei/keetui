@@ -20,6 +20,7 @@ var version = "dev"
 func main() {
 	keyFile := flag.String("keyfile", "", "path to key file")
 	showVersion := flag.Bool("version", false, "show version")
+	showConfig := flag.Bool("config", false, "show config file path and current settings")
 	newDB := flag.Bool("new", false, "create a new database")
 	exportCSV := flag.String("export-csv", "", "export entries to CSV file")
 	exportXML := flag.String("export-xml", "", "export entries to XML file")
@@ -36,6 +37,13 @@ func main() {
 
 	if *showVersion {
 		fmt.Printf("keetui %s\n", version)
+		os.Exit(0)
+	}
+
+	if *showConfig {
+		cfg := config.Load()
+		fmt.Printf("Config file: %s\n\n", config.Path())
+		fmt.Println(cfg)
 		os.Exit(0)
 	}
 

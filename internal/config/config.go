@@ -3,6 +3,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -22,6 +23,11 @@ func Default() Config {
 		AutoLockMinutes:       5,
 		PasswordLength:        20,
 	}
+}
+
+// Path returns the config file path (~/.config/keetui/config.json).
+func Path() string {
+	return configPath()
 }
 
 // ClipboardClearDuration returns the clipboard clear delay as a duration.
@@ -46,6 +52,29 @@ func (c Config) PasswordLen() int {
 		return 20
 	}
 	return c.PasswordLength
+}
+
+// String returns a human-readable representation of the config.
+func (c Config) String() string {
+	return fmt.Sprintf("clipboard_clear_seconds: %d\nauto_lock_minutes:       %d\npassword_length:         %d",
+		c.ClipboardClearSeconds, c.AutoLockMinutes, c.PasswordLength)
+}
+
+// Save writes the config to ~/.config/keetui/config.json.
+func (c Config) Save() error {
+	p := configPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(p, data, 0600); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
 }
 
 // configPath returns ~/.config/keetui/config.json.
