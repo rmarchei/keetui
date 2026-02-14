@@ -152,9 +152,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = wsm.Height
 	}
 
-	// Track user activity for auto-lock (any key press)
-	if _, ok := msg.(tea.KeyMsg); ok && m.state != viewUnlock {
-		m.lastActivity = time.Now()
+	// Track user activity for auto-lock (any key press or mouse event)
+	if m.state != viewUnlock {
+		switch msg.(type) {
+		case tea.KeyMsg, tea.MouseMsg:
+			m.lastActivity = time.Now()
+		}
 	}
 
 	// Handle cross-view messages first

@@ -284,6 +284,55 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.MouseMsg:
+		if !m.searching {
+			switch msg.Button {
+			case tea.MouseButtonLeft:
+				if msg.Action != tea.MouseActionPress {
+					break
+				}
+				// Calculate header lines: 1 newline + 1 title + 1 breadcrumb + 1 blank = 4
+				headerLines := 4
+				idx := msg.Y - headerLines + m.offset
+				if idx >= 0 && idx < len(m.items) {
+					if idx == m.cursor {
+						// Click on already-selected item: open it
+						item := m.items[m.cursor]
+						if item.isGroup {
+							m.stack[len(m.stack)-1].cursor = m.cursor
+							m.stack[len(m.stack)-1].offset = m.offset
+							m.stack = append(m.stack, stackFrame{group: item.group})
+							m.items = m.buildItemsWithDB(item.group)
+							m.cursor = 0
+							m.offset = 0
+						} else {
+							return m, func() tea.Msg {
+								return ViewEntryMsg{Entry: item.entry}
+							}
+						}
+					} else {
+						m.cursor = idx
+					}
+				}
+			case tea.MouseButtonWheelUp:
+				if m.cursor > 0 {
+					m.cursor--
+					if m.cursor < m.offset {
+						m.offset = m.cursor
+					}
+				}
+			case tea.MouseButtonWheelDown:
+				if m.cursor < len(m.items)-1 {
+					m.cursor++
+					vis := m.visibleHeight()
+					if m.cursor >= m.offset+vis {
+						m.offset = m.cursor - vis + 1
+					}
+				}
+			}
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		// Search mode key handling
 		if m.searching {

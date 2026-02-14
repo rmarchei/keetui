@@ -185,7 +185,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Warning: %s (using defaults)\n", err)
 	}
 	app := ui.NewApp(dbPath, *keyFile, cfg)
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
