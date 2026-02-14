@@ -52,6 +52,7 @@ type BrowserModel struct {
 	cutEntry    *gokeepasslib.UUID // entry UUID in the clipboard for move
 	cutGroup    *gokeepasslib.UUID // group UUID in the clipboard for move
 	keys        config.KeyBindings
+	readOnly    bool
 }
 
 // ViewEntryMsg requests viewing the detail of an entry.
@@ -445,6 +446,10 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key == m.keys.NewEntry:
+			if m.readOnly {
+				m.status = errorMsgStyle.Render("Read-only mode")
+				break
+			}
 			if m.inRecycleBin() {
 				break
 			}
@@ -455,6 +460,10 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key == m.keys.NewGroup:
+			if m.readOnly {
+				m.status = errorMsgStyle.Render("Read-only mode")
+				break
+			}
 			if m.inRecycleBin() {
 				break
 			}
@@ -465,6 +474,10 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key == m.keys.RenameGroup:
+			if m.readOnly {
+				m.status = errorMsgStyle.Render("Read-only mode")
+				break
+			}
 			// Rename group
 			if len(m.items) == 0 {
 				break
@@ -477,6 +490,10 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key == m.keys.Duplicate:
+			if m.readOnly {
+				m.status = errorMsgStyle.Render("Read-only mode")
+				break
+			}
 			// Duplicate entry
 			if len(m.items) == 0 {
 				break
@@ -489,6 +506,10 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key == m.keys.Cut:
+			if m.readOnly {
+				m.status = errorMsgStyle.Render("Read-only mode")
+				break
+			}
 			// Cut entry or group for move
 			if len(m.items) == 0 {
 				break
@@ -507,6 +528,10 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key == m.keys.Paste:
+			if m.readOnly {
+				m.status = errorMsgStyle.Render("Read-only mode")
+				break
+			}
 			// Paste cut entry or group into current group
 			if m.cutEntry != nil {
 				entryUUID := *m.cutEntry
@@ -524,6 +549,10 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key == m.keys.Delete:
+			if m.readOnly {
+				m.status = errorMsgStyle.Render("Read-only mode")
+				break
+			}
 			if len(m.items) == 0 {
 				break
 			}
@@ -573,6 +602,10 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key == m.keys.ChangePassword:
+			if m.readOnly {
+				m.status = errorMsgStyle.Render("Read-only mode")
+				break
+			}
 			return m, func() tea.Msg {
 				return ChangePasswordStartMsg{}
 			}
@@ -593,6 +626,10 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key == m.keys.Save || key == "ctrl+s":
+			if m.readOnly {
+				m.status = errorMsgStyle.Render("Read-only mode")
+				break
+			}
 			return m, func() tea.Msg {
 				return SaveMsg{}
 			}
@@ -694,6 +731,11 @@ func (m BrowserModel) View() string {
 	}
 	if m.searching {
 		b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
+	} else if m.readOnly {
+		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: info  %s: audit  %s: quit",
+			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
+			m.keys.Search, m.keys.ShowStats, m.keys.ShowAudit, m.keys.Quit)
+		b.WriteString(helpStyle.Render(help))
 	} else if m.inRecycleBin() {
 		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: delete permanently  %s: restore  %s: empty bin  %s: save  %s: quit",
 			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,

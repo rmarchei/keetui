@@ -109,10 +109,15 @@ type AppModel struct {
 	returnState  viewState // view to return to after confirm dialog
 	entryCount   int       // cached entry count for status bar
 	undoStack    undoStack // undo history
+	readOnly     bool      // when true, all mutations are blocked
 }
 
 // NewApp creates the application starting at the unlock screen.
-func NewApp(filePath, keyFilePath string, cfg config.Config) AppModel {
+func NewApp(filePath, keyFilePath string, cfg config.Config, readOnly ...bool) AppModel {
+	ro := false
+	if len(readOnly) > 0 {
+		ro = readOnly[0]
+	}
 	return AppModel{
 		state:        viewUnlock,
 		unlock:       NewUnlockModel(filePath, keyFilePath),
@@ -120,6 +125,7 @@ func NewApp(filePath, keyFilePath string, cfg config.Config) AppModel {
 		filePath:     filePath,
 		keyFilePath:  keyFilePath,
 		cfg:          cfg,
+		readOnly:     ro,
 	}
 }
 
@@ -169,6 +175,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Handle undo (ctrl+z) in non-text-input views
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "ctrl+z" {
+		if m.readOnly {
+			return m, statusCmd("Read-only mode", true)
+		}
 		switch m.state {
 		case viewBrowser, viewDetail, viewStats, viewHistory, viewAudit:
 			return m.handleUndo()
@@ -196,6 +205,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ViewEntryMsg:
 		m.detail = NewDetailModel(msg.Entry, m.cfg)
+		m.detail.readOnly = m.readOnly
 		if m.db != nil {
 			m.detail.SetAttachments(m.db.EntryAttachments(msg.Entry.UUID))
 		}
@@ -219,6 +229,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.groupInput.Init()
 
 	case RenameGroupMsg:
+		if m.readOnly {
+			m.state = viewBrowser
+			return m, statusCmd("Read-only mode", true)
+		}
 		rawGroup, _ := m.db.GetRawGroup(msg.GroupUUID)
 		oldName := ""
 		if rawGroup != nil {
@@ -264,6 +278,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case confirmDeleteEntryMsg:
+		if m.readOnly {
+			m.state = viewBrowser
+			return m, statusCmd("Read-only mode", true)
+		}
 		// Capture undo state before deletion
 		parentUUID, _ := m.db.FindEntryParentUUID(msg.UUID)
 		rawEntry, _ := m.db.GetRawEntry(msg.UUID)
@@ -306,6 +324,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case confirmDeleteGroupMsg:
+		if m.readOnly {
+			m.state = viewBrowser
+			return m, statusCmd("Read-only mode", true)
+		}
 		// Capture undo state before deletion
 		parentUUID, _ := m.db.FindGroupParentUUID(msg.UUID)
 		rawGroup, _ := m.db.GetRawGroup(msg.UUID)
@@ -365,6 +387,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case confirmPermanentDeleteEntryMsg:
+		if m.readOnly {
+			m.state = viewBrowser
+			return m, statusCmd("Read-only mode", true)
+		}
 		if err := m.db.PermanentlyDeleteEntry(msg.UUID); err != nil {
 			m.state = viewBrowser
 			return m, statusCmd(err.Error(), true)
@@ -377,6 +403,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case confirmPermanentDeleteGroupMsg:
+		if m.readOnly {
+			m.state = viewBrowser
+			return m, statusCmd("Read-only mode", true)
+		}
 		if err := m.db.PermanentlyDeleteGroup(msg.UUID); err != nil {
 			m.state = viewBrowser
 			return m, statusCmd(err.Error(), true)
@@ -389,6 +419,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case RestoreEntryMsg:
+		if m.readOnly {
+			return m, statusCmd("Read-only mode", true)
+		}
 		rootUUID := m.db.RootGroup().UUID
 		if err := m.db.RestoreEntry(msg.EntryUUID, rootUUID); err != nil {
 			return m, statusCmd(fmt.Sprintf("Error restoring: %s", err), true)
@@ -400,6 +433,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case RestoreGroupMsg:
+		if m.readOnly {
+			return m, statusCmd("Read-only mode", true)
+		}
 		rootUUID := m.db.RootGroup().UUID
 		if err := m.db.RestoreGroup(msg.GroupUUID, rootUUID); err != nil {
 			return m, statusCmd(fmt.Sprintf("Error restoring: %s", err), true)
@@ -418,6 +454,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case confirmEmptyRecycleBinMsg:
+		if m.readOnly {
+			m.state = viewBrowser
+			return m, statusCmd("Read-only mode", true)
+		}
 		if err := m.db.EmptyRecycleBin(); err != nil {
 			m.state = viewBrowser
 			return m, statusCmd(err.Error(), true)
@@ -431,6 +471,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case DuplicateEntryMsg:
+		if m.readOnly {
+			return m, statusCmd("Read-only mode", true)
+		}
 		newUUID, err := m.db.DuplicateEntry(msg.EntryUUID)
 		if err != nil {
 			return m, statusCmd(fmt.Sprintf("Error duplicating: %s", err), true)
@@ -448,6 +491,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case PasteEntryMsg:
+		if m.readOnly {
+			return m, statusCmd("Read-only mode", true)
+		}
 		sourceUUID, _ := m.db.FindEntryParentUUID(msg.EntryUUID)
 		if err := m.db.MoveEntry(msg.EntryUUID, msg.TargetGroupUUID); err != nil {
 			return m, statusCmd(fmt.Sprintf("Error moving entry: %s", err), true)
@@ -466,6 +512,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case PasteGroupMsg:
+		if m.readOnly {
+			return m, statusCmd("Read-only mode", true)
+		}
 		sourceUUID, _ := m.db.FindGroupParentUUID(msg.GroupUUID)
 		if err := m.db.MoveGroup(msg.GroupUUID, msg.TargetGroupUUID); err != nil {
 			return m, statusCmd(fmt.Sprintf("Error moving group: %s", err), true)
@@ -484,6 +533,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case ChangePasswordStartMsg:
+		if m.readOnly {
+			return m, statusCmd("Read-only mode", true)
+		}
 		m.password = NewPasswordModel()
 		m.state = viewPassword
 		return m, m.password.Init()
@@ -556,6 +608,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case confirmDeleteAttachmentMsg:
+		if m.readOnly {
+			m.state = viewDetail
+			return m, statusCmd("Read-only mode", true)
+		}
 		if err := m.db.DeleteAttachment(msg.EntryUUID, msg.Name); err != nil {
 			m.state = viewDetail
 			return m, statusCmd(fmt.Sprintf("Error deleting attachment: %s", err), true)
@@ -575,6 +631,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, statusCmd("Attachment deleted (use 's' to save to file)", false)
 
 	case AddAttachmentMsg:
+		if m.readOnly {
+			return m, statusCmd("Read-only mode", true)
+		}
 		if err := m.db.AddAttachmentFile(msg.EntryUUID, msg.FilePath); err != nil {
 			return m, statusCmd(fmt.Sprintf("Error adding attachment: %s", err), true)
 		}
@@ -587,12 +646,23 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, statusCmd("Attachment added (use 's' to save to file)", false)
 
 	case SaveEntryMsg:
+		if m.readOnly {
+			m.state = viewBrowser
+			return m, statusCmd("Read-only mode", true)
+		}
 		return m.handleSaveEntry(msg)
 
 	case SaveGroupMsg:
+		if m.readOnly {
+			m.state = viewBrowser
+			return m, statusCmd("Read-only mode", true)
+		}
 		return m.handleSaveGroup(msg)
 
 	case SaveMsg:
+		if m.readOnly {
+			return m, statusCmd("Read-only mode", true)
+		}
 		return m.handleSave()
 
 	case BackToBrowserMsg:
@@ -639,7 +709,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case autoLockMsg:
 		// Only lock if no activity since the timer was set
 		if m.state != viewUnlock && msg.at == m.lastActivity {
-			if m.dirty && m.db != nil {
+			if m.dirty && m.db != nil && !m.readOnly {
 				_ = m.db.Save()
 				m.dirty = false
 			}
@@ -744,6 +814,9 @@ func (m *AppModel) refreshEntryCount() {
 func (m AppModel) statusBar() string {
 	filename := filepath.Base(m.filePath)
 	parts := []string{filename, fmt.Sprintf("%d entries", m.entryCount)}
+	if m.readOnly {
+		parts = append(parts, statusBarModifiedStyle.Render("[read-only]"))
+	}
 	if m.dirty {
 		parts = append(parts, statusBarModifiedStyle.Render("[modified]"))
 	}
@@ -819,6 +892,7 @@ func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cm
 	m.unlock.input.SetValue("")
 	m.unlock.input.Reset()
 	m.browser = NewBrowserModel(db, m.cfg.Keys())
+	m.browser.readOnly = m.readOnly
 	m.browser.width = m.width
 	m.browser.height = m.viewHeight()
 	m.state = viewBrowser

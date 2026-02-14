@@ -30,6 +30,7 @@ func main() {
 	importCSV := flag.String("import-csv", "", "import entries from CSV file")
 	importXML := flag.String("import-xml", "", "import entries from XML file")
 	mergeDB := flag.String("merge", "", "merge entries from another .kdbx file")
+	readOnly := flag.Bool("read-only", false, "open database in read-only mode")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "keetui - a TUI for KeePass databases\n\n")
 		fmt.Fprintf(os.Stderr, "Usage: keetui [options] <database.kdbx>\n\n")
@@ -134,6 +135,12 @@ func main() {
 		}
 	}
 
+	// Block mutating batch operations in read-only mode
+	if *readOnly && (*importCSV != "" || *importXML != "" || *mergeDB != "") {
+		fmt.Fprintln(os.Stderr, "Error: import and merge are not allowed in read-only mode")
+		os.Exit(1)
+	}
+
 	// Handle non-interactive commands (export, import, merge)
 	isBatchOp := *exportCSV != "" || *exportXML != "" || *importCSV != "" || *importXML != "" || *mergeDB != ""
 	if isBatchOp {
@@ -202,7 +209,7 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: %s (using defaults)\n", err)
 	}
-	app := ui.NewApp(dbPath, *keyFile, cfg)
+	app := ui.NewApp(dbPath, *keyFile, cfg, *readOnly)
 	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
