@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -628,7 +629,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return ExtractAttachmentMsg{
 							EntryUUID: entryUUID,
 							Name:      a.Name,
-							DestPath:  a.Name, // save to CWD with original name
+							DestPath:  filepath.Base(a.Name), // strip directory components for safety
 						}
 					}
 				}

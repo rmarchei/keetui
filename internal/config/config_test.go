@@ -222,6 +222,39 @@ func TestThemeDefault(t *testing.T) {
 	}
 }
 
+func TestSanitizeClamps(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      Config
+		wantClip int
+		wantLock int
+		wantPWLen int
+	}{
+		{"negative clipboard", Config{ClipboardClearSeconds: -5, AutoLockMinutes: 5, PasswordLength: 20}, 15, 5, 20},
+		{"too low clipboard", Config{ClipboardClearSeconds: 3, AutoLockMinutes: 5, PasswordLength: 20}, 15, 5, 20},
+		{"zero clipboard ok", Config{ClipboardClearSeconds: 0, AutoLockMinutes: 5, PasswordLength: 20}, 0, 5, 20},
+		{"negative auto-lock", Config{ClipboardClearSeconds: 15, AutoLockMinutes: -1, PasswordLength: 20}, 15, 5, 20},
+		{"too low auto-lock", Config{ClipboardClearSeconds: 15, AutoLockMinutes: 2, PasswordLength: 20}, 15, 5, 20},
+		{"zero auto-lock ok", Config{ClipboardClearSeconds: 15, AutoLockMinutes: 0, PasswordLength: 20}, 15, 0, 20},
+		{"short password", Config{ClipboardClearSeconds: 15, AutoLockMinutes: 5, PasswordLength: 4}, 15, 5, 20},
+		{"valid values unchanged", Config{ClipboardClearSeconds: 30, AutoLockMinutes: 10, PasswordLength: 32}, 30, 10, 32},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.cfg.Sanitize()
+			if tt.cfg.ClipboardClearSeconds != tt.wantClip {
+				t.Errorf("ClipboardClearSeconds = %d, want %d", tt.cfg.ClipboardClearSeconds, tt.wantClip)
+			}
+			if tt.cfg.AutoLockMinutes != tt.wantLock {
+				t.Errorf("AutoLockMinutes = %d, want %d", tt.cfg.AutoLockMinutes, tt.wantLock)
+			}
+			if tt.cfg.PasswordLength != tt.wantPWLen {
+				t.Errorf("PasswordLength = %d, want %d", tt.cfg.PasswordLength, tt.wantPWLen)
+			}
+		})
+	}
+}
+
 func TestThemeCustom(t *testing.T) {
 	cfg := Config{ThemeName: "light"}
 	if got := cfg.Theme(); got != "light" {

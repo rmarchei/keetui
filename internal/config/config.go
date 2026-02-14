@@ -157,6 +157,27 @@ func configPath() string {
 	return filepath.Join(dir, "keetui", "config.json")
 }
 
+// Sanitize clamps config values to safe ranges, matching the validation
+// performed by the settings UI. This prevents malicious or malformed config
+// files from producing unexpected behavior.
+func (c *Config) Sanitize() {
+	if c.ClipboardClearSeconds < 0 {
+		c.ClipboardClearSeconds = 15
+	}
+	if c.ClipboardClearSeconds > 0 && c.ClipboardClearSeconds < 15 {
+		c.ClipboardClearSeconds = 15
+	}
+	if c.AutoLockMinutes < 0 {
+		c.AutoLockMinutes = 5
+	}
+	if c.AutoLockMinutes > 0 && c.AutoLockMinutes < 5 {
+		c.AutoLockMinutes = 5
+	}
+	if c.PasswordLength < 8 {
+		c.PasswordLength = 20
+	}
+}
+
 // Load reads config from ~/.config/keetui/config.json, falling back to defaults.
 // Returns a non-nil error when the file exists but contains invalid JSON.
 func Load() (Config, error) {
@@ -168,5 +189,6 @@ func Load() (Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("invalid config %s: %w", configPath(), err)
 	}
+	cfg.Sanitize()
 	return cfg, nil
 }
