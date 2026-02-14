@@ -17,6 +17,10 @@ const (
 	settingAutoLock
 	settingPasswordLength
 	settingPasswordStrength
+	settingPWUppercase
+	settingPWLowercase
+	settingPWDigits
+	settingPWSymbols
 	settingCount
 )
 
@@ -25,6 +29,10 @@ var settingLabels = [settingCount]string{
 	"Auto-lock (min)",
 	"Password length",
 	"Password strength",
+	"Uppercase (A-Z)",
+	"Lowercase (a-z)",
+	"Digits (0-9)",
+	"Symbols (!@#...)",
 }
 
 var settingDescriptions = [settingCount]string{
@@ -32,6 +40,10 @@ var settingDescriptions = [settingCount]string{
 	"Minutes of inactivity before database is locked (0: disable, min: 5)",
 	"Default length for generated passwords (min: 8)",
 	"Show password strength indicator (1: on, 0: off)",
+	"Include uppercase letters in generated passwords (1: on, 0: off)",
+	"Include lowercase letters in generated passwords (1: on, 0: off)",
+	"Include digits in generated passwords (1: on, 0: off)",
+	"Include symbols in generated passwords (1: on, 0: off)",
 }
 
 // ShowSettingsMsg requests showing the settings view.
@@ -74,6 +86,21 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 		inputs[settingPasswordStrength].SetValue("0")
 	}
 	inputs[settingPasswordStrength].CharLimit = 1
+
+	boolToStr := func(b bool) string {
+		if b {
+			return "1"
+		}
+		return "0"
+	}
+	inputs[settingPWUppercase].SetValue(boolToStr(cfg.PasswordHasUppercase()))
+	inputs[settingPWUppercase].CharLimit = 1
+	inputs[settingPWLowercase].SetValue(boolToStr(cfg.PasswordHasLowercase()))
+	inputs[settingPWLowercase].CharLimit = 1
+	inputs[settingPWDigits].SetValue(boolToStr(cfg.PasswordHasDigits()))
+	inputs[settingPWDigits].CharLimit = 1
+	inputs[settingPWSymbols].SetValue(boolToStr(cfg.PasswordHasSymbols()))
+	inputs[settingPWSymbols].CharLimit = 1
 
 	inputs[0].Focus()
 
@@ -166,11 +193,51 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Parse charset toggles
+	parseBoolSetting := func(idx int, name string) (bool, bool) {
+		v := strings.TrimSpace(m.inputs[idx].Value())
+		if v != "0" && v != "1" {
+			m.status = fmt.Sprintf("%s must be 1 (on) or 0 (off)", name)
+			m.isError = true
+			return false, false
+		}
+		return v == "1", true
+	}
+
+	upper, ok := parseBoolSetting(settingPWUppercase, "Uppercase")
+	if !ok {
+		return m, nil
+	}
+	lower, ok := parseBoolSetting(settingPWLowercase, "Lowercase")
+	if !ok {
+		return m, nil
+	}
+	digits, ok := parseBoolSetting(settingPWDigits, "Digits")
+	if !ok {
+		return m, nil
+	}
+	symbols, ok := parseBoolSetting(settingPWSymbols, "Symbols")
+	if !ok {
+		return m, nil
+	}
+
+	if !upper && !lower && !digits && !symbols {
+		m.status = "At least one character set must be enabled"
+		m.isError = true
+		return m, nil
+	}
+
+	boolPtr := func(b bool) *bool { return &b }
+
 	newCfg := config.Config{
 		ClipboardClearSeconds: clipSec,
 		AutoLockMinutes:       lockMin,
 		PasswordLength:        pwLen,
 		ShowPasswordStrength:  strengthVal == "1",
+		PasswordUppercase:     boolPtr(upper),
+		PasswordLowercase:     boolPtr(lower),
+		PasswordDigits:        boolPtr(digits),
+		PasswordSymbols:       boolPtr(symbols),
 	}
 
 	if err := newCfg.Save(); err != nil {

@@ -15,6 +15,10 @@ type Config struct {
 	AutoLockMinutes       int          `json:"auto_lock_minutes"`
 	PasswordLength        int          `json:"password_length"`
 	ShowPasswordStrength  bool         `json:"show_password_strength"`
+	PasswordUppercase     *bool        `json:"password_uppercase,omitempty"`
+	PasswordLowercase     *bool        `json:"password_lowercase,omitempty"`
+	PasswordDigits        *bool        `json:"password_digits,omitempty"`
+	PasswordSymbols       *bool        `json:"password_symbols,omitempty"`
 	KeyBindingsPtr        *KeyBindings `json:"keybindings,omitempty"`
 }
 
@@ -63,6 +67,40 @@ func (c Config) PasswordLen() int {
 		return 20
 	}
 	return c.PasswordLength
+}
+
+// PasswordHasUppercase returns whether uppercase letters are included in generated passwords.
+func (c Config) PasswordHasUppercase() bool { return c.PasswordUppercase == nil || *c.PasswordUppercase }
+
+// PasswordHasLowercase returns whether lowercase letters are included in generated passwords.
+func (c Config) PasswordHasLowercase() bool { return c.PasswordLowercase == nil || *c.PasswordLowercase }
+
+// PasswordHasDigits returns whether digits are included in generated passwords.
+func (c Config) PasswordHasDigits() bool { return c.PasswordDigits == nil || *c.PasswordDigits }
+
+// PasswordHasSymbols returns whether symbols are included in generated passwords.
+func (c Config) PasswordHasSymbols() bool { return c.PasswordSymbols == nil || *c.PasswordSymbols }
+
+// PasswordCharset builds the character set for password generation based on config.
+// If all sets are disabled, falls back to lowercase letters.
+func (c Config) PasswordCharset() string {
+	var charset string
+	if c.PasswordHasLowercase() {
+		charset += "abcdefghijklmnopqrstuvwxyz"
+	}
+	if c.PasswordHasUppercase() {
+		charset += "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	}
+	if c.PasswordHasDigits() {
+		charset += "0123456789"
+	}
+	if c.PasswordHasSymbols() {
+		charset += "!@#$%^&*()-_=+"
+	}
+	if charset == "" {
+		charset = "abcdefghijklmnopqrstuvwxyz"
+	}
+	return charset
 }
 
 // Keys returns the merged keybindings (custom overrides + defaults).
