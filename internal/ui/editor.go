@@ -163,7 +163,11 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.save()
 
 		case "ctrl+g":
-			pw := generatePassword(m.cfg.PasswordLen())
+			pw, err := generatePassword(m.cfg.PasswordLen())
+			if err != nil {
+				m.err = fmt.Errorf("password generation failed: %w", err)
+				return m, nil
+			}
 			m.inputs[fieldPassword].SetValue(pw)
 			m.generated = true
 			return m, nil
@@ -323,16 +327,15 @@ func (m EditorModel) View() string {
 
 const passwordChars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+"
 
-func generatePassword(length int) string {
+func generatePassword(length int) (string, error) {
 	result := make([]byte, length)
 	charLen := big.NewInt(int64(len(passwordChars)))
 	for i := range result {
 		n, err := rand.Int(rand.Reader, charLen)
 		if err != nil {
-			result[i] = 'x'
-			continue
+			return "", fmt.Errorf("random number generation failed: %w", err)
 		}
 		result[i] = passwordChars[n.Int64()]
 	}
-	return string(result)
+	return string(result), nil
 }

@@ -2,8 +2,10 @@ package ui
 
 import (
 	"fmt"
+	"net/url"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -254,6 +256,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case autoLockMsg:
 		// Only lock if no activity since the timer was set
 		if m.state != viewUnlock && msg.at == m.lastActivity {
+			clearClipboard()
 			m.db = nil
 			m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
 			m.unlock.err = fmt.Errorf("locked due to inactivity")
@@ -443,16 +446,24 @@ func clearClipboard() {
 	_ = copyToClipboard("")
 }
 
-func openURL(u string) error {
-	if u == "" {
+func openURL(rawURL string) error {
+	if rawURL == "" {
 		return nil
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("unsupported URL scheme %q: only http and https are allowed", scheme)
 	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", u)
+		cmd = exec.Command("open", rawURL)
 	case "linux":
-		cmd = exec.Command("xdg-open", u)
+		cmd = exec.Command("xdg-open", rawURL)
 	default:
 		return fmt.Errorf("open URL not supported on %s", runtime.GOOS)
 	}
