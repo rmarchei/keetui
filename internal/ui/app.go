@@ -30,6 +30,7 @@ const (
 	viewStats
 	viewSettings
 	viewHistory
+	viewAudit
 )
 
 // clipboardClearMsg signals that the clipboard should be cleared.
@@ -96,6 +97,7 @@ type AppModel struct {
 	stats        StatsModel
 	settings     SettingsModel
 	history      HistoryModel
+	audit        AuditModel
 	width        int
 	height       int
 	lastActivity time.Time // tracks last user interaction for auto-lock
@@ -384,6 +386,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewBrowser
 		return m, statusCmd("Master password changed (use 's' to save to file)", false)
 
+	case ShowAuditMsg:
+		result := m.db.Audit()
+		m.audit = NewAuditModel(result)
+		m.audit.width = m.width
+		m.audit.height = m.height
+		m.state = viewAudit
+		return m, nil
+
 	case ShowStatsMsg:
 		m.stats = NewStatsModel(m.db.Stats())
 		m.state = viewStats
@@ -578,6 +588,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var updated tea.Model
 		updated, cmd = m.history.Update(msg)
 		m.history = updated.(HistoryModel)
+	case viewAudit:
+		var updated tea.Model
+		updated, cmd = m.audit.Update(msg)
+		m.audit = updated.(AuditModel)
 	}
 
 	return m, cmd
@@ -605,6 +619,8 @@ func (m AppModel) View() string {
 		return m.settings.View()
 	case viewHistory:
 		return m.history.View()
+	case viewAudit:
+		return m.audit.View()
 	}
 	return ""
 }
