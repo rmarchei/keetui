@@ -64,6 +64,11 @@ var (
 			Foreground(errorColor).
 			Padding(0, 1)
 
+	// Warning
+	warnStyle = lipgloss.NewStyle().
+			Foreground(warnColor).
+			Padding(0, 1)
+
 	// Help
 	helpStyle = lipgloss.NewStyle().
 			Foreground(mutedColor)

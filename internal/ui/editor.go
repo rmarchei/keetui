@@ -172,6 +172,17 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.generated = true
 			return m, nil
 
+		case "ctrl+p":
+			// Generate diceware passphrase
+			pp, err := keepass.GeneratePassphrase(6, "-")
+			if err != nil {
+				m.err = fmt.Errorf("passphrase generation failed: %w", err)
+				return m, nil
+			}
+			m.inputs[fieldPassword].SetValue(pp)
+			m.generated = true
+			return m, nil
+
 		case "ctrl+a":
 			// Add a new custom field
 			m.customInputs = append(m.customInputs, newCustomFieldInput("", "", false))
@@ -291,6 +302,15 @@ func (m EditorModel) View() string {
 
 	for i := range m.inputs {
 		b.WriteString(m.inputs[i].View())
+		if i == fieldPassword {
+			// Show password strength inline
+			pw := m.inputs[fieldPassword].Value()
+			if pw != "" {
+				strength := keepass.EvaluatePasswordStrength(pw)
+				b.WriteString("  ")
+				b.WriteString(renderStrength(strength))
+			}
+		}
 		b.WriteString("\n")
 	}
 
@@ -319,7 +339,7 @@ func (m EditorModel) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+g: gen password  ctrl+a: add field  ctrl+d: del field  ctrl+s: save  esc: cancel"))
+	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+g: gen password  ctrl+p: gen passphrase  ctrl+a: add field  ctrl+d: del field  ctrl+s: save  esc: cancel"))
 	b.WriteString("\n")
 
 	return b.String()

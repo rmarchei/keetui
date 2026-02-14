@@ -21,6 +21,11 @@ func main() {
 	keyFile := flag.String("keyfile", "", "path to key file")
 	showVersion := flag.Bool("version", false, "show version")
 	newDB := flag.Bool("new", false, "create a new database")
+	exportCSV := flag.String("export-csv", "", "export entries to CSV file")
+	exportXML := flag.String("export-xml", "", "export entries to XML file")
+	importCSV := flag.String("import-csv", "", "import entries from CSV file")
+	importXML := flag.String("import-xml", "", "import entries from XML file")
+	mergeDB := flag.String("merge", "", "merge entries from another .kdbx file")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "keetui - a TUI for KeePass databases\n\n")
 		fmt.Fprintf(os.Stderr, "Usage: keetui [options] <database.kdbx>\n\n")
@@ -98,6 +103,70 @@ func main() {
 		}
 	}
 
+	// Handle non-interactive commands (export, import, merge)
+	isBatchOp := *exportCSV != "" || *exportXML != "" || *importCSV != "" || *importXML != "" || *mergeDB != ""
+	if isBatchOp {
+		db := openDBForBatch(dbPath, *keyFile)
+
+		if *exportCSV != "" {
+			if err := db.ExportCSVFile(*exportCSV); err != nil {
+				fmt.Fprintf(os.Stderr, "Error exporting CSV: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Exported to %s\n", *exportCSV)
+		}
+
+		if *exportXML != "" {
+			if err := db.ExportXMLFile(*exportXML); err != nil {
+				fmt.Fprintf(os.Stderr, "Error exporting XML: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Exported to %s\n", *exportXML)
+		}
+
+		if *importCSV != "" {
+			n, err := db.ImportCSVFile(*importCSV)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error importing CSV: %v\n", err)
+				os.Exit(1)
+			}
+			if err := db.Save(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving after import: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Imported %d entries from %s\n", n, *importCSV)
+		}
+
+		if *importXML != "" {
+			n, err := db.ImportXMLFile(*importXML)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error importing XML: %v\n", err)
+				os.Exit(1)
+			}
+			if err := db.Save(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving after import: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Imported %d entries from %s\n", n, *importXML)
+		}
+
+		if *mergeDB != "" {
+			other := openDBForBatch(*mergeDB, "")
+			result, err := db.Merge(other)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error merging: %v\n", err)
+				os.Exit(1)
+			}
+			if err := db.Save(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving after merge: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Merged: %d entries added, %d groups created\n", result.EntriesAdded, result.GroupsCreated)
+		}
+
+		os.Exit(0)
+	}
+
 	cfg := config.Load()
 	app := ui.NewApp(dbPath, *keyFile, cfg)
 	p := tea.NewProgram(app, tea.WithAltScreen())
@@ -105,6 +174,31 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// openDBForBatch opens the database for batch operations, prompting for password.
+func openDBForBatch(dbPath, keyFilePath string) *keepass.DB {
+	fmt.Print("Enter master password: ")
+	pwBytes, err := term.ReadPassword(int(syscall.Stdin))
+	fmt.Println()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
+		os.Exit(1)
+	}
+	password := string(pwBytes)
+	zeroBytes(pwBytes)
+
+	var db *keepass.DB
+	if keyFilePath != "" {
+		db, err = keepass.OpenWithKeyFile(dbPath, password, keyFilePath)
+	} else {
+		db, err = keepass.Open(dbPath, password)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	return db
 }
 
 // zeroBytes overwrites a byte slice with zeros to reduce sensitive data exposure in memory.
