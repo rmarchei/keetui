@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -399,7 +401,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case clipboardClearMsg:
 		current, err := readClipboard()
-		if err == nil && current == msg.expected {
+		if err != nil {
+			// Can't read clipboard (e.g. over SSH) — clear anyway so OSC 52 clear is sent.
+			clearClipboard()
+		} else if current == msg.expected {
 			clearClipboard()
 		}
 		m.detail.copied = ""
@@ -600,7 +605,25 @@ type RenameGroupStartMsg struct {
 // ChangePasswordStartMsg is sent to initiate master password change.
 type ChangePasswordStartMsg struct{}
 
+// osc52Copy writes an OSC 52 escape sequence to set the terminal clipboard.
+// This works over SSH because the escape sequence travels through the connection
+// to the local terminal emulator. Writes directly to /dev/tty to avoid
+// interfering with bubbletea's stdout rendering.
+func osc52Copy(text string) {
+	f, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	b64 := base64.StdEncoding.EncodeToString([]byte(text))
+	fmt.Fprintf(f, "\033]52;c;%s\a", b64)
+}
+
 func copyToClipboard(text string) error {
+	// Always attempt OSC 52 first — works over SSH when the terminal supports it,
+	// and is silently ignored by terminals that don't.
+	osc52Copy(text)
+
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -614,26 +637,26 @@ func copyToClipboard(text string) error {
 		} else if _, err := exec.LookPath("wl-copy"); err == nil {
 			cmd = exec.Command("wl-copy")
 		} else {
-			return fmt.Errorf("no clipboard utility found (install xclip, xsel, or wl-copy)")
+			// No clipboard utility available, but OSC 52 was already sent.
+			return nil
 		}
 	default:
-		return fmt.Errorf("clipboard not supported on %s", runtime.GOOS)
+		// OSC 52 was already sent; don't fail on unsupported platforms.
+		return nil
 	}
 	cmd.Stdin = nil
 	pipe, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("clipboard: %w", err)
+		return nil // OSC 52 already attempted
 	}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("clipboard: %w", err)
+		return nil // OSC 52 already attempted
 	}
 	if _, err := pipe.Write([]byte(text)); err != nil {
-		return fmt.Errorf("clipboard write: %w", err)
+		return nil // OSC 52 already attempted
 	}
 	pipe.Close()
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("clipboard: %w", err)
-	}
+	_ = cmd.Wait() // best-effort; OSC 52 already attempted
 	return nil
 }
 
