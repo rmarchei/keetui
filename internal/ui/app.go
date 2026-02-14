@@ -235,9 +235,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.dirty = true
 		m.state = viewBrowser
+		statusText := "Entry deleted"
+		if m.db.RecycleBinEnabled() {
+			statusText = "Moved to Recycle Bin"
+		}
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
-			statusCmd("Entry deleted", false),
+			statusCmd(statusText, false),
 		)
 
 	case confirmDeleteGroupMsg:
@@ -247,9 +251,92 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.dirty = true
 		m.state = viewBrowser
+		statusText := "Group deleted"
+		if m.db.RecycleBinEnabled() {
+			statusText = "Moved to Recycle Bin"
+		}
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
-			statusCmd("Group deleted", false),
+			statusCmd(statusText, false),
+		)
+
+	case PermanentlyDeleteEntryMsg:
+		m.confirm = NewConfirmModel("Permanently delete this entry?", func() tea.Msg {
+			return confirmPermanentDeleteEntryMsg{UUID: msg.EntryUUID}
+		})
+		m.state = viewConfirm
+		return m, nil
+
+	case PermanentlyDeleteGroupMsg:
+		m.confirm = NewConfirmModel("Permanently delete this group and all its contents?", func() tea.Msg {
+			return confirmPermanentDeleteGroupMsg{UUID: msg.GroupUUID}
+		})
+		m.state = viewConfirm
+		return m, nil
+
+	case confirmPermanentDeleteEntryMsg:
+		if err := m.db.PermanentlyDeleteEntry(msg.UUID); err != nil {
+			m.state = viewBrowser
+			return m, statusCmd(err.Error(), true)
+		}
+		m.dirty = true
+		m.state = viewBrowser
+		return m, tea.Batch(
+			func() tea.Msg { return RefreshMsg{} },
+			statusCmd("Entry permanently deleted", false),
+		)
+
+	case confirmPermanentDeleteGroupMsg:
+		if err := m.db.PermanentlyDeleteGroup(msg.UUID); err != nil {
+			m.state = viewBrowser
+			return m, statusCmd(err.Error(), true)
+		}
+		m.dirty = true
+		m.state = viewBrowser
+		return m, tea.Batch(
+			func() tea.Msg { return RefreshMsg{} },
+			statusCmd("Group permanently deleted", false),
+		)
+
+	case RestoreEntryMsg:
+		rootUUID := m.db.RootGroup().UUID
+		if err := m.db.RestoreEntry(msg.EntryUUID, rootUUID); err != nil {
+			return m, statusCmd(fmt.Sprintf("Error restoring: %s", err), true)
+		}
+		m.dirty = true
+		return m, tea.Batch(
+			func() tea.Msg { return RefreshMsg{} },
+			statusCmd("Entry restored to root group", false),
+		)
+
+	case RestoreGroupMsg:
+		rootUUID := m.db.RootGroup().UUID
+		if err := m.db.RestoreGroup(msg.GroupUUID, rootUUID); err != nil {
+			return m, statusCmd(fmt.Sprintf("Error restoring: %s", err), true)
+		}
+		m.dirty = true
+		return m, tea.Batch(
+			func() tea.Msg { return RefreshMsg{} },
+			statusCmd("Group restored to root group", false),
+		)
+
+	case EmptyRecycleBinMsg:
+		m.confirm = NewConfirmModel("Empty the recycle bin? This cannot be undone.", func() tea.Msg {
+			return confirmEmptyRecycleBinMsg{}
+		})
+		m.state = viewConfirm
+		return m, nil
+
+	case confirmEmptyRecycleBinMsg:
+		if err := m.db.EmptyRecycleBin(); err != nil {
+			m.state = viewBrowser
+			return m, statusCmd(err.Error(), true)
+		}
+		m.dirty = true
+		m.state = viewBrowser
+		return m, tea.Batch(
+			func() tea.Msg { return RefreshMsg{} },
+			statusCmd("Recycle bin emptied", false),
 		)
 
 	case DuplicateEntryMsg:
@@ -595,6 +682,16 @@ type confirmDeleteAttachmentMsg struct {
 	EntryUUID gokeepasslib.UUID
 	Name      string
 }
+
+type confirmPermanentDeleteEntryMsg struct {
+	UUID gokeepasslib.UUID
+}
+
+type confirmPermanentDeleteGroupMsg struct {
+	UUID gokeepasslib.UUID
+}
+
+type confirmEmptyRecycleBinMsg struct{}
 
 // RenameGroupStartMsg is sent to initiate group renaming.
 type RenameGroupStartMsg struct {

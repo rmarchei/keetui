@@ -82,6 +82,29 @@ type DeleteGroupMsg struct {
 	GroupUUID gokeepasslib.UUID
 }
 
+// PermanentlyDeleteEntryMsg requests permanent deletion of an entry.
+type PermanentlyDeleteEntryMsg struct {
+	EntryUUID gokeepasslib.UUID
+}
+
+// PermanentlyDeleteGroupMsg requests permanent deletion of a group.
+type PermanentlyDeleteGroupMsg struct {
+	GroupUUID gokeepasslib.UUID
+}
+
+// RestoreEntryMsg requests restoring an entry from recycle bin.
+type RestoreEntryMsg struct {
+	EntryUUID gokeepasslib.UUID
+}
+
+// RestoreGroupMsg requests restoring a group from recycle bin.
+type RestoreGroupMsg struct {
+	GroupUUID gokeepasslib.UUID
+}
+
+// EmptyRecycleBinMsg requests emptying the recycle bin.
+type EmptyRecycleBinMsg struct{}
+
 // SaveMsg requests saving the database.
 type SaveMsg struct{}
 
@@ -106,7 +129,7 @@ func NewBrowserModel(db *keepass.DB) BrowserModel {
 		db:          db,
 		searchInput: si,
 	}
-	m.items = buildItems(root)
+	m.items = m.buildItemsWithDB(root)
 	m.stack = []stackFrame{{group: root, cursor: 0, offset: 0}}
 	return m
 }
@@ -123,11 +146,27 @@ func buildItems(g keepass.Group) []listItem {
 	return items
 }
 
+// recycleBinUUID is set during sort when a DB reference is available.
+var recycleBinUUID gokeepasslib.UUID
+
+func (m BrowserModel) buildItemsWithDB(g keepass.Group) []listItem {
+	recycleBinUUID = m.db.RecycleBinUUID()
+	return buildItems(g)
+}
+
 func sortItems(items []listItem) {
 	sort.SliceStable(items, func(i, j int) bool {
 		// Groups first, then entries; alphabetical within each category
 		if items[i].isGroup != items[j].isGroup {
 			return items[i].isGroup
+		}
+		// Recycle bin group sorts last among groups
+		if items[i].isGroup && items[j].isGroup {
+			iIsRB := items[i].group.UUID.Compare(recycleBinUUID)
+			jIsRB := items[j].group.UUID.Compare(recycleBinUUID)
+			if iIsRB != jIsRB {
+				return jIsRB // recycle bin goes last
+			}
 		}
 		return strings.ToLower(items[i].name()) < strings.ToLower(items[j].name())
 	})
@@ -152,6 +191,16 @@ func collectAllEntriesWithPath(g keepass.Group, path string) []listItem {
 
 func (m BrowserModel) currentGroup() keepass.Group {
 	return m.stack[len(m.stack)-1].group
+}
+
+// inRecycleBin returns true if the current group or any ancestor is the recycle bin.
+func (m BrowserModel) inRecycleBin() bool {
+	for _, f := range m.stack {
+		if m.db.IsRecycleBin(f.group.UUID) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m BrowserModel) breadcrumb() string {
@@ -219,7 +268,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchInput.SetValue(m.searchQuery)
 			m.applySearch()
 		} else {
-			m.items = buildItems(root)
+			m.items = m.buildItemsWithDB(root)
 			m.cursor = 0
 			m.offset = 0
 			m.searching = false
@@ -243,7 +292,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searching = false
 				m.searchInput.SetValue("")
 				m.searchInput.Blur()
-				m.items = buildItems(m.currentGroup())
+				m.items = m.buildItemsWithDB(m.currentGroup())
 				m.cursor = 0
 				m.offset = 0
 				return m, nil
@@ -306,7 +355,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.stack[len(m.stack)-1].cursor = m.cursor
 				m.stack[len(m.stack)-1].offset = m.offset
 				m.stack = append(m.stack, stackFrame{group: item.group})
-				m.items = buildItems(item.group)
+				m.items = m.buildItemsWithDB(item.group)
 				m.cursor = 0
 				m.offset = 0
 			} else {
@@ -320,7 +369,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.searchQuery != "" {
 				// Clear search results and go back to normal browsing
 				m.searchQuery = ""
-				m.items = buildItems(m.currentGroup())
+				m.items = m.buildItemsWithDB(m.currentGroup())
 				m.cursor = 0
 				m.offset = 0
 				return m, nil
@@ -328,12 +377,15 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.stack) > 1 {
 				m.stack = m.stack[:len(m.stack)-1]
 				frame := m.stack[len(m.stack)-1]
-				m.items = buildItems(frame.group)
+				m.items = m.buildItemsWithDB(frame.group)
 				m.cursor = frame.cursor
 				m.offset = frame.offset
 			}
 
 		case "n":
+			if m.inRecycleBin() {
+				break
+			}
 			// New entry
 			cg := m.currentGroup()
 			return m, func() tea.Msg {
@@ -341,6 +393,9 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "g":
+			if m.inRecycleBin() {
+				break
+			}
 			// New group
 			cg := m.currentGroup()
 			return m, func() tea.Msg {
@@ -411,6 +466,17 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			item := m.items[m.cursor]
+			if m.inRecycleBin() {
+				// In recycle bin: permanently delete
+				if item.isGroup {
+					return m, func() tea.Msg {
+						return PermanentlyDeleteGroupMsg{GroupUUID: item.group.UUID}
+					}
+				}
+				return m, func() tea.Msg {
+					return PermanentlyDeleteEntryMsg{EntryUUID: item.entry.UUID}
+				}
+			}
 			if item.isGroup {
 				return m, func() tea.Msg {
 					return DeleteGroupMsg{GroupUUID: item.group.UUID}
@@ -418,6 +484,30 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, func() tea.Msg {
 				return DeleteEntryMsg{EntryUUID: item.entry.UUID}
+			}
+
+		case "R":
+			// Restore from recycle bin
+			if !m.inRecycleBin() || len(m.items) == 0 {
+				break
+			}
+			item := m.items[m.cursor]
+			if item.isGroup {
+				return m, func() tea.Msg {
+					return RestoreGroupMsg{GroupUUID: item.group.UUID}
+				}
+			}
+			return m, func() tea.Msg {
+				return RestoreEntryMsg{EntryUUID: item.entry.UUID}
+			}
+
+		case "E":
+			// Empty recycle bin
+			if !m.inRecycleBin() {
+				break
+			}
+			return m, func() tea.Msg {
+				return EmptyRecycleBinMsg{}
 			}
 
 		case "P":
@@ -486,6 +576,9 @@ func (m BrowserModel) View() string {
 			var line string
 			if item.isGroup {
 				icon := groupStyle.Render("[+] ")
+				if m.db.IsRecycleBin(item.group.UUID) {
+					icon = groupStyle.Render("[x] ")
+				}
 				name := item.name()
 				if i == m.cursor {
 					line = fmt.Sprintf("%s%s%s", cursor, icon, selectedItemStyle.Render(name))
@@ -534,6 +627,9 @@ func (m BrowserModel) View() string {
 	}
 	if m.searching {
 		b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
+	} else if m.inRecycleBin() {
+		help := "  j/k: nav  enter/l: open  h/esc: back  d: delete permanently  R: restore  E: empty bin  s: save  q: quit"
+		b.WriteString(helpStyle.Render(help))
 	} else {
 		help := "  j/k: nav  enter/l: open  h/esc: back  /: search  n: new  g: group  r: rename  y: dup  x: cut  v: paste  d: del  i: info  c: config  s: save  P: password  q: quit"
 		b.WriteString(helpStyle.Render(help))
