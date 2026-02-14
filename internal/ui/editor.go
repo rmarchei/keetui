@@ -150,6 +150,25 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case tea.MouseMsg:
+		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+			// Header: 1 blank + 1 title + 1 blank = 3 lines
+			row := msg.Y - 3
+			if row >= 0 && row < fixedFieldCount {
+				m.focused = row
+				return m, m.updateFocus()
+			}
+			// Custom fields start after fixed fields + 1 blank + 1 "Custom Fields:" header
+			cfStart := fixedFieldCount + 2
+			cfRow := msg.Y - 3 - cfStart
+			if len(m.customInputs) > 0 && cfRow >= 0 && cfRow < len(m.customInputs) {
+				// Each custom field row has key + value; click focuses the key
+				m.focused = fixedFieldCount + cfRow*2
+				return m, m.updateFocus()
+			}
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
