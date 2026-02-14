@@ -25,6 +25,7 @@ const (
 	viewGroupInput
 	viewConfirm
 	viewPassword
+	viewStats
 )
 
 // clipboardClearMsg signals that the clipboard should be cleared.
@@ -88,6 +89,7 @@ type AppModel struct {
 	groupInput   GroupInputModel
 	confirm      ConfirmModel
 	password     PasswordModel
+	stats        StatsModel
 	width        int
 	height       int
 	lastActivity time.Time // tracks last user interaction for auto-lock
@@ -160,6 +162,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ViewEntryMsg:
 		m.detail = NewDetailModel(msg.Entry)
+		if m.db != nil {
+			m.detail.SetAttachments(m.db.EntryAttachments(msg.Entry.UUID))
+		}
 		m.state = viewDetail
 		return m, m.detail.Init()
 
@@ -277,6 +282,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewBrowser
 		return m, statusCmd("Master password changed (use 's' to save to file)", false)
 
+	case ShowStatsMsg:
+		m.stats = NewStatsModel(m.db.Stats())
+		m.state = viewStats
+		return m, nil
+
+	case hibpResultMsg:
+		m.detail.hibpResult = &msg
+		m.detail.hibpChecking = false
+		return m, nil
+
 	case SaveEntryMsg:
 		return m.handleSaveEntry(msg)
 
@@ -365,6 +380,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var updated tea.Model
 		updated, cmd = m.password.Update(msg)
 		m.password = updated.(PasswordModel)
+	case viewStats:
+		var updated tea.Model
+		updated, cmd = m.stats.Update(msg)
+		m.stats = updated.(StatsModel)
 	}
 
 	return m, cmd
@@ -386,6 +405,8 @@ func (m AppModel) View() string {
 		return m.confirm.View()
 	case viewPassword:
 		return m.password.View()
+	case viewStats:
+		return m.stats.View()
 	}
 	return ""
 }
