@@ -252,7 +252,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchInput.Blur()
 				return m, nil
 			case "ctrl+c":
-				return m, tea.Quit
+				return m, func() tea.Msg { return RequestQuitMsg{} }
 			default:
 				var cmd tea.Cmd
 				m.searchInput, cmd = m.searchInput.Update(msg)
@@ -266,7 +266,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "ctrl+c":
-			return m, tea.Quit
+			return m, func() tea.Msg { return RequestQuitMsg{} }
 
 		case "/":
 			m.searching = true
