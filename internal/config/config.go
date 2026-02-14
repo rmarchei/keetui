@@ -62,10 +62,13 @@ func (c Config) PasswordLen() int {
 	return c.PasswordLength
 }
 
-// String returns a human-readable representation of the config.
+// String returns the config as indented JSON.
 func (c Config) String() string {
-	return fmt.Sprintf("clipboard_clear_seconds: %d\nauto_lock_minutes:       %d\npassword_length:         %d",
-		c.ClipboardClearSeconds, c.AutoLockMinutes, c.PasswordLength)
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("{\"error\": %q}", err)
+	}
+	return string(data)
 }
 
 // Save writes the config to ~/.config/keetui/config.json.
@@ -95,12 +98,15 @@ func configPath() string {
 }
 
 // Load reads config from ~/.config/keetui/config.json, falling back to defaults.
-func Load() Config {
+// Returns a non-nil error when the file exists but contains invalid JSON.
+func Load() (Config, error) {
 	cfg := Default()
 	data, err := os.ReadFile(configPath())
-	if err != nil {
-		return cfg
+	if err != nil || len(data) == 0 {
+		return cfg, nil
 	}
-	_ = json.Unmarshal(data, &cfg)
-	return cfg
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return cfg, fmt.Errorf("invalid config %s: %w", configPath(), err)
+	}
+	return cfg, nil
 }

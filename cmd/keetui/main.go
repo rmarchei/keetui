@@ -41,9 +41,14 @@ func main() {
 	}
 
 	if *showConfig {
-		cfg := config.Load()
-		fmt.Printf("Config file: %s\n\n", config.Path())
+		cfg, err := config.Load()
+		fmt.Fprintf(os.Stderr, "Config file: %s\n\n", config.Path())
 		fmt.Println(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nWarning: %s\n", err)
+			fmt.Fprintln(os.Stderr, "Using default values. Fix the file or delete it to regenerate.")
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
@@ -175,7 +180,10 @@ func main() {
 		os.Exit(0)
 	}
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %s (using defaults)\n", err)
+	}
 	app := ui.NewApp(dbPath, *keyFile, cfg)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

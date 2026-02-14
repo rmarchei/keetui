@@ -305,8 +305,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ConfigSavedMsg:
 		m.cfg = msg.Cfg
+		m.lastActivity = time.Now()
 		m.state = viewBrowser
-		return m, statusCmd("Settings saved to "+config.Path(), false)
+		return m, tea.Batch(
+			statusCmd("Settings saved to "+config.Path(), false),
+			m.scheduleAutoLock(),
+		)
 
 	case hibpResultMsg:
 		m.detail.hibpResult = &msg
@@ -411,6 +415,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case autoLockMsg:
 		// Only lock if no activity since the timer was set
 		if m.state != viewUnlock && msg.at == m.lastActivity {
+			if m.dirty && m.db != nil {
+				_ = m.db.Save()
+				m.dirty = false
+			}
 			clearClipboard()
 			m.db = nil
 			m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
