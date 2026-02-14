@@ -105,8 +105,8 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `clipboard_clear_seconds` | 15 | Seconds before clipboard is cleared after copying (min: 15) |
-| `auto_lock_minutes` | 5 | Minutes of inactivity before database is locked (min: 5) |
+| `clipboard_clear_seconds` | 15 | Seconds before clipboard is cleared after copying (0: disable, min: 15) |
+| `auto_lock_minutes` | 5 | Minutes of inactivity before database is locked (0: disable, min: 5) |
 | `password_length` | 20 | Default length for generated passwords (min: 8) |
 
 - **CLI**: Run `keetui -config` to display the config file path and current settings.

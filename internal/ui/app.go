@@ -119,14 +119,22 @@ func (m AppModel) Init() tea.Cmd {
 }
 
 func (m AppModel) scheduleAutoLock() tea.Cmd {
+	d := m.cfg.AutoLockDuration()
+	if d == 0 {
+		return nil
+	}
 	lastActivity := m.lastActivity
-	return tea.Tick(m.cfg.AutoLockDuration(), func(t time.Time) tea.Msg {
+	return tea.Tick(d, func(t time.Time) tea.Msg {
 		return autoLockMsg{at: lastActivity}
 	})
 }
 
 func (m AppModel) scheduleClearClipboard(copiedValue string) tea.Cmd {
-	return tea.Tick(m.cfg.ClipboardClearDuration(), func(t time.Time) tea.Msg {
+	d := m.cfg.ClipboardClearDuration()
+	if d == 0 {
+		return nil
+	}
+	return tea.Tick(d, func(t time.Time) tea.Msg {
 		return clipboardClearMsg{expected: copiedValue}
 	})
 }

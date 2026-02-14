@@ -29,7 +29,7 @@ func TestClipboardClearDuration(t *testing.T) {
 	}{
 		{"default", 15, 15 * time.Second},
 		{"custom", 30, 30 * time.Second},
-		{"zero falls back", 0, 15 * time.Second},
+		{"zero disables", 0, 0},
 		{"negative falls back", -1, 15 * time.Second},
 	}
 	for _, tt := range tests {
@@ -50,7 +50,7 @@ func TestAutoLockDuration(t *testing.T) {
 	}{
 		{"default", 5, 5 * time.Minute},
 		{"custom", 10, 10 * time.Minute},
-		{"zero falls back", 0, 5 * time.Minute},
+		{"zero disables", 0, 0},
 		{"negative falls back", -1, 5 * time.Minute},
 	}
 	for _, tt := range tests {

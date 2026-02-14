@@ -31,16 +31,24 @@ func Path() string {
 }
 
 // ClipboardClearDuration returns the clipboard clear delay as a duration.
+// Returns 0 when the feature is disabled (value is 0).
 func (c Config) ClipboardClearDuration() time.Duration {
-	if c.ClipboardClearSeconds <= 0 {
+	if c.ClipboardClearSeconds == 0 {
+		return 0
+	}
+	if c.ClipboardClearSeconds < 0 {
 		return 15 * time.Second
 	}
 	return time.Duration(c.ClipboardClearSeconds) * time.Second
 }
 
 // AutoLockDuration returns the auto-lock timeout as a duration.
+// Returns 0 when the feature is disabled (value is 0).
 func (c Config) AutoLockDuration() time.Duration {
-	if c.AutoLockMinutes <= 0 {
+	if c.AutoLockMinutes == 0 {
+		return 0
+	}
+	if c.AutoLockMinutes < 0 {
 		return 5 * time.Minute
 	}
 	return time.Duration(c.AutoLockMinutes) * time.Minute

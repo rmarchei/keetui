@@ -25,8 +25,8 @@ var settingLabels = [settingCount]string{
 }
 
 var settingDescriptions = [settingCount]string{
-	"Seconds before clipboard is cleared after copying (min: 15)",
-	"Minutes of inactivity before database is locked (min: 5)",
+	"Seconds before clipboard is cleared after copying (0: disable, min: 15)",
+	"Minutes of inactivity before database is locked (0: disable, min: 5)",
 	"Default length for generated passwords (min: 8)",
 }
 
@@ -113,22 +113,22 @@ func (m SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 	clipSec, err := strconv.Atoi(strings.TrimSpace(m.inputs[settingClipboardClear].Value()))
-	if err != nil || clipSec < 1 {
-		m.status = "Invalid clipboard clear seconds (must be a positive number)"
+	if err != nil || clipSec < 0 {
+		m.status = "Invalid clipboard clear seconds (must be 0 or a positive number)"
 		m.isError = true
 		return m, nil
 	}
-	if clipSec < 15 {
+	if clipSec != 0 && clipSec < 15 {
 		clipSec = 15
 	}
 
 	lockMin, err := strconv.Atoi(strings.TrimSpace(m.inputs[settingAutoLock].Value()))
-	if err != nil || lockMin < 1 {
-		m.status = "Invalid auto-lock minutes (must be a positive number)"
+	if err != nil || lockMin < 0 {
+		m.status = "Invalid auto-lock minutes (must be 0 or a positive number)"
 		m.isError = true
 		return m, nil
 	}
-	if lockMin < 5 {
+	if lockMin != 0 && lockMin < 5 {
 		lockMin = 5
 	}
 
