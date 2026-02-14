@@ -143,6 +143,58 @@ func TestEditorEditExisting(t *testing.T) {
 	}
 }
 
+func TestEditorRejectsEmptyTitle(t *testing.T) {
+	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
+	m.width, m.height = 80, 24
+
+	// Leave title empty, try to save
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(EditorModel)
+	if cmd != nil {
+		t.Error("save with empty title should not produce a command")
+	}
+	if m.err == nil {
+		t.Fatal("save with empty title should set an error")
+	}
+	if m.err.Error() != "title cannot be empty" {
+		t.Errorf("error = %q, want %q", m.err.Error(), "title cannot be empty")
+	}
+}
+
+func TestEditorRejectsWhitespaceTitle(t *testing.T) {
+	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
+	m.width, m.height = 80, 24
+
+	m.inputs[fieldTitle].SetValue("   ")
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	m = updated.(EditorModel)
+	if cmd != nil {
+		t.Error("save with whitespace title should not produce a command")
+	}
+	if m.err == nil {
+		t.Fatal("save with whitespace title should set an error")
+	}
+}
+
+func TestEditorAcceptsNonEmptyTitle(t *testing.T) {
+	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
+	m.width, m.height = 80, 24
+
+	m.inputs[fieldTitle].SetValue("Valid Title")
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("save with valid title should produce a command")
+	}
+	msg := cmd()
+	saveMsg, ok := msg.(SaveEntryMsg)
+	if !ok {
+		t.Fatalf("expected SaveEntryMsg, got %T", msg)
+	}
+	if saveMsg.Entry.Title != "Valid Title" {
+		t.Errorf("title = %q, want %q", saveMsg.Entry.Title, "Valid Title")
+	}
+}
+
 func TestEditorView(t *testing.T) {
 	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
 	m.width, m.height = 80, 24

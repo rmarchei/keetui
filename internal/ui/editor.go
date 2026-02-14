@@ -186,7 +186,8 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.updateFocus()
 
 		case "ctrl+s":
-			return m, m.save()
+			updated, cmd := m.save()
+			return updated, cmd
 
 		case "ctrl+g":
 			pw, err := generatePassword(m.cfg.PasswordLen(), m.cfg.PasswordCharset())
@@ -285,10 +286,15 @@ func (m *EditorModel) updateFocus() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (m EditorModel) save() tea.Cmd {
-	return func() tea.Msg {
+func (m EditorModel) save() (tea.Model, tea.Cmd) {
+	title := strings.TrimSpace(m.inputs[fieldTitle].Value())
+	if title == "" {
+		m.err = fmt.Errorf("title cannot be empty")
+		return m, nil
+	}
+	return m, func() tea.Msg {
 		entry := keepass.Entry{
-			Title:    m.inputs[fieldTitle].Value(),
+			Title:    title,
 			UserName: m.inputs[fieldUserName].Value(),
 			Password: m.inputs[fieldPassword].Value(),
 			URL:      m.inputs[fieldURL].Value(),
