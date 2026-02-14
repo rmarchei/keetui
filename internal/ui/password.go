@@ -62,7 +62,7 @@ func (m PasswordModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
-			return m, tea.Quit
+			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "esc":
 			return m, func() tea.Msg { return CancelEditMsg{} }
 		case "tab", "down", "shift+tab", "up":
