@@ -10,19 +10,29 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Search entries across all groups by title or username
 - Entries sorted alphabetically (groups first, then entries)
 - View entry details (username, password, URL, notes, custom fields)
+- Per-field password toggle -- reveal individual protected fields independently
 - TOTP/2FA support -- live code display with countdown, compatible with KeePassXC and KeePass2
-- Display password as a scannable QR code (useful over SSH from a phone)
+- Display any field as a scannable QR code (useful over SSH from a phone)
 - Copy username, password, URL, or TOTP code to clipboard (auto-cleared after 15s)
+- Mouse support -- click to select fields and entries, scroll wheel navigation
 - Open entry URL in system browser
-- Password generator for creating strong random passwords
+- Password generator for creating strong random passwords and diceware passphrases
+- Password strength indicator and HIBP breach check
 - Create, edit, and delete entries and groups
 - Rename groups
 - Duplicate entries
-- Move entries between groups (cut/paste)
+- Move entries and groups between groups (cut/paste)
 - Custom fields support (add, edit, delete extra key-value pairs)
+- File attachments -- add, extract, and delete attachments on entries
+- Entry expiry dates with visual warnings for expired entries
+- Password history -- view previous passwords for an entry
+- Recycle bin support -- deleted items go to recycle bin, with restore and permanent delete
+- Database stats and batch password audit (weak, reused, empty, expired)
+- Import/export (CSV, XML) and merge from other `.kdbx` files
+- Change database master password
 - Save changes back to the `.kdbx` file
 - Auto-lock after 5 minutes of inactivity
-- Configurable settings via `~/.config/keetui/config.json`
+- Configurable keybindings and settings via `~/.config/keetui/config.json`
 
 ## Installation
 
@@ -65,6 +75,27 @@ keetui -keyfile key.key database.kdbx   # open with key file
 keetui -new database.kdbx              # create a new database
 ```
 
+### Import / Export / Merge
+
+Batch operations are available via CLI flags. These run headlessly (no TUI) and require the database password on stdin or via terminal prompt.
+
+```sh
+# Export
+keetui --export-csv entries.csv database.kdbx
+keetui --export-xml entries.xml database.kdbx
+
+# Import (adds entries to existing database)
+keetui --import-csv entries.csv database.kdbx
+keetui --import-xml entries.xml database.kdbx
+
+# Merge from another .kdbx file
+keetui --merge other.kdbx database.kdbx
+```
+
+- **CSV** format includes columns: Group, Title, Username, Password, URL, Notes
+- **XML** format preserves group hierarchy, custom fields, and attachments
+- **Merge** matches entries by UUID; newer entries overwrite older ones; new groups are created as needed
+
 ## Keyboard Shortcuts
 
 ### Browser
@@ -79,24 +110,33 @@ keetui -new database.kdbx              # create a new database
 | `g` | New group |
 | `r` | Rename group (when cursor is on a group) |
 | `y` | Duplicate entry |
-| `x` | Cut entry (for move) |
-| `v` | Paste cut entry into current group |
+| `x` | Cut entry or group (for move) |
+| `v` | Paste cut item into current group |
 | `d` | Delete entry/group |
-| `s` | Save database to file |
+| `i` | Database stats |
+| `I` | Password audit |
+| `c` | Settings |
+| `P` | Change master password |
+| `s` / `Ctrl+S` | Save database to file |
 | `q` | Quit |
 
 ### Entry Detail
 
 | Key | Action |
 |-----|--------|
-| `p` | Toggle password visibility |
+| `j` / `k` | Navigate fields |
+| `Enter` | Copy selected field to clipboard |
+| `p` | Toggle visibility of selected protected field |
 | `e` | Edit entry |
 | `o` | Open URL in system browser |
+| `a` | Attachments (add/extract/delete) |
+| `H` | Password history |
 | `1` | Copy username to clipboard |
 | `2` | Copy password to clipboard |
 | `3` | Copy URL to clipboard |
 | `4` | Copy TOTP code to clipboard |
-| `Q` | Display password as QR code (for scanning from phone) |
+| `5` | Check password against HIBP breaches |
+| `Q` | Display selected field as QR code |
 | `Esc` | Back to browser |
 
 ### Editor
@@ -105,6 +145,7 @@ keetui -new database.kdbx              # create a new database
 |-----|--------|
 | `Tab` / `Shift+Tab` | Navigate fields |
 | `Ctrl+G` | Generate random password |
+| `Ctrl+P` | Generate diceware passphrase |
 | `Ctrl+A` | Add custom field |
 | `Ctrl+D` | Delete current custom field |
 | `Ctrl+S` | Save |
