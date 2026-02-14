@@ -65,6 +65,8 @@ type DetailModel struct {
 	ready        bool // true after first size is set
 	cfg          config.Config
 
+	readOnly bool // when true, edit and attachment mutations are suppressed
+
 	// Field selection
 	selectedField int // index into selectableFields()
 
@@ -350,12 +352,22 @@ func (m DetailModel) footerView() string {
 		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
 		return helpStyle.Render(help)
 	}
-	help := fmt.Sprintf("  j/k: select  enter: copy  %s: QR  %s: toggle pw  %s: edit  %s: url  %s: attach",
-		m.keys.ShowQR, m.keys.TogglePassword, m.keys.Edit, m.keys.OpenURL, m.keys.Attachments)
-	if m.entry.HistoryCount > 0 {
-		help += fmt.Sprintf("  %s: history", m.keys.ShowHistory)
+	var help string
+	if m.readOnly {
+		help = fmt.Sprintf("  j/k: select  enter: copy  %s: QR  %s: toggle pw  %s: url",
+			m.keys.ShowQR, m.keys.TogglePassword, m.keys.OpenURL)
+		if m.entry.HistoryCount > 0 {
+			help += fmt.Sprintf("  %s: history", m.keys.ShowHistory)
+		}
+		help += fmt.Sprintf("  %s: HIBP  esc: back  %s: quit", m.keys.HIBPCheck, m.keys.Quit)
+	} else {
+		help = fmt.Sprintf("  j/k: select  enter: copy  %s: QR  %s: toggle pw  %s: edit  %s: url  %s: attach",
+			m.keys.ShowQR, m.keys.TogglePassword, m.keys.Edit, m.keys.OpenURL, m.keys.Attachments)
+		if m.entry.HistoryCount > 0 {
+			help += fmt.Sprintf("  %s: history", m.keys.ShowHistory)
+		}
+		help += fmt.Sprintf("  %s: HIBP  esc: back  %s: quit", m.keys.HIBPCheck, m.keys.Quit)
 	}
-	help += fmt.Sprintf("  %s: HIBP  esc: back  %s: quit", m.keys.HIBPCheck, m.keys.Quit)
 	return helpStyle.Render(help)
 }
 
@@ -718,11 +730,17 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key == m.keys.Edit:
+			if m.readOnly {
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
+			}
 			return m, func() tea.Msg {
 				return EditEntryMsg{Entry: m.entry}
 			}
 
 		case key == m.keys.Attachments:
+			if m.readOnly {
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
+			}
 			// Enter attachment mode if there are attachments, or go to add mode
 			if len(m.attachments) > 0 {
 				m.attachMode = true

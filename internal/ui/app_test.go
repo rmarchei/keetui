@@ -666,6 +666,69 @@ func TestUndoNothingToUndo(t *testing.T) {
 	}
 }
 
+func TestReadOnlyBlocksMutations(t *testing.T) {
+	m := createTestApp(t)
+	m.readOnly = true
+	m.browser.readOnly = true
+
+	root := m.db.RootGroup()
+	entries := root.Entries
+	if len(entries) == 0 {
+		t.Fatal("expected at least one entry")
+	}
+	entryUUID := entries[0].UUID
+
+	// SaveEntryMsg should be blocked
+	updated, cmd := m.Update(SaveEntryMsg{
+		IsNew:     false,
+		EntryUUID: entryUUID,
+		Entry:     keepass.Entry{Title: "Changed"},
+	})
+	m = updated.(AppModel)
+	if m.dirty {
+		t.Error("should not be dirty in read-only mode")
+	}
+	if cmd == nil {
+		t.Fatal("expected status command")
+	}
+	msg := cmd()
+	if sm, ok := msg.(StatusMsg); !ok || !sm.IsError {
+		t.Errorf("expected error StatusMsg, got %T", msg)
+	}
+
+	// SaveMsg should be blocked
+	updated, cmd = m.Update(SaveMsg{})
+	m = updated.(AppModel)
+	if cmd == nil {
+		t.Fatal("expected status command for SaveMsg")
+	}
+	msg = cmd()
+	if sm, ok := msg.(StatusMsg); !ok || !sm.IsError {
+		t.Errorf("expected error StatusMsg for SaveMsg, got %T", msg)
+	}
+
+	// DuplicateEntryMsg should be blocked
+	updated, cmd = m.Update(DuplicateEntryMsg{EntryUUID: entryUUID})
+	m = updated.(AppModel)
+	if cmd == nil {
+		t.Fatal("expected status command for DuplicateEntryMsg")
+	}
+	msg = cmd()
+	if sm, ok := msg.(StatusMsg); !ok || !sm.IsError {
+		t.Errorf("expected error StatusMsg for DuplicateEntryMsg, got %T", msg)
+	}
+}
+
+func TestReadOnlyStatusBar(t *testing.T) {
+	m := createTestApp(t)
+	m.readOnly = true
+
+	bar := m.statusBar()
+	if !strings.Contains(bar, "[read-only]") {
+		t.Error("status bar should show [read-only] in read-only mode")
+	}
+}
+
 func TestUndoStackClearedOnDatabaseOpen(t *testing.T) {
 	m := createTestApp(t)
 
