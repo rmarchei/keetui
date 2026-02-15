@@ -1,0 +1,278 @@
+package ui
+
+import (
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/rmarchei/keetui/internal/config"
+)
+
+func TestSettingsNavigation(t *testing.T) {
+	m := NewSettingsModel(config.Default())
+	m.width, m.height = 80, 24
+
+	if m.focused != 0 {
+		t.Errorf("initial focus = %d, want 0", m.focused)
+	}
+
+	// Tab moves forward
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(SettingsModel)
+	if m.focused != 1 {
+		t.Errorf("focus after tab = %d, want 1", m.focused)
+	}
+
+	// Shift+Tab moves back
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = updated.(SettingsModel)
+	if m.focused != 0 {
+		t.Errorf("focus after shift+tab = %d, want 0", m.focused)
+	}
+
+	// Shift+Tab wraps around to last field
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m = updated.(SettingsModel)
+	if m.focused != settingCount-1 {
+		t.Errorf("focus after wrap = %d, want %d", m.focused, settingCount-1)
+	}
+
+	// Tab wraps around to first field
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(SettingsModel)
+	if m.focused != 0 {
+		t.Errorf("focus after forward wrap = %d, want 0", m.focused)
+	}
+}
+
+func TestSettingsInitialValues(t *testing.T) {
+	cfg := config.Default()
+	m := NewSettingsModel(cfg)
+	m.width, m.height = 80, 24
+
+	if v := m.inputs[settingClipboardClear].Value(); v != "15" {
+		t.Errorf("clipboard clear = %q, want %q", v, "15")
+	}
+	if v := m.inputs[settingAutoLock].Value(); v != "5" {
+		t.Errorf("auto lock = %q, want %q", v, "5")
+	}
+	if v := m.inputs[settingPasswordLength].Value(); v != "20" {
+		t.Errorf("password length = %q, want %q", v, "20")
+	}
+	if v := m.inputs[settingPasswordStrength].Value(); v != "1" {
+		t.Errorf("password strength = %q, want %q", v, "1")
+	}
+	if v := m.inputs[settingTheme].Value(); v != "dark" {
+		t.Errorf("theme = %q, want %q", v, "dark")
+	}
+}
+
+func TestSettingsValidationClipboard(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"valid 0", "0", false},
+		{"valid 15", "15", false},
+		{"valid 30", "30", false},
+		{"too low", "5", true},
+		{"negative", "-1", true},
+		{"non-numeric", "abc", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewSettingsModel(config.Default())
+			m.width, m.height = 80, 24
+			m.inputs[settingClipboardClear].SetValue(tt.value)
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = updated.(SettingsModel)
+			if tt.wantErr {
+				if !m.isError {
+					t.Error("expected validation error")
+				}
+				if cmd != nil {
+					t.Error("should not produce command on validation error")
+				}
+			} else {
+				if m.isError {
+					t.Errorf("unexpected error: %s", m.status)
+				}
+			}
+		})
+	}
+}
+
+func TestSettingsValidationAutoLock(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"valid 0", "0", false},
+		{"valid 5", "5", false},
+		{"valid 10", "10", false},
+		{"too low", "3", true},
+		{"negative", "-1", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewSettingsModel(config.Default())
+			m.width, m.height = 80, 24
+			m.inputs[settingAutoLock].SetValue(tt.value)
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = updated.(SettingsModel)
+			if tt.wantErr {
+				if !m.isError {
+					t.Error("expected validation error")
+				}
+				if cmd != nil {
+					t.Error("should not produce command on validation error")
+				}
+			} else {
+				if m.isError {
+					t.Errorf("unexpected error: %s", m.status)
+				}
+			}
+		})
+	}
+}
+
+func TestSettingsValidationPasswordLength(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"valid 8", "8", false},
+		{"valid 32", "32", false},
+		{"too short", "4", true},
+		{"non-numeric", "abc", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewSettingsModel(config.Default())
+			m.width, m.height = 80, 24
+			m.inputs[settingPasswordLength].SetValue(tt.value)
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = updated.(SettingsModel)
+			if tt.wantErr {
+				if !m.isError {
+					t.Error("expected validation error")
+				}
+				if cmd != nil {
+					t.Error("should not produce command on validation error")
+				}
+			} else {
+				if m.isError {
+					t.Errorf("unexpected error: %s", m.status)
+				}
+			}
+		})
+	}
+}
+
+func TestSettingsValidationBoolFields(t *testing.T) {
+	boolFields := []struct {
+		idx  int
+		name string
+	}{
+		{settingPasswordStrength, "password strength"},
+		{settingPWUppercase, "uppercase"},
+		{settingPWLowercase, "lowercase"},
+		{settingPWDigits, "digits"},
+		{settingPWSymbols, "symbols"},
+	}
+	for _, bf := range boolFields {
+		t.Run(bf.name+" invalid", func(t *testing.T) {
+			m := NewSettingsModel(config.Default())
+			m.width, m.height = 80, 24
+			m.inputs[bf.idx].SetValue("2")
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = updated.(SettingsModel)
+			if !m.isError {
+				t.Errorf("expected error for %s=2", bf.name)
+			}
+			if cmd != nil {
+				t.Error("should not produce command on error")
+			}
+		})
+	}
+}
+
+func TestSettingsValidationTheme(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"dark", "dark", false},
+		{"light", "light", false},
+		{"high-contrast", "high-contrast", false},
+		{"invalid", "neon", true},
+		{"empty", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewSettingsModel(config.Default())
+			m.width, m.height = 80, 24
+			m.inputs[settingTheme].SetValue(tt.value)
+			updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = updated.(SettingsModel)
+			if tt.wantErr {
+				if !m.isError {
+					t.Error("expected validation error")
+				}
+				if cmd != nil {
+					t.Error("should not produce command on error")
+				}
+			} else {
+				if m.isError {
+					t.Errorf("unexpected error: %s", m.status)
+				}
+			}
+		})
+	}
+}
+
+func TestSettingsValidationAllCharsetsDisabled(t *testing.T) {
+	m := NewSettingsModel(config.Default())
+	m.width, m.height = 80, 24
+	m.inputs[settingPWUppercase].SetValue("0")
+	m.inputs[settingPWLowercase].SetValue("0")
+	m.inputs[settingPWDigits].SetValue("0")
+	m.inputs[settingPWSymbols].SetValue("0")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(SettingsModel)
+	if !m.isError {
+		t.Error("expected error when all charsets disabled")
+	}
+	if cmd != nil {
+		t.Error("should not produce command on error")
+	}
+}
+
+func TestSettingsCancel(t *testing.T) {
+	m := NewSettingsModel(config.Default())
+	m.width, m.height = 80, 24
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd == nil {
+		t.Fatal("esc should produce a command")
+	}
+	msg := cmd()
+	if _, ok := msg.(BackToBrowserMsg); !ok {
+		t.Errorf("expected BackToBrowserMsg, got %T", msg)
+	}
+}
+
+func TestSettingsView(t *testing.T) {
+	m := NewSettingsModel(config.Default())
+	m.width, m.height = 80, 24
+
+	view := m.View()
+	if view == "" {
+		t.Error("View() should return non-empty string")
+	}
+}

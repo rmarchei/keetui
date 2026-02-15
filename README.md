@@ -101,7 +101,7 @@ keetui --import-xml entries.xml database.kdbx
 keetui --merge other.kdbx database.kdbx
 ```
 
-- **CSV** format includes columns: Group, Title, Username, Password, URL, Notes
+- **CSV** format includes columns: Group, Title, Username, Password, URL, Notes, TOTP, Attachments
 - **XML** format preserves group hierarchy, custom fields, and attachments
 - **Merge** matches entries by UUID; newer entries overwrite older ones; new groups are created as needed
 

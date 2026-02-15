@@ -32,7 +32,7 @@ func TestExportCSV(t *testing.T) {
 	}
 
 	// Check header
-	if !strings.HasPrefix(lines[0], "Group,Title,Username,Password,URL,Notes") {
+	if !strings.HasPrefix(lines[0], "Group,Title,Username,Password,URL,Notes,TOTP") {
 		t.Errorf("CSV header = %q, want standard header", lines[0])
 	}
 
@@ -119,6 +119,120 @@ Root/SubGroup,Sub Entry,subuser,subpass,,
 	}
 	if !found {
 		t.Error("imported entry not found")
+	}
+}
+
+func TestCSVTOTPRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "totp.kdbx")
+	password := "testmaster"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Add an entry with a TOTP secret
+	root := db.RootGroup()
+	_, err = db.AddEntry(root.UUID, Entry{
+		Title:    "TOTP Entry",
+		UserName: "totpuser",
+		Password: "totppass",
+		TOTP:     "otpauth://totp/Example:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example",
+	})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+
+	// Export to CSV
+	var buf bytes.Buffer
+	if err := db.ExportCSV(&buf); err != nil {
+		t.Fatalf("ExportCSV: %v", err)
+	}
+
+	csv := buf.String()
+	if !strings.Contains(csv, "JBSWY3DPEHPK3PXP") {
+		t.Error("CSV export does not contain TOTP secret")
+	}
+
+	// Import into a new DB
+	newDBPath := filepath.Join(dir, "imported.kdbx")
+	newDB, err := Create(newDBPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	n, err := newDB.ImportCSV(strings.NewReader(csv))
+	if err != nil {
+		t.Fatalf("ImportCSV: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("imported = %d, want 1", n)
+	}
+
+	// Save and reopen to verify persistence
+	if err := newDB.SaveAs(filepath.Join(dir, "verify.kdbx")); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+	verifyDB, err := Open(filepath.Join(dir, "verify.kdbx"), password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	verifyRoot := verifyDB.RootGroup()
+	found := false
+	for _, e := range verifyRoot.Entries {
+		if e.Title == "TOTP Entry" && strings.Contains(e.TOTP, "JBSWY3DPEHPK3PXP") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("TOTP secret not preserved through CSV export/import round trip")
+	}
+}
+
+func TestImportCSVWithTOTP(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	csvData := `Group,Title,Username,Password,URL,Notes,TOTP
+Root,OTP Entry,otpuser,otppass,https://example.com,,JBSWY3DPEHPK3PXP
+`
+
+	n, err := db.ImportCSV(strings.NewReader(csvData))
+	if err != nil {
+		t.Fatalf("ImportCSV: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("imported = %d, want 1", n)
+	}
+
+	// Save and reopen
+	savePath := filepath.Join(dir, "saved.kdbx")
+	if err := db.SaveAs(savePath); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open saved: %v", err)
+	}
+
+	root := db2.RootGroup()
+	found := false
+	for _, e := range root.Entries {
+		if e.Title == "OTP Entry" && e.TOTP == "JBSWY3DPEHPK3PXP" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("TOTP not preserved through CSV import")
 	}
 }
 
