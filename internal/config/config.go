@@ -145,6 +145,11 @@ func (c Config) Save() error {
 	if err := os.WriteFile(p, data, 0600); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
+	// Ensure permissions are 0600 even if the file already existed with
+	// looser permissions (os.WriteFile only sets mode on new files).
+	if err := os.Chmod(p, 0600); err != nil {
+		return fmt.Errorf("set config file permissions: %w", err)
+	}
 	return nil
 }
 

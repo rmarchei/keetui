@@ -568,6 +568,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ChangePasswordMsg:
 		m.db.ChangePassword(msg.NewPassword)
+		// Clear password inputs to reduce sensitive data in memory.
+		m.password.newInput.SetValue("")
+		m.password.confirmInput.SetValue("")
 		m.dirty = true
 		m.state = viewBrowser
 		return m, statusCmd("Master password changed (use 's' to save to file)", false)
@@ -1164,12 +1167,17 @@ func openURL(rawURL string) error {
 	if scheme != "http" && scheme != "https" {
 		return fmt.Errorf("unsupported URL scheme %q: only http and https are allowed", scheme)
 	}
+	if parsed.Host == "" {
+		return fmt.Errorf("invalid URL: missing host")
+	}
+	// Re-serialize the parsed URL to avoid passing through unexpected characters.
+	sanitized := parsed.String()
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", rawURL)
+		cmd = exec.Command("open", sanitized)
 	case "linux":
-		cmd = exec.Command("xdg-open", rawURL)
+		cmd = exec.Command("xdg-open", sanitized)
 	default:
 		return fmt.Errorf("open URL not supported on %s", runtime.GOOS)
 	}
