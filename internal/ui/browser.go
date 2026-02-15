@@ -145,7 +145,7 @@ func NewBrowserModel(db *keepass.DB, keys ...config.KeyBindings) BrowserModel {
 	return m
 }
 
-func buildItems(g keepass.Group) []listItem {
+func buildItems(g keepass.Group, rbUUID gokeepasslib.UUID) []listItem {
 	var items []listItem
 	for _, sg := range g.Groups {
 		items = append(items, listItem{isGroup: true, group: sg})
@@ -153,19 +153,15 @@ func buildItems(g keepass.Group) []listItem {
 	for _, e := range g.Entries {
 		items = append(items, listItem{isGroup: false, entry: e})
 	}
-	sortItems(items)
+	sortItems(items, rbUUID)
 	return items
 }
 
-// recycleBinUUID is set during sort when a DB reference is available.
-var recycleBinUUID gokeepasslib.UUID
-
 func (m BrowserModel) buildItemsWithDB(g keepass.Group) []listItem {
-	recycleBinUUID = m.db.RecycleBinUUID()
-	return buildItems(g)
+	return buildItems(g, m.db.RecycleBinUUID())
 }
 
-func sortItems(items []listItem) {
+func sortItems(items []listItem, rbUUID gokeepasslib.UUID) {
 	sort.SliceStable(items, func(i, j int) bool {
 		// Groups first, then entries; alphabetical within each category
 		if items[i].isGroup != items[j].isGroup {
@@ -173,8 +169,8 @@ func sortItems(items []listItem) {
 		}
 		// Recycle bin group sorts last among groups
 		if items[i].isGroup && items[j].isGroup {
-			iIsRB := items[i].group.UUID.Compare(recycleBinUUID)
-			jIsRB := items[j].group.UUID.Compare(recycleBinUUID)
+			iIsRB := items[i].group.UUID.Compare(rbUUID)
+			jIsRB := items[j].group.UUID.Compare(rbUUID)
 			if iIsRB != jIsRB {
 				return jIsRB // recycle bin goes last
 			}
@@ -278,21 +274,63 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case RefreshMsg:
 		root := m.db.RootGroup()
-		// Rebuild the stack from UUIDs
+
+		// Save selected item identity before rebuilding
+		savedCursor := m.cursor
+		var selectedEntryUUID gokeepasslib.UUID
+		var selectedGroupUUID gokeepasslib.UUID
+		if savedCursor < len(m.items) {
+			if m.items[savedCursor].isGroup {
+				selectedGroupUUID = m.items[savedCursor].group.UUID
+			} else {
+				selectedEntryUUID = m.items[savedCursor].entry.UUID
+			}
+		}
+
 		m.stack = []stackFrame{{group: root, cursor: 0, offset: 0}}
 		if m.searchQuery != "" {
 			// Re-run the search to preserve results
 			m.allItems = collectAllEntries(root)
-			sortItems(m.allItems)
+			sortItems(m.allItems, m.db.RecycleBinUUID())
 			m.searchInput.SetValue(m.searchQuery)
 			m.applySearch()
 		} else {
 			m.items = m.buildItemsWithDB(root)
-			m.cursor = 0
-			m.offset = 0
 			m.searching = false
 			m.searchInput.SetValue("")
 		}
+
+		// Restore cursor to previously selected item
+		restored := false
+		for i, item := range m.items {
+			if item.isGroup && item.group.UUID == selectedGroupUUID && selectedGroupUUID != (gokeepasslib.UUID{}) {
+				m.cursor = i
+				restored = true
+				break
+			}
+			if !item.isGroup && item.entry.UUID == selectedEntryUUID && selectedEntryUUID != (gokeepasslib.UUID{}) {
+				m.cursor = i
+				restored = true
+				break
+			}
+		}
+		if !restored {
+			if savedCursor < len(m.items) {
+				m.cursor = savedCursor
+			} else if len(m.items) > 0 {
+				m.cursor = len(m.items) - 1
+			} else {
+				m.cursor = 0
+			}
+		}
+		// Adjust scroll offset so cursor is visible
+		vis := m.visibleHeight()
+		if m.cursor < m.offset {
+			m.offset = m.cursor
+		} else if m.cursor >= m.offset+vis {
+			m.offset = m.cursor - vis + 1
+		}
+
 		return m, nil
 
 	case StatusMsg:
@@ -389,7 +427,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.keys.Search:
 			m.searching = true
 			m.allItems = collectAllEntries(m.db.RootGroup())
-			sortItems(m.allItems)
+			sortItems(m.allItems, m.db.RecycleBinUUID())
 			m.searchInput.SetValue("")
 			m.searchInput.Focus()
 			m.items = m.allItems

@@ -11,13 +11,13 @@ import (
 )
 
 // ExportCSV writes all entries in the database to a CSV file.
-// Columns: Group, Title, Username, Password, URL, Notes, Attachments
+// Columns: Group, Title, Username, Password, URL, Notes, TOTP, Attachments
 func (d *DB) ExportCSV(w io.Writer) error {
 	writer := csv.NewWriter(w)
 	defer writer.Flush()
 
 	// Write header
-	if err := writer.Write([]string{"Group", "Title", "Username", "Password", "URL", "Notes", "Attachments"}); err != nil {
+	if err := writer.Write([]string{"Group", "Title", "Username", "Password", "URL", "Notes", "TOTP", "Attachments"}); err != nil {
 		return fmt.Errorf("write CSV header: %w", err)
 	}
 
@@ -33,7 +33,7 @@ func (d *DB) writeGroupCSV(w *csv.Writer, g *Group, path string) error {
 			names = append(names, a.Name)
 		}
 		attachStr := strings.Join(names, ";")
-		record := []string{path, e.Title, e.UserName, e.Password, e.URL, e.Notes, attachStr}
+		record := []string{path, e.Title, e.UserName, e.Password, e.URL, e.Notes, e.TOTP, attachStr}
 		if err := w.Write(record); err != nil {
 			return fmt.Errorf("write CSV row: %w", err)
 		}
@@ -186,7 +186,7 @@ func (d *DB) ExportXMLFile(path string) error {
 }
 
 // ImportCSV reads entries from a CSV file and adds them to the database root group.
-// Expected columns: Group, Title, Username, Password, URL, Notes
+// Expected columns: Group, Title, Username, Password, URL, Notes, TOTP
 // The Group column is used to create sub-groups as needed.
 func (d *DB) ImportCSV(r io.Reader) (int, error) {
 	reader := csv.NewReader(r)
@@ -230,6 +230,9 @@ func (d *DB) ImportCSV(r io.Reader) (int, error) {
 		}
 		if idx, ok := colIdx["notes"]; ok && idx < len(record) {
 			entry.Notes = record[idx]
+		}
+		if idx, ok := colIdx["totp"]; ok && idx < len(record) {
+			entry.TOTP = record[idx]
 		}
 
 		targetUUID := root.UUID

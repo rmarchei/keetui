@@ -23,12 +23,17 @@ type HIBPResult struct {
 // CheckHIBP checks a password against the Have I Been Pwned API using
 // k-anonymity (only the first 5 characters of the SHA-1 hash are sent).
 func CheckHIBP(password string) HIBPResult {
+	return checkHIBPWithURL(password, hibpAPIURL)
+}
+
+// checkHIBPWithURL is the testable core of CheckHIBP, accepting a custom base URL.
+func checkHIBPWithURL(password, baseURL string) HIBPResult {
 	hash := fmt.Sprintf("%X", sha1.Sum([]byte(password)))
 	prefix := hash[:5]
 	suffix := hash[5:]
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(hibpAPIURL + prefix)
+	resp, err := client.Get(baseURL + prefix)
 	if err != nil {
 		return HIBPResult{Err: fmt.Errorf("HIBP request failed: %w", err)}
 	}
