@@ -291,6 +291,15 @@ func createBackup(path string) error {
 	defer src.Close()
 
 	bakPath := path + ".bak"
+
+	// Refuse to write through a symlink to prevent an attacker from
+	// tricking us into overwriting an arbitrary file with DB content.
+	if fi, err := os.Lstat(bakPath); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("backup path is a symlink, refusing to overwrite: %s", bakPath)
+		}
+	}
+
 	dst, err := os.OpenFile(bakPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("create backup file: %w", err)
