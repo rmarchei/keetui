@@ -43,13 +43,28 @@ func (d *DB) EntryAttachments(entryUUID gokeepasslib.UUID) []Attachment {
 }
 
 // ExtractAttachment saves an attachment to disk.
-// The destPath is validated to reject path traversal attempts.
+// The destPath is validated to reject path traversal attempts and symlink writes.
 func (d *DB) ExtractAttachment(entryUUID gokeepasslib.UUID, name, destPath string) error {
 	// Reject paths containing ".." to prevent directory traversal
 	destPath = filepath.Clean(destPath)
 	for _, part := range strings.Split(destPath, string(filepath.Separator)) {
 		if part == ".." {
 			return fmt.Errorf("invalid destination path (directory traversal): %q", destPath)
+		}
+	}
+
+	// Refuse to write through a symlink to prevent overwriting arbitrary files.
+	if fi, err := os.Lstat(destPath); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("destination path is a symlink, refusing to write: %q", destPath)
+		}
+	}
+
+	// Verify the parent directory exists and is not a symlink.
+	parentDir := filepath.Dir(destPath)
+	if fi, err := os.Lstat(parentDir); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("parent directory is a symlink, refusing to write: %q", parentDir)
 		}
 	}
 
