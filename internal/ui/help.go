@@ -74,7 +74,7 @@ func (m HelpModel) buildContent() string {
 		{k.FilterTag, "Filter by tag"},
 		{k.Cut, "Cut entry/group"},
 		{k.Paste, "Paste entry/group"},
-		{k.Save + "/ctrl+s", "Save database"},
+		{k.Save + "/ctrl+s", "Save database (edit path to save as)"},
 		{k.ShowStats, "Database info"},
 		{k.ShowAudit, "Security audit"},
 		{k.ShowSettings, "Settings"},
