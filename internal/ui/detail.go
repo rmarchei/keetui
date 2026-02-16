@@ -233,6 +233,73 @@ func (m *DetailModel) RefreshContent() {
 	}
 }
 
+// lineForField returns the content line number for the given selectable field index.
+func (m DetailModel) lineForField(fieldIdx int) int {
+	idx := 0
+	line := 0
+
+	// Username (1 line)
+	if idx == fieldIdx {
+		return line
+	}
+	idx++
+	line++
+
+	// Password (1 line)
+	if idx == fieldIdx {
+		return line
+	}
+	idx++
+	line++
+
+	// URL (1 line)
+	if idx == fieldIdx {
+		return line
+	}
+	idx++
+	line++
+
+	// TOTP (optional, 1 line)
+	if m.totpCode != "" {
+		if idx == fieldIdx {
+			return line
+		}
+		idx++
+		line++
+	}
+
+	// Notes (optional, 1 label line + N body lines)
+	if m.entry.Notes != "" {
+		if idx == fieldIdx {
+			return line
+		}
+		idx++
+		line += 1 + len(strings.Split(m.entry.Notes, "\n"))
+	}
+
+	// Timestamps (non-selectable)
+	if !m.entry.CreationTime.IsZero() {
+		line++
+	}
+	if !m.entry.ModificationTime.IsZero() {
+		line++
+	}
+	if m.entry.Expires {
+		line++
+	}
+
+	// Custom fields (1 line each)
+	for range m.entry.CustomFields {
+		if idx == fieldIdx {
+			return line
+		}
+		idx++
+		line++
+	}
+
+	return line
+}
+
 // refreshContentAndFollow rebuilds the viewport content and scrolls to keep
 // the selected field visible.
 func (m *DetailModel) refreshContentAndFollow() {
@@ -240,42 +307,7 @@ func (m *DetailModel) refreshContentAndFollow() {
 		return
 	}
 	m.viewport.SetContent(m.buildContent())
-	// Estimate the line number of the selected field. Each selectable field
-	// occupies one line, with non-selectable metadata lines interspersed.
-	line := m.selectedField // rough lower bound
-	// Account for notes taking multiple lines
-	if m.entry.Notes != "" {
-		notesFieldIdx := 3 // username=0, password=1, URL=2, notes=3 (or 4 with TOTP)
-		if m.totpCode != "" {
-			notesFieldIdx = 4
-		}
-		if m.selectedField > notesFieldIdx {
-			extra := len(strings.Split(m.entry.Notes, "\n")) // note body lines
-			line += extra
-		}
-	}
-	// Account for timestamp lines (not selectable, come after notes)
-	timestampLines := 0
-	if !m.entry.CreationTime.IsZero() {
-		timestampLines++
-	}
-	if !m.entry.ModificationTime.IsZero() {
-		timestampLines++
-	}
-	if m.entry.Expires {
-		timestampLines++
-	}
-	baseFields := 3 // username, password, URL
-	if m.totpCode != "" {
-		baseFields++
-	}
-	if m.entry.Notes != "" {
-		baseFields++
-	}
-	if m.selectedField >= baseFields {
-		line += timestampLines
-	}
-	// Scroll viewport to keep the selected field visible
+	line := m.lineForField(m.selectedField)
 	vpHeight := m.viewport.Height
 	if line < m.viewport.YOffset {
 		m.viewport.SetYOffset(line)
@@ -318,9 +350,13 @@ func (m *DetailModel) refreshTOTP() {
 }
 
 func (m *DetailModel) syncViewportSize() {
-	headerHeight := lipgloss.Height(m.headerView())
-	footerHeight := lipgloss.Height(m.footerView())
-	vpHeight := m.height - headerHeight - footerHeight
+	// View() concatenates: headerView() + viewport.View() + "\n" + footerView()
+	// Count newlines contributed by each section to compute viewport height.
+	headerNewlines := strings.Count(m.headerView(), "\n")
+	footerNewlines := strings.Count(m.footerView(), "\n")
+	// Total lines = headerNewlines + vpHeight + 1 + footerNewlines
+	// We need total lines = m.height
+	vpHeight := m.height - headerNewlines - footerNewlines - 1
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
@@ -353,6 +389,20 @@ func (m DetailModel) footerView() string {
 		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
 		return helpStyle.Render(help)
 	}
+	// Show selected field name in footer when it's a custom field
+	var fieldPrefix string
+	fields := m.selectableFields()
+	if m.selectedField < len(fields) {
+		f := fields[m.selectedField]
+		// Show full label for custom fields (which may have been truncated in the view)
+		for _, cf := range m.entry.CustomFields {
+			if cf.Key == f.label {
+				fieldPrefix = fmt.Sprintf("  [%s]", f.label)
+				break
+			}
+		}
+	}
+
 	var help string
 	if m.readOnly {
 		help = fmt.Sprintf("  j/k: select  enter: copy  %s: QR  %s: toggle pw  %s: url",
@@ -369,7 +419,34 @@ func (m DetailModel) footerView() string {
 		}
 		help += fmt.Sprintf("  %s: HIBP  esc: back  %s: quit", m.keys.HIBPCheck, m.keys.Quit)
 	}
-	return helpStyle.Render(help)
+	return helpStyle.Render(fieldPrefix + help)
+}
+
+// truncateString truncates s to maxWidth runes, appending "…" if truncated.
+func truncateString(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxWidth {
+		return s
+	}
+	if maxWidth <= 1 {
+		return "…"
+	}
+	return string(runes[:maxWidth-1]) + "…"
+}
+
+// truncateLabel shortens a field label to fit within the labelStyle fixed width.
+// labelStyle has Width(12), so any label longer than that overflows and wraps.
+// The full label is shown in the footer when the field is selected.
+func truncateLabel(label string) string {
+	// labelStyle uses a fixed Width — truncate label text to fit
+	styleWidth := labelStyle.GetWidth()
+	if styleWidth <= 0 {
+		return label
+	}
+	return truncateString(label, styleWidth)
 }
 
 // buildContent returns the scrollable body content (everything between title and help bar).
@@ -469,9 +546,10 @@ func (m DetailModel) buildContent() string {
 		if cf.Protected && !m.revealedFields[cf.Key] {
 			val = strings.Repeat("*", len(cf.Value))
 		}
+		label := truncateLabel(cf.Key + ":")
 		b.WriteString(fmt.Sprintf("%s%s %s\n",
 			cursor(),
-			labelStyle.Render(cf.Key+":"),
+			labelStyle.Render(label),
 			valueStyle.Render(val)))
 	}
 
@@ -853,7 +931,7 @@ func (m DetailModel) View() string {
 	if !m.ready {
 		return ""
 	}
-	return fmt.Sprintf("%s\n%s\n%s\n", m.headerView(), m.viewport.View(), m.footerView())
+	return m.headerView() + m.viewport.View() + "\n" + m.footerView()
 }
 
 // renderStrength returns a styled strength label.

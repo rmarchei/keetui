@@ -327,6 +327,71 @@ func TestDetailMouseSelectField(t *testing.T) {
 	}
 }
 
+func TestTruncateString(t *testing.T) {
+	tests := []struct {
+		name     string
+		s        string
+		maxWidth int
+		want     string
+	}{
+		{"no truncation", "hello", 10, "hello"},
+		{"exact fit", "hello", 5, "hello"},
+		{"truncate", "hello world", 8, "hello w…"},
+		{"very short", "hello", 2, "h…"},
+		{"width 1", "hello", 1, "…"},
+		{"width 0", "hello", 0, ""},
+		{"empty string", "", 5, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateString(tt.s, tt.maxWidth)
+			if got != tt.want {
+				t.Errorf("truncateString(%q, %d) = %q, want %q", tt.s, tt.maxWidth, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLineForField(t *testing.T) {
+	entry := keepass.Entry{
+		Title:    "Test",
+		UserName: "user",
+		Password: "pass",
+		URL:      "https://example.com",
+		Notes:    "line1\nline2",
+		CustomFields: []keepass.CustomField{
+			{Key: "field1", Value: "val1"},
+			{Key: "field2", Value: "val2"},
+		},
+	}
+	m := NewDetailModel(entry, config.Default())
+	m.SetSize(80, 24)
+
+	// username=0, password=1, URL=2, notes=3, field1=4, field2=5
+	// Lines: username(0), password(1), URL(2), notes label(3), note body(4,5),
+	//        timestamps may add lines, then custom fields
+
+	if line := m.lineForField(0); line != 0 {
+		t.Errorf("lineForField(0) = %d, want 0 (username)", line)
+	}
+	if line := m.lineForField(1); line != 1 {
+		t.Errorf("lineForField(1) = %d, want 1 (password)", line)
+	}
+	if line := m.lineForField(2); line != 2 {
+		t.Errorf("lineForField(2) = %d, want 2 (URL)", line)
+	}
+	if line := m.lineForField(3); line != 3 {
+		t.Errorf("lineForField(3) = %d, want 3 (notes)", line)
+	}
+	// After notes: 1 label + 2 body lines = 3 lines (lines 3-5)
+	// Custom fields should be after notes + any timestamps
+	line4 := m.lineForField(4)
+	line5 := m.lineForField(5)
+	if line5 <= line4 {
+		t.Errorf("lineForField(5)=%d should be > lineForField(4)=%d", line5, line4)
+	}
+}
+
 func TestDetailView(t *testing.T) {
 	entry := testEntry()
 	m := NewDetailModel(entry, config.Default())
