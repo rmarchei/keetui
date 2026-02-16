@@ -389,22 +389,10 @@ func (m DetailModel) footerView() string {
 		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
 		return helpStyle.Render(help)
 	}
-	// Show status messages or selected field name in footer
+	// Show selected field name in footer
 	var fieldPrefix string
 	fields := m.selectableFields()
-	if m.hibpChecking {
-		fieldPrefix = helpStyle.Render("  Checking HIBP...")
-	} else if m.hibpResult != nil {
-		if m.hibpResult.Err != nil {
-			fieldPrefix = errorMsgStyle.Render(fmt.Sprintf("  HIBP check failed: %s", m.hibpResult.Err))
-		} else if m.hibpResult.Breached {
-			fieldPrefix = errorMsgStyle.Render(fmt.Sprintf("  WARNING: Password found in %d breaches!", m.hibpResult.Count))
-		} else {
-			fieldPrefix = successStyle.Render("  Password not found in any known breaches")
-		}
-	} else if m.copied != "" {
-		fieldPrefix = successStyle.Render(fmt.Sprintf("  Copied %s!", m.copied))
-	} else if m.selectedField < len(fields) {
+	if m.selectedField < len(fields) {
 		f := fields[m.selectedField]
 		fieldPrefix = fmt.Sprintf("  [%s]", f.label)
 	}

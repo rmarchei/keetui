@@ -36,7 +36,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Change database master password
 - Undo last action with `Ctrl+Z` (delete, edit, move, rename, duplicate, add)
 - Status bar showing database name, entry count, and modified state
-- Automatic backup (`.kdbx.bak`) before every save
+- Optional backup (`.kdbx.bak`) before every save (enable in settings)
 - Password generator character set options (toggle uppercase, lowercase, digits, symbols)
 - Read-only mode (`--read-only`) to prevent accidental modifications
 - Keyboard shortcut help overlay (`?` key)
@@ -208,7 +208,9 @@ Settings are stored in `~/.config/keetui/config.json`:
   "password_lowercase": true,
   "password_digits": true,
   "password_symbols": true,
-  "theme": "dark"
+  "theme": "dark",
+  "confirm_quit": false,
+  "backup_on_save": false
 }
 ```
 
@@ -223,6 +225,8 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `password_digits` | true | Include digits (0-9) in generated passwords |
 | `password_symbols` | true | Include symbols (!@#$%^&*()-_=+) in generated passwords |
 | `theme` | `"dark"` | Color theme: `dark`, `light`, or `high-contrast` |
+| `confirm_quit` | false | Always confirm before quitting (even without unsaved changes) |
+| `backup_on_save` | false | Create a `.kdbx.bak` backup copy before each save |
 
 Use `keetui -config` to view current settings as JSON (including all keybindings). The output is valid JSON that can be used as a config file:
 
@@ -253,7 +257,7 @@ Run `keetui -config` to see all available keybinding names and their current val
 - **Clipboard auto-clear**: Copied passwords and TOTP codes are automatically cleared from the clipboard (configurable, default 15s)
 - **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered
 - **Password generator**: Generates random passwords via `crypto/rand` with configurable character sets (uppercase, lowercase, digits, symbols)
-- **Backup on save**: The original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback
+- **Backup on save**: When enabled, the original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback (disabled by default; enable via `backup_on_save` setting)
 - **Read-only mode**: Open with `--read-only` to browse a database without risk of accidental modification
 - **Input validation**: Attachment extraction rejects path traversal attempts; config values are sanitized on load; URL opening restricted to http/https schemes
 

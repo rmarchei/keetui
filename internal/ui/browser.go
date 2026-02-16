@@ -65,7 +65,6 @@ type BrowserModel struct {
 	offset      int
 	width       int
 	height      int
-	status      string
 	searching   bool
 	searchInput textinput.Model
 	searchQuery string
@@ -102,21 +101,25 @@ type NewGroupMsg struct {
 // DeleteEntryMsg requests deleting an entry.
 type DeleteEntryMsg struct {
 	EntryUUID gokeepasslib.UUID
+	Name      string
 }
 
 // DeleteGroupMsg requests deleting a group.
 type DeleteGroupMsg struct {
 	GroupUUID gokeepasslib.UUID
+	Name      string
 }
 
 // PermanentlyDeleteEntryMsg requests permanent deletion of an entry.
 type PermanentlyDeleteEntryMsg struct {
 	EntryUUID gokeepasslib.UUID
+	Name      string
 }
 
 // PermanentlyDeleteGroupMsg requests permanent deletion of a group.
 type PermanentlyDeleteGroupMsg struct {
 	GroupUUID gokeepasslib.UUID
+	Name      string
 }
 
 // RestoreEntryMsg requests restoring an entry from recycle bin.
@@ -437,7 +440,28 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// Rebuild navigation stack from old group UUIDs through fresh root
+		oldUUIDs := make([]gokeepasslib.UUID, len(m.stack))
+		for i, f := range m.stack {
+			oldUUIDs[i] = f.group.UUID
+		}
 		m.stack = []stackFrame{{group: root, cursor: 0, offset: 0}}
+		current := root
+		for _, uuid := range oldUUIDs[1:] { // skip root (index 0)
+			found := false
+			for _, sg := range current.Groups {
+				if sg.UUID == uuid {
+					m.stack = append(m.stack, stackFrame{group: sg, cursor: 0, offset: 0})
+					current = sg
+					found = true
+					break
+				}
+			}
+			if !found {
+				break // group was deleted, stop here
+			}
+		}
+
 		if m.searchQuery != "" {
 			// Re-run the search to preserve results
 			m.allItems = collectAllEntries(root)
@@ -445,7 +469,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchInput.SetValue(m.searchQuery)
 			m.applySearch()
 		} else {
-			m.items = m.buildItemsWithDB(root)
+			m.items = m.buildItemsWithDB(m.currentGroup())
 			m.searching = false
 			m.searchInput.SetValue("")
 		}
@@ -481,14 +505,6 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.offset = m.cursor - vis + 1
 		}
 
-		return m, nil
-
-	case StatusMsg:
-		if msg.IsError {
-			m.status = errorMsgStyle.Render(msg.Text)
-		} else {
-			m.status = successStyle.Render(msg.Text)
-		}
 		return m, nil
 
 	case tea.MouseMsg:
@@ -643,8 +659,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key == m.keys.NewEntry:
 			if m.readOnly {
-				m.status = errorMsgStyle.Render("Read-only mode")
-				break
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
 			if m.inRecycleBin() {
 				break
@@ -657,8 +672,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key == m.keys.NewGroup:
 			if m.readOnly {
-				m.status = errorMsgStyle.Render("Read-only mode")
-				break
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
 			if m.inRecycleBin() {
 				break
@@ -671,8 +685,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key == m.keys.RenameGroup:
 			if m.readOnly {
-				m.status = errorMsgStyle.Render("Read-only mode")
-				break
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
 			// Rename group
 			if len(m.items) == 0 {
@@ -687,8 +700,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key == m.keys.Duplicate:
 			if m.readOnly {
-				m.status = errorMsgStyle.Render("Read-only mode")
-				break
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
 			// Duplicate entry
 			if len(m.items) == 0 {
@@ -703,8 +715,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key == m.keys.Cut:
 			if m.readOnly {
-				m.status = errorMsgStyle.Render("Read-only mode")
-				break
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
 			// Cut entry or group for move
 			if len(m.items) == 0 {
@@ -715,18 +726,21 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				uuid := item.group.UUID
 				m.cutGroup = &uuid
 				m.cutEntry = nil
-				m.status = successStyle.Render(fmt.Sprintf("Cut group: %s (navigate to target group and press %s to paste)", item.group.Name, m.keys.Paste))
+				return m, func() tea.Msg {
+					return StatusMsg{Text: fmt.Sprintf("Cut group: %s (navigate to target and press %s to paste)", item.group.Name, m.keys.Paste)}
+				}
 			} else {
 				uuid := item.entry.UUID
 				m.cutEntry = &uuid
 				m.cutGroup = nil
-				m.status = successStyle.Render(fmt.Sprintf("Cut: %s (navigate to target group and press %s to paste)", item.entry.Title, m.keys.Paste))
+				return m, func() tea.Msg {
+					return StatusMsg{Text: fmt.Sprintf("Cut: %s (navigate to target and press %s to paste)", item.entry.Title, m.keys.Paste)}
+				}
 			}
 
 		case key == m.keys.Paste:
 			if m.readOnly {
-				m.status = errorMsgStyle.Render("Read-only mode")
-				break
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
 			// Paste cut entry or group into current group
 			if m.cutEntry != nil {
@@ -746,31 +760,31 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key == m.keys.Delete:
 			if m.readOnly {
-				m.status = errorMsgStyle.Render("Read-only mode")
-				break
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
 			if len(m.items) == 0 {
 				break
 			}
 			item := m.items[m.cursor]
+			name := item.name()
 			if m.inRecycleBin() {
 				// In recycle bin: permanently delete
 				if item.isGroup {
 					return m, func() tea.Msg {
-						return PermanentlyDeleteGroupMsg{GroupUUID: item.group.UUID}
+						return PermanentlyDeleteGroupMsg{GroupUUID: item.group.UUID, Name: name}
 					}
 				}
 				return m, func() tea.Msg {
-					return PermanentlyDeleteEntryMsg{EntryUUID: item.entry.UUID}
+					return PermanentlyDeleteEntryMsg{EntryUUID: item.entry.UUID, Name: name}
 				}
 			}
 			if item.isGroup {
 				return m, func() tea.Msg {
-					return DeleteGroupMsg{GroupUUID: item.group.UUID}
+					return DeleteGroupMsg{GroupUUID: item.group.UUID, Name: name}
 				}
 			}
 			return m, func() tea.Msg {
-				return DeleteEntryMsg{EntryUUID: item.entry.UUID}
+				return DeleteEntryMsg{EntryUUID: item.entry.UUID, Name: name}
 			}
 
 		case key == m.keys.Restore:
@@ -799,8 +813,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key == m.keys.ChangePassword:
 			if m.readOnly {
-				m.status = errorMsgStyle.Render("Read-only mode")
-				break
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
 			return m, func() tea.Msg {
 				return ChangePasswordStartMsg{}
@@ -826,8 +839,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key == m.keys.Favorite:
 			if m.readOnly {
-				m.status = errorMsgStyle.Render("Read-only mode")
-				break
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
 			if len(m.items) == 0 {
 				break
@@ -853,8 +865,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key == m.keys.FilterTag:
 			m.allTags = collectTags(m.db.RootGroup())
 			if len(m.allTags) == 0 {
-				m.status = helpStyle.Render("No tags found")
-				break
+				return m, func() tea.Msg { return StatusMsg{Text: "No tags found"} }
 			}
 			if m.tagFilter == "" {
 				m.tagFilter = m.allTags[0]
@@ -879,8 +890,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case key == m.keys.Save || key == "ctrl+s":
 			if m.readOnly {
-				m.status = errorMsgStyle.Render("Read-only mode")
-				break
+				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
 			return m, func() tea.Msg {
 				return SaveMsg{}
@@ -992,10 +1002,6 @@ func (m BrowserModel) View() string {
 	}
 
 	b.WriteString("\n")
-	if m.status != "" {
-		b.WriteString(m.status)
-		b.WriteString("\n")
-	}
 	if m.searching {
 		b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
 	} else if m.readOnly {

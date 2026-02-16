@@ -16,9 +16,10 @@ import (
 
 // DB wraps a gokeepasslib.Database with file path and credentials info.
 type DB struct {
-	Path     string
-	Database *gokeepasslib.Database
-	unlocked bool
+	Path          string
+	Database      *gokeepasslib.Database
+	BackupOnSave  bool // when true, create a .bak copy before saving
+	unlocked      bool
 }
 
 // CustomField represents an extra key-value pair stored on an entry.
@@ -260,8 +261,10 @@ func (d *DB) SaveAs(path string) error {
 		return fmt.Errorf("close temp file: %w", err)
 	}
 
-	if err := createBackup(path); err != nil {
-		return fmt.Errorf("create backup: %w", err)
+	if d.BackupOnSave {
+		if err := createBackup(path); err != nil {
+			return fmt.Errorf("create backup: %w", err)
+		}
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {

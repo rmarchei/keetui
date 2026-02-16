@@ -406,8 +406,12 @@ func TestBrowserDeleteMsg(t *testing.T) {
 		t.Fatal("d key should produce a command")
 	}
 	msg := cmd()
-	if _, ok := msg.(DeleteEntryMsg); !ok {
-		t.Errorf("expected DeleteEntryMsg, got %T", msg)
+	delMsg, ok := msg.(DeleteEntryMsg)
+	if !ok {
+		t.Fatalf("expected DeleteEntryMsg, got %T", msg)
+	}
+	if delMsg.Name == "" {
+		t.Error("DeleteEntryMsg.Name should be populated")
 	}
 }
 
@@ -469,19 +473,6 @@ func TestBrowserRefresh(t *testing.T) {
 	}
 }
 
-func TestBrowserStatus(t *testing.T) {
-	db := createTestUIDB(t)
-	m := NewBrowserModel(db)
-	m.width, m.height = 80, 24
-
-	updated, _ := m.Update(StatusMsg{Text: "Test status", IsError: false})
-	m = updated.(BrowserModel)
-
-	if m.status == "" {
-		t.Error("status should be set after StatusMsg")
-	}
-}
-
 func TestBrowserView(t *testing.T) {
 	db := createTestUIDB(t)
 	m := NewBrowserModel(db)
@@ -494,6 +485,38 @@ func TestBrowserView(t *testing.T) {
 	// Should contain the title
 	if !contains(view, "keetui") {
 		t.Error("View() should contain 'keetui'")
+	}
+}
+
+func TestBrowserRefreshPreservesStack(t *testing.T) {
+	db := createTestUIDB(t)
+	m := NewBrowserModel(db)
+	m.width, m.height = 80, 24
+
+	// Navigate into the group (first item should be "Work" group)
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(BrowserModel)
+	// Execute any command (ViewEntryMsg or navigation)
+	if cmd != nil {
+		msg := cmd()
+		if _, isViewEntry := msg.(ViewEntryMsg); !isViewEntry {
+			// It was a group navigation, apply the update
+			updated, _ = m.Update(msg)
+			m = updated.(BrowserModel)
+		}
+	}
+
+	stackDepth := len(m.stack)
+	if stackDepth < 2 {
+		t.Fatalf("stack depth = %d, want >= 2 after entering a group", stackDepth)
+	}
+
+	// Send RefreshMsg
+	updated, _ = m.Update(RefreshMsg{})
+	m = updated.(BrowserModel)
+
+	if len(m.stack) != stackDepth {
+		t.Errorf("stack depth after refresh = %d, want %d (should be preserved)", len(m.stack), stackDepth)
 	}
 }
 

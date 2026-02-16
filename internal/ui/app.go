@@ -117,6 +117,8 @@ type AppModel struct {
 	entryCount   int       // cached entry count for status bar
 	undoStack    undoStack // undo history
 	readOnly     bool      // when true, all mutations are blocked
+	statusText   string    // transient status message for status bar
+	statusError  bool      // true if status message is an error
 }
 
 // NewApp creates the application starting at the unlock screen.
@@ -178,7 +180,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case tea.KeyMsg, tea.MouseMsg:
 			m.lastActivity = time.Now()
+			m.statusText = "" // clear transient status on interaction
 		}
+	}
+
+	// Handle StatusMsg at the app level (show in status bar)
+	if sm, ok := msg.(StatusMsg); ok {
+		m.statusText = sm.Text
+		m.statusError = sm.IsError
+		return m, nil
 	}
 
 	// Handle undo (ctrl+z) in non-text-input views
@@ -198,6 +208,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.dirty {
 			m.returnState = m.state
 			m.confirm = NewConfirmModel("You have unsaved changes. Quit anyway?", func() tea.Msg {
+				return quitMsg{}
+			})
+			m.state = viewConfirm
+			return m, nil
+		}
+		if m.cfg.ConfirmOnQuit() {
+			m.returnState = m.state
+			m.confirm = NewConfirmModel("Quit?", func() tea.Msg {
 				return quitMsg{}
 			})
 			m.state = viewConfirm
@@ -272,14 +290,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.groupInput.Init()
 
 	case DeleteEntryMsg:
-		m.confirm = NewConfirmModel("Delete this entry?", func() tea.Msg {
+		m.confirm = NewConfirmModel(fmt.Sprintf("Delete entry '%s'?", msg.Name), func() tea.Msg {
 			return confirmDeleteEntryMsg{UUID: msg.EntryUUID}
 		})
 		m.state = viewConfirm
 		return m, nil
 
 	case DeleteGroupMsg:
-		m.confirm = NewConfirmModel("Delete this group and all its contents?", func() tea.Msg {
+		m.confirm = NewConfirmModel(fmt.Sprintf("Delete group '%s' and all its contents?", msg.Name), func() tea.Msg {
 			return confirmDeleteGroupMsg{UUID: msg.GroupUUID}
 		})
 		m.state = viewConfirm
@@ -381,14 +399,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case PermanentlyDeleteEntryMsg:
-		m.confirm = NewConfirmModel("Permanently delete this entry?", func() tea.Msg {
+		m.confirm = NewConfirmModel(fmt.Sprintf("Permanently delete entry '%s'?", msg.Name), func() tea.Msg {
 			return confirmPermanentDeleteEntryMsg{UUID: msg.EntryUUID}
 		})
 		m.state = viewConfirm
 		return m, nil
 
 	case PermanentlyDeleteGroupMsg:
-		m.confirm = NewConfirmModel("Permanently delete this group and all its contents?", func() tea.Msg {
+		m.confirm = NewConfirmModel(fmt.Sprintf("Permanently delete group '%s' and all its contents?", msg.Name), func() tea.Msg {
 			return confirmPermanentDeleteGroupMsg{UUID: msg.GroupUUID}
 		})
 		m.state = viewConfirm
@@ -600,6 +618,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ConfigSavedMsg:
 		m.cfg = msg.Cfg
+		if m.db != nil {
+			m.db.BackupOnSave = m.cfg.BackupEnabled()
+		}
 		m.lastActivity = time.Now()
 		m.state = viewBrowser
 		return m, tea.Batch(
@@ -623,7 +644,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.hibpResult = &msg
 		m.detail.hibpChecking = false
 		m.detail.RefreshContent()
-		return m, nil
+		if msg.Err != nil {
+			return m, statusCmd(fmt.Sprintf("HIBP check failed: %s", msg.Err), true)
+		} else if msg.Breached {
+			return m, statusCmd(fmt.Sprintf("WARNING: Password found in %d breaches!", msg.Count), true)
+		}
+		return m, statusCmd("Password not found in any known breaches", false)
 
 	case ExtractAttachmentMsg:
 		if err := m.db.ExtractAttachment(msg.EntryUUID, msg.Name, msg.DestPath); err != nil {
@@ -720,7 +746,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.detail.copied = msg.Field
 		m.detail.RefreshContent()
-		return m, m.scheduleClearClipboard(msg.Value)
+		return m, tea.Batch(
+			statusCmd(fmt.Sprintf("Copied %s!", msg.Field), false),
+			m.scheduleClearClipboard(msg.Value),
+		)
 
 	case clipboardClearMsg:
 		current, err := readClipboard()
@@ -863,6 +892,13 @@ func (m AppModel) statusBar() string {
 	if m.undoStack.length() > 0 {
 		parts = append(parts, helpStyle.Render(fmt.Sprintf("ctrl+z: undo (%d)", m.undoStack.length())))
 	}
+	if m.statusText != "" {
+		if m.statusError {
+			parts = append(parts, errorMsgStyle.Render(m.statusText))
+		} else {
+			parts = append(parts, successStyle.Render(m.statusText))
+		}
+	}
 	content := strings.Join(parts, "  ")
 	return statusBarBgStyle.Width(m.width).Render(content)
 }
@@ -930,6 +966,7 @@ func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cm
 		m.unlock.err = fmt.Errorf("failed to unlock: %w", err)
 		return m, nil
 	}
+	db.BackupOnSave = m.cfg.BackupEnabled()
 	m.db = db
 	m.unlock.input.SetValue("")
 	m.unlock.input.Reset()

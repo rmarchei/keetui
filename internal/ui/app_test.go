@@ -744,3 +744,49 @@ func TestUndoStackClearedOnDatabaseOpen(t *testing.T) {
 		t.Error("stack should be empty after clear")
 	}
 }
+
+func TestAppQuitWithConfirmQuit(t *testing.T) {
+	m := createTestApp(t)
+	tr := true
+	m.cfg.ConfirmQuit = &tr
+
+	updated, _ := m.Update(RequestQuitMsg{})
+	m = updated.(AppModel)
+
+	if m.state != viewConfirm {
+		t.Errorf("state = %d, want %d (viewConfirm) with ConfirmQuit enabled", m.state, viewConfirm)
+	}
+}
+
+func TestAppDeleteEntryConfirmMessage(t *testing.T) {
+	m := createTestApp(t)
+
+	updated, _ := m.Update(DeleteEntryMsg{EntryUUID: m.db.RootGroup().Entries[0].UUID, Name: "MyEntry"})
+	m = updated.(AppModel)
+
+	if m.state != viewConfirm {
+		t.Fatalf("state = %d, want viewConfirm", m.state)
+	}
+	if !strings.Contains(m.confirm.message, "MyEntry") {
+		t.Errorf("confirm message = %q, want it to contain 'MyEntry'", m.confirm.message)
+	}
+}
+
+func TestAppDeleteGroupConfirmMessage(t *testing.T) {
+	m := createTestApp(t)
+
+	root := m.db.RootGroup()
+	if len(root.Groups) == 0 {
+		t.Fatal("expected at least one group")
+	}
+
+	updated, _ := m.Update(DeleteGroupMsg{GroupUUID: root.Groups[0].UUID, Name: "Email"})
+	m = updated.(AppModel)
+
+	if m.state != viewConfirm {
+		t.Fatalf("state = %d, want viewConfirm", m.state)
+	}
+	if !strings.Contains(m.confirm.message, "Email") {
+		t.Errorf("confirm message = %q, want it to contain 'Email'", m.confirm.message)
+	}
+}
