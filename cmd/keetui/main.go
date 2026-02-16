@@ -30,6 +30,7 @@ func main() {
 	importCSV := flag.String("import-csv", "", "import entries from CSV file")
 	importXML := flag.String("import-xml", "", "import entries from XML file")
 	mergeDB := flag.String("merge", "", "merge entries from another .kdbx file")
+	dryRun := flag.Bool("dry-run", false, "preview changes without modifying (use with --merge)")
 	readOnly := flag.Bool("read-only", false, "open database in read-only mode")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "keetui - a TUI for KeePass databases\n\n")
@@ -135,8 +136,13 @@ func main() {
 		}
 	}
 
+	if *dryRun && *mergeDB == "" {
+		fmt.Fprintln(os.Stderr, "Error: --dry-run requires --merge")
+		os.Exit(1)
+	}
+
 	// Block mutating batch operations in read-only mode
-	if *readOnly && (*importCSV != "" || *importXML != "" || *mergeDB != "") {
+	if *readOnly && (*importCSV != "" || *importXML != "" || (*mergeDB != "" && !*dryRun)) {
 		fmt.Fprintln(os.Stderr, "Error: import and merge are not allowed in read-only mode")
 		os.Exit(1)
 	}
@@ -190,16 +196,26 @@ func main() {
 
 		if *mergeDB != "" {
 			other := openDBForBatch(*mergeDB, "")
-			result, err := db.Merge(other)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error merging: %v\n", err)
-				os.Exit(1)
+			if *dryRun {
+				result, err := db.MergePreview(other)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error analyzing merge: %v\n", err)
+					os.Exit(1)
+				}
+				printMergePreview(result)
+			} else {
+				result, err := db.Merge(other)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error merging: %v\n", err)
+					os.Exit(1)
+				}
+				if err := db.Save(); err != nil {
+					fmt.Fprintf(os.Stderr, "Error saving after merge: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Printf("Merged: %d added, %d updated, %d unchanged, %d groups created\n",
+					result.EntriesAdded, result.EntriesUpdated, result.EntriesSkipped, result.GroupsCreated)
 			}
-			if err := db.Save(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error saving after merge: %v\n", err)
-				os.Exit(1)
-			}
-			fmt.Printf("Merged: %d entries added, %d groups created\n", result.EntriesAdded, result.GroupsCreated)
 		}
 
 		os.Exit(0)
@@ -247,6 +263,42 @@ func zeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+func printMergePreview(result keepass.MergeResult) {
+	fmt.Println("Merge preview (dry run - no changes will be made):")
+	fmt.Println()
+
+	if len(result.GroupActions) > 0 {
+		fmt.Println("Groups:")
+		for _, g := range result.GroupActions {
+			switch g.Action {
+			case "create":
+				fmt.Printf("  + CREATE  %s (in %s)\n", g.Name, g.ParentPath)
+			case "exists":
+				fmt.Printf("  = EXISTS  %s (in %s)\n", g.Name, g.ParentPath)
+			}
+		}
+		fmt.Println()
+	}
+
+	if len(result.EntryActions) > 0 {
+		fmt.Println("Entries:")
+		for _, e := range result.EntryActions {
+			switch e.Action {
+			case "add":
+				fmt.Printf("  + ADD     %s (%s) [%s]\n", e.Title, e.UserName, e.GroupPath)
+			case "update":
+				fmt.Printf("  ~ UPDATE  %s (%s) [%s]\n", e.Title, e.UserName, e.GroupPath)
+			case "skip":
+				fmt.Printf("  = SKIP    %s (%s) [%s]\n", e.Title, e.UserName, e.GroupPath)
+			}
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("Summary: %d to add, %d to update, %d unchanged, %d groups to create\n",
+		result.EntriesAdded, result.EntriesUpdated, result.EntriesSkipped, result.GroupsCreated)
 }
 
 // selfHash returns the SHA256 hex digest of the running binary.

@@ -4,10 +4,29 @@ import (
 	"fmt"
 )
 
+// MergeEntryAction describes what would happen to a single entry during merge.
+type MergeEntryAction struct {
+	Title     string
+	UserName  string
+	GroupPath string
+	Action    string // "add", "update", "skip"
+}
+
+// MergeGroupAction describes what would happen to a single group during merge.
+type MergeGroupAction struct {
+	Name       string
+	ParentPath string
+	Action     string // "create", "exists"
+}
+
 // MergeResult holds the result of a database merge operation.
 type MergeResult struct {
-	EntriesAdded  int
-	GroupsCreated int
+	EntriesAdded   int
+	EntriesUpdated int
+	EntriesSkipped int
+	GroupsCreated  int
+	EntryActions   []MergeEntryAction
+	GroupActions   []MergeGroupAction
 }
 
 // Merge merges entries and groups from another database into this one.
@@ -31,20 +50,19 @@ func (d *DB) mergeGroup(src *Group, targetParentUUID [16]byte, result *MergeResu
 	for _, srcEntry := range src.Entries {
 		existing := findEntry(&d.Database.Content.Root.Groups[0], srcEntry.UUID)
 		if existing == nil {
-			// Entry doesn't exist in target, add it
 			_, _ = d.AddEntry(targetParentUUID, srcEntry)
 			result.EntriesAdded++
 		} else {
-			// Entry exists, update if source is newer
 			if srcEntry.ModificationTime.After(existing.Times.LastModificationTime.Time) {
 				_ = d.UpdateEntry(srcEntry.UUID, srcEntry)
-				result.EntriesAdded++ // count updates too
+				result.EntriesUpdated++
+			} else {
+				result.EntriesSkipped++
 			}
 		}
 	}
 
 	for _, srcGroup := range src.Groups {
-		// Find or create the corresponding group in target
 		targetGroupUUID := d.findOrCreateGroup(targetParentUUID, srcGroup.Name, result)
 		d.mergeGroup(&srcGroup, targetGroupUUID, result)
 	}
@@ -77,4 +95,96 @@ func (d *DB) findOrCreateGroup(parentUUID [16]byte, name string, result *MergeRe
 	}
 
 	return parentUUID
+}
+
+// MergePreview reports what a merge would do without modifying the database.
+func (d *DB) MergePreview(other *DB) (MergeResult, error) {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return MergeResult{}, fmt.Errorf("target database has no root group")
+	}
+
+	otherRoot := other.RootGroup()
+	result := MergeResult{}
+	rootName := d.RootGroup().Name
+	if rootName == "" {
+		rootName = "Root"
+	}
+
+	d.mergePreviewGroup(&otherRoot, d.RootGroup().UUID, rootName, &result)
+
+	return result, nil
+}
+
+func (d *DB) mergePreviewGroup(src *Group, targetParentUUID [16]byte, parentPath string, result *MergeResult) {
+	for _, srcEntry := range src.Entries {
+		existing := findEntry(&d.Database.Content.Root.Groups[0], srcEntry.UUID)
+		action := MergeEntryAction{
+			Title:     srcEntry.Title,
+			UserName:  srcEntry.UserName,
+			GroupPath: parentPath,
+		}
+		if existing == nil {
+			action.Action = "add"
+			result.EntriesAdded++
+		} else if srcEntry.ModificationTime.After(existing.Times.LastModificationTime.Time) {
+			action.Action = "update"
+			result.EntriesUpdated++
+		} else {
+			action.Action = "skip"
+			result.EntriesSkipped++
+		}
+		result.EntryActions = append(result.EntryActions, action)
+	}
+
+	for _, srcGroup := range src.Groups {
+		groupAction := MergeGroupAction{
+			Name:       srcGroup.Name,
+			ParentPath: parentPath,
+		}
+		root := d.RootGroup()
+		parent := findGroupSimple(&root, targetParentUUID)
+		childPath := parentPath + " > " + srcGroup.Name
+		if parent != nil {
+			found := false
+			for _, g := range parent.Groups {
+				if g.Name == srcGroup.Name {
+					groupAction.Action = "exists"
+					result.GroupActions = append(result.GroupActions, groupAction)
+					d.mergePreviewGroup(&srcGroup, g.UUID, childPath, result)
+					found = true
+					break
+				}
+			}
+			if !found {
+				groupAction.Action = "create"
+				result.GroupsCreated++
+				result.GroupActions = append(result.GroupActions, groupAction)
+				// Group doesn't exist; all entries in subtree would be added
+				mergePreviewAllAdd(&srcGroup, childPath, result)
+			}
+		}
+	}
+}
+
+// mergePreviewAllAdd counts all entries in a source subtree as "add" actions.
+func mergePreviewAllAdd(src *Group, path string, result *MergeResult) {
+	for _, e := range src.Entries {
+		result.EntryActions = append(result.EntryActions, MergeEntryAction{
+			Title:     e.Title,
+			UserName:  e.UserName,
+			GroupPath: path,
+			Action:    "add",
+		})
+		result.EntriesAdded++
+	}
+	for _, sg := range src.Groups {
+		childPath := path + " > " + sg.Name
+		result.GroupActions = append(result.GroupActions, MergeGroupAction{
+			Name:       sg.Name,
+			ParentPath: path,
+			Action:     "create",
+		})
+		result.GroupsCreated++
+		mergePreviewAllAdd(&sg, childPath, result)
+	}
 }

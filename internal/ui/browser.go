@@ -135,9 +135,6 @@ type RestoreGroupMsg struct {
 // EmptyRecycleBinMsg requests emptying the recycle bin.
 type EmptyRecycleBinMsg struct{}
 
-// SaveMsg requests saving the database.
-type SaveMsg struct{}
-
 // RefreshMsg signals the browser to refresh its data from the DB.
 type RefreshMsg struct{}
 
@@ -893,7 +890,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
 			return m, func() tea.Msg {
-				return SaveMsg{}
+				return SaveAsStartMsg{}
 			}
 		}
 	}
