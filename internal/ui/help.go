@@ -104,6 +104,7 @@ func (m HelpModel) buildContent() string {
 
 	section("Editor", []struct{ key, desc string }{
 		{"tab/shift+tab", "Navigate fields"},
+		{"ctrl+r", "Toggle password/TOTP visibility"},
 		{"ctrl+s", "Save entry"},
 		{"ctrl+g", "Generate password"},
 		{"ctrl+p", "Generate passphrase"},

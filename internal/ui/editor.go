@@ -36,6 +36,11 @@ var fieldLabels = [fixedFieldCount]string{
 	"Expiry (YYYY-MM-DD)",
 }
 
+// maskPasswordMsg is sent after a delay to re-mask a password field.
+type maskPasswordMsg struct {
+	seq int
+}
+
 // EditorModel handles creating or editing an entry.
 type EditorModel struct {
 	inputs       [fixedFieldCount]textinput.Model
@@ -49,6 +54,8 @@ type EditorModel struct {
 	err          error
 	generated    bool // true after password was auto-generated
 	cfg          config.Config
+	revealSeq    int  // incremented on each keystroke that triggers auto-reveal
+	persistReveal bool // true when ctrl+r was used to persistently show password
 }
 
 type customFieldInput struct {
@@ -150,6 +157,13 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case maskPasswordMsg:
+		if msg.seq == m.revealSeq && !m.persistReveal {
+			m.inputs[fieldPassword].EchoMode = textinput.EchoPassword
+			m.inputs[fieldTOTP].EchoMode = textinput.EchoPassword
+		}
+		return m, nil
+
 	case tea.MouseMsg:
 		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 			// Header: 1 blank + 1 title + 1 blank = 3 lines
@@ -210,6 +224,18 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.generated = true
 			return m, nil
 
+		case "ctrl+r":
+			// Toggle persistent password/TOTP visibility
+			if m.focused == fieldPassword || m.focused == fieldTOTP {
+				m.persistReveal = !m.persistReveal
+				if m.persistReveal {
+					m.inputs[m.focused].EchoMode = textinput.EchoNormal
+				} else {
+					m.inputs[m.focused].EchoMode = textinput.EchoPassword
+				}
+			}
+			return m, nil
+
 		case "ctrl+a":
 			// Add a new custom field
 			m.customInputs = append(m.customInputs, newCustomFieldInput("", "", false))
@@ -235,6 +261,12 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Update only the focused input
+	isMaskedField := m.focused == fieldPassword || m.focused == fieldTOTP
+	var oldVal string
+	if isMaskedField {
+		oldVal = m.inputs[m.focused].Value()
+	}
+
 	var cmd tea.Cmd
 	if m.focused < fixedFieldCount {
 		m.inputs[m.focused], cmd = m.inputs[m.focused].Update(msg)
@@ -249,10 +281,27 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+
+	// Briefly reveal password/TOTP when typing, then re-mask after 1 second
+	if isMaskedField && !m.persistReveal && m.inputs[m.focused].Value() != oldVal {
+		m.inputs[m.focused].EchoMode = textinput.EchoNormal
+		m.revealSeq++
+		seq := m.revealSeq
+		maskCmd := tea.Tick(time.Second, func(time.Time) tea.Msg {
+			return maskPasswordMsg{seq: seq}
+		})
+		return m, tea.Batch(cmd, maskCmd)
+	}
+
 	return m, cmd
 }
 
 func (m *EditorModel) updateFocus() tea.Cmd {
+	// Re-mask password/TOTP fields and reset reveal state on focus change
+	m.persistReveal = false
+	m.inputs[fieldPassword].EchoMode = textinput.EchoPassword
+	m.inputs[fieldTOTP].EchoMode = textinput.EchoPassword
+
 	var cmds []tea.Cmd
 	for i := range m.inputs {
 		if i == m.focused {
@@ -379,7 +428,7 @@ func (m EditorModel) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+g: gen password  ctrl+p: gen passphrase  ctrl+a: add field  ctrl+d: del field  ctrl+s: save  esc: cancel"))
+	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+r: reveal  ctrl+g: gen password  ctrl+p: gen passphrase  ctrl+a: add field  ctrl+d: del field  ctrl+s: save  esc: cancel"))
 	b.WriteString("\n")
 
 	return b.String()
