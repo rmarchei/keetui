@@ -32,7 +32,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Password history -- view previous passwords for an entry
 - Recycle bin support -- deleted items go to recycle bin, with restore and permanent delete
 - Database stats and batch password audit (weak, reused, empty, expired)
-- Import/export (CSV, XML) and merge from other `.kdbx` files
+- Import/export (CSV, XML) and merge from other `.kdbx` files (with `--dry-run` preview)
 - Change database master password
 - Undo last action with `Ctrl+Z` (delete, edit, move, rename, duplicate, add)
 - Status bar showing database name, entry count, and modified state
@@ -40,7 +40,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Password generator character set options (toggle uppercase, lowercase, digits, symbols)
 - Read-only mode (`--read-only`) to prevent accidental modifications
 - Keyboard shortcut help overlay (`?` key)
-- Save changes back to the `.kdbx` file
+- Save changes back to the `.kdbx` file, or save as a new file path
 - Auto-lock after 5 minutes of inactivity
 - Color themes -- dark, light, and high-contrast presets via config or settings UI
 - Configurable keybindings and settings via `~/.config/keetui/config.json`
@@ -104,11 +104,12 @@ keetui --import-xml entries.xml database.kdbx
 
 # Merge from another .kdbx file
 keetui --merge other.kdbx database.kdbx
+keetui --merge other.kdbx --dry-run database.kdbx  # preview without modifying
 ```
 
 - **CSV** format includes columns: Group, Title, Username, Password, URL, Notes, TOTP, Attachments
 - **XML** format preserves group hierarchy, custom fields, and attachments
-- **Merge** matches entries by UUID; newer entries overwrite older ones; new groups are created as needed
+- **Merge** matches entries by UUID; newer entries overwrite older ones; new groups are created as needed. Use `--dry-run` to preview changes without modifying the database
 
 ## Keyboard Shortcuts
 
@@ -137,7 +138,7 @@ All keybindings shown below are defaults and can be customized via the config fi
 | `c` | Settings |
 | `P` | Change master password |
 | `Ctrl+Z` | Undo last action |
-| `s` / `Ctrl+S` | Save database to file |
+| `s` / `Ctrl+S` | Save database |
 | `?` | Keyboard shortcut help |
 | `q` | Quit |
 

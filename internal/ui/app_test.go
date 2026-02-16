@@ -333,14 +333,22 @@ func TestAppSaveDatabase(t *testing.T) {
 	m := createTestApp(t)
 	m.dirty = true
 
-	updated, cmd := m.Update(SaveMsg{})
+	// Save now goes through path input
+	updated, _ := m.Update(SaveAsStartMsg{})
+	m = updated.(AppModel)
+	if m.state != viewPathInput {
+		t.Fatalf("state = %d, want viewPathInput", m.state)
+	}
+
+	// Confirm save to same path
+	updated, _ = m.Update(SaveAsMsg{Path: m.filePath})
 	m = updated.(AppModel)
 
 	if m.dirty {
 		t.Error("should not be dirty after saving")
 	}
-	if cmd == nil {
-		t.Fatal("SaveMsg should produce a status command")
+	if m.state != viewBrowser {
+		t.Fatalf("state = %d, want viewBrowser", m.state)
 	}
 }
 
@@ -696,15 +704,15 @@ func TestReadOnlyBlocksMutations(t *testing.T) {
 		t.Errorf("expected error StatusMsg, got %T", msg)
 	}
 
-	// SaveMsg should be blocked
-	updated, cmd = m.Update(SaveMsg{})
+	// SaveAsStartMsg should be blocked
+	updated, cmd = m.Update(SaveAsStartMsg{})
 	m = updated.(AppModel)
 	if cmd == nil {
-		t.Fatal("expected status command for SaveMsg")
+		t.Fatal("expected status command for SaveAsStartMsg")
 	}
 	msg = cmd()
 	if sm, ok := msg.(StatusMsg); !ok || !sm.IsError {
-		t.Errorf("expected error StatusMsg for SaveMsg, got %T", msg)
+		t.Errorf("expected error StatusMsg for SaveAsStartMsg, got %T", msg)
 	}
 
 	// DuplicateEntryMsg should be blocked
@@ -788,5 +796,53 @@ func TestAppDeleteGroupConfirmMessage(t *testing.T) {
 	}
 	if !strings.Contains(m.confirm.message, "Email") {
 		t.Errorf("confirm message = %q, want it to contain 'Email'", m.confirm.message)
+	}
+}
+
+func TestAppSaveAsTransition(t *testing.T) {
+	m := createTestApp(t)
+
+	updated, _ := m.Update(SaveAsStartMsg{})
+	m = updated.(AppModel)
+
+	if m.state != viewPathInput {
+		t.Fatalf("state = %d, want viewPathInput", m.state)
+	}
+}
+
+func TestAppSaveAsCompletes(t *testing.T) {
+	m := createTestApp(t)
+	m.dirty = true
+
+	dir := t.TempDir()
+	newPath := filepath.Join(dir, "saved-as.kdbx")
+
+	updated, _ := m.Update(SaveAsMsg{Path: newPath})
+	m = updated.(AppModel)
+
+	if m.state != viewBrowser {
+		t.Fatalf("state = %d, want viewBrowser", m.state)
+	}
+	if m.dirty {
+		t.Error("dirty should be false after save-as")
+	}
+	if m.filePath != newPath {
+		t.Errorf("filePath = %q, want %q", m.filePath, newPath)
+	}
+	if m.db.Path != newPath {
+		t.Errorf("db.Path = %q, want %q", m.db.Path, newPath)
+	}
+}
+
+func TestAppSaveAsReadOnly(t *testing.T) {
+	m := createTestApp(t)
+	m.readOnly = true
+
+	updated, _ := m.Update(SaveAsStartMsg{})
+	m = updated.(AppModel)
+
+	// Should stay in browser, not transition to path input
+	if m.state == viewPathInput {
+		t.Error("should not enter path input in read-only mode")
 	}
 }

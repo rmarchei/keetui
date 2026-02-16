@@ -33,6 +33,7 @@ const (
 	viewHistory
 	viewAudit
 	viewHelp
+	viewPathInput
 )
 
 // clipboardClearMsg signals that the clipboard should be cleared.
@@ -106,6 +107,7 @@ type AppModel struct {
 	history      HistoryModel
 	audit        AuditModel
 	help         HelpModel
+	pathInput    PathInputModel
 	width        int
 	height       int
 	lastActivity time.Time // tracks last user interaction for auto-lock
@@ -719,11 +721,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.handleSaveGroup(msg)
 
-	case SaveMsg:
+	case SaveAsStartMsg:
 		if m.readOnly {
 			return m, statusCmd("Read-only mode", true)
 		}
-		return m.handleSave()
+		m.pathInput = NewPathInputModel(m.filePath)
+		m.state = viewPathInput
+		return m, m.pathInput.Init()
+
+	case SaveAsMsg:
+		if m.readOnly {
+			m.state = viewBrowser
+			return m, statusCmd("Read-only mode", true)
+		}
+		return m.handleSaveAs(msg.Path)
 
 	case BackToBrowserMsg:
 		m.state = viewBrowser
@@ -838,6 +849,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var updated tea.Model
 		updated, cmd = m.help.Update(msg)
 		m.help = updated.(HelpModel)
+	case viewPathInput:
+		var updated tea.Model
+		updated, cmd = m.pathInput.Update(msg)
+		m.pathInput = updated.(PathInputModel)
 	}
 
 	return m, cmd
@@ -870,6 +885,8 @@ func (m AppModel) View() string {
 		view = m.audit.View()
 	case viewHelp:
 		view = m.help.View()
+	case viewPathInput:
+		view = m.pathInput.View()
 	}
 	return view + "\n" + m.statusBar()
 }
@@ -1061,12 +1078,16 @@ func (m AppModel) handleSaveGroup(msg SaveGroupMsg) (tea.Model, tea.Cmd) {
 	)
 }
 
-func (m AppModel) handleSave() (tea.Model, tea.Cmd) {
-	if err := m.db.Save(); err != nil {
+func (m AppModel) handleSaveAs(path string) (tea.Model, tea.Cmd) {
+	if err := m.db.SaveAs(path); err != nil {
+		m.state = viewBrowser
 		return m, statusCmd(fmt.Sprintf("Error saving: %s", err), true)
 	}
+	m.db.Path = path
+	m.filePath = path
 	m.dirty = false
-	return m, statusCmd("Database saved!", false)
+	m.state = viewBrowser
+	return m, statusCmd(fmt.Sprintf("Database saved as %s", filepath.Base(path)), false)
 }
 
 func statusCmd(text string, isError bool) tea.Cmd {
