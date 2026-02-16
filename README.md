@@ -167,6 +167,7 @@ All keybindings shown below are defaults and can be customized via the config fi
 | Key | Action |
 |-----|--------|
 | `Tab` / `Shift+Tab` | Navigate fields |
+| `Ctrl+R` | Toggle password/TOTP visibility |
 | `Ctrl+G` | Generate random password |
 | `Ctrl+P` | Generate diceware passphrase |
 | `Ctrl+A` | Add custom field |
@@ -254,6 +255,14 @@ Keybindings can be customized by adding a `keybindings` section to the config fi
 ```
 
 Run `keetui -config` to see all available keybinding names and their current values.
+
+## Development
+
+Enable the pre-commit hook to catch formatting issues before committing:
+
+```sh
+git config core.hooksPath .githooks
+```
 
 ## Security
 
