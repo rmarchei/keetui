@@ -20,7 +20,7 @@ CROSS_PLATFORMS := $(filter-out $(HOST_OS)-$(HOST_ARCH),$(PLATFORMS))
 
 PREFIX   ?= /usr/local
 
-.PHONY: build test lint all clean install $(CROSS_PLATFORMS)
+.PHONY: build test lint check all clean install $(CROSS_PLATFORMS)
 
 build: $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH)
 
@@ -66,6 +66,8 @@ lint:
 		test -z "$$(gofmt -l .)" || (echo "Files not formatted:"; gofmt -l .; exit 1); \
 		golangci-lint run ./...; \
 	fi
+
+check: lint test
 
 all: build $(CROSS_PLATFORMS)
 
