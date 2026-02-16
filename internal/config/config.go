@@ -73,10 +73,14 @@ func (c Config) PasswordLen() int {
 }
 
 // PasswordHasUppercase returns whether uppercase letters are included in generated passwords.
-func (c Config) PasswordHasUppercase() bool { return c.PasswordUppercase == nil || *c.PasswordUppercase }
+func (c Config) PasswordHasUppercase() bool {
+	return c.PasswordUppercase == nil || *c.PasswordUppercase
+}
 
 // PasswordHasLowercase returns whether lowercase letters are included in generated passwords.
-func (c Config) PasswordHasLowercase() bool { return c.PasswordLowercase == nil || *c.PasswordLowercase }
+func (c Config) PasswordHasLowercase() bool {
+	return c.PasswordLowercase == nil || *c.PasswordLowercase
+}
 
 // PasswordHasDigits returns whether digits are included in generated passwords.
 func (c Config) PasswordHasDigits() bool { return c.PasswordDigits == nil || *c.PasswordDigits }

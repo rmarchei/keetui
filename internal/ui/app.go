@@ -661,7 +661,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case DeleteAttachmentMsg:
 		m.confirm = NewConfirmModel(fmt.Sprintf("Delete attachment %q?", msg.Name), func() tea.Msg {
-			return confirmDeleteAttachmentMsg{EntryUUID: msg.EntryUUID, Name: msg.Name}
+			return confirmDeleteAttachmentMsg(msg)
 		})
 		m.returnState = viewDetail
 		m.state = viewConfirm
@@ -771,7 +771,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case autoLockMsg:
 		// Only lock if no activity since the timer was set
-		if m.state != viewUnlock && msg.at == m.lastActivity {
+		if m.state != viewUnlock && msg.at.Equal(m.lastActivity) {
 			if m.dirty && m.db != nil && !m.readOnly {
 				_ = m.db.Save()
 				m.dirty = false
@@ -1117,9 +1117,9 @@ func osc52Copy(text string) {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	b64 := base64.StdEncoding.EncodeToString([]byte(text))
-	fmt.Fprintf(f, "\033]52;c;%s\a", b64)
+	_, _ = fmt.Fprintf(f, "\033]52;c;%s\a", b64)
 }
 
 func copyToClipboard(text string) error {
@@ -1158,7 +1158,7 @@ func copyToClipboard(text string) error {
 	if _, err := pipe.Write([]byte(text)); err != nil {
 		return nil // OSC 52 already attempted
 	}
-	pipe.Close()
+	_ = pipe.Close()
 	_ = cmd.Wait() // best-effort; OSC 52 already attempted
 	return nil
 }

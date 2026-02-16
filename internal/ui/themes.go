@@ -115,10 +115,6 @@ func ApplyTheme(t Theme) {
 	hiddenStyle = lipgloss.NewStyle().
 		Foreground(mutedColor)
 
-	statusStyle = lipgloss.NewStyle().
-		Foreground(mutedColor).
-		Padding(0, 1)
-
 	successStyle = lipgloss.NewStyle().
 		Foreground(successColor).
 		Padding(0, 1)
@@ -133,11 +129,6 @@ func ApplyTheme(t Theme) {
 
 	helpStyle = lipgloss.NewStyle().
 		Foreground(mutedColor)
-
-	boxStyle = lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
-		Padding(1, 2)
 
 	focusedStyle = lipgloss.NewStyle().
 		Foreground(primaryColor)

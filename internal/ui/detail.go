@@ -52,19 +52,19 @@ type DetailModel struct {
 	entry          keepass.Entry
 	revealedFields map[string]bool // per-field password visibility, keyed by field label
 	showQR         bool
-	qrLabel      string // label of the field currently shown as QR
-	totpCode     string
-	totpRemain   int // seconds remaining in current TOTP period
-	width        int
-	height       int
-	copied       string
-	strength     keepass.StrengthResult
-	hibpChecking bool
-	hibpResult   *hibpResultMsg
-	attachments  []keepass.Attachment
-	viewport     viewport.Model
-	ready        bool // true after first size is set
-	cfg          config.Config
+	qrLabel        string // label of the field currently shown as QR
+	totpCode       string
+	totpRemain     int // seconds remaining in current TOTP period
+	width          int
+	height         int
+	copied         string
+	strength       keepass.StrengthResult
+	hibpChecking   bool
+	hibpResult     *hibpResultMsg
+	attachments    []keepass.Attachment
+	viewport       viewport.Model
+	ready          bool // true after first size is set
+	cfg            config.Config
 
 	readOnly bool // when true, edit and attachment mutations are suppressed
 
@@ -735,22 +735,22 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		fields := m.selectableFields()
 
-		switch {
-		case key == "j" || key == "down":
+		switch key {
+		case "j", "down":
 			if m.selectedField < len(fields)-1 {
 				m.selectedField++
 				m.refreshContentAndFollow()
 			}
 			return m, nil
 
-		case key == "k" || key == "up":
+		case "k", "up":
 			if m.selectedField > 0 {
 				m.selectedField--
 				m.refreshContentAndFollow()
 			}
 			return m, nil
 
-		case key == "enter":
+		case "enter":
 			// Copy selected field; if revealed and has a separate qrValue
 			// (e.g. TOTP secret), copy that instead of the display value.
 			if m.selectedField < len(fields) {
@@ -767,10 +767,10 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case key == "esc" || key == m.keys.Back || key == "left":
+		case "esc", m.keys.Back, "left":
 			return m, func() tea.Msg { return BackToBrowserMsg{} }
 
-		case key == m.keys.TogglePassword:
+		case m.keys.TogglePassword:
 			if m.selectedField < len(fields) {
 				f := fields[m.selectedField]
 				if f.protected {
@@ -782,7 +782,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case key == m.keys.Edit:
+		case m.keys.Edit:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -790,7 +790,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return EditEntryMsg{Entry: m.entry}
 			}
 
-		case key == m.keys.Attachments:
+		case m.keys.Attachments:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -814,29 +814,29 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case key == m.keys.CopyUsername:
+		case m.keys.CopyUsername:
 			return m, func() tea.Msg {
 				return CopyToClipboardMsg{Field: "username", Value: m.entry.UserName}
 			}
 
-		case key == m.keys.CopyPassword:
+		case m.keys.CopyPassword:
 			return m, func() tea.Msg {
 				return CopyToClipboardMsg{Field: "password", Value: m.entry.Password}
 			}
 
-		case key == m.keys.CopyURL:
+		case m.keys.CopyURL:
 			return m, func() tea.Msg {
 				return CopyToClipboardMsg{Field: "url", Value: m.entry.URL}
 			}
 
-		case key == m.keys.CopyTOTP:
+		case m.keys.CopyTOTP:
 			if m.totpCode != "" {
 				return m, func() tea.Msg {
 					return CopyToClipboardMsg{Field: "TOTP code", Value: m.totpCode}
 				}
 			}
 
-		case key == m.keys.HIBPCheck:
+		case m.keys.HIBPCheck:
 			// HIBP breach check
 			if !m.hibpChecking && m.entry.Password != "" {
 				m.hibpChecking = true
@@ -855,7 +855,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key == m.keys.ShowQR:
+		case m.keys.ShowQR:
 			if m.selectedField < len(fields) {
 				f := fields[m.selectedField]
 				val := f.qrValue
@@ -874,17 +874,17 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case key == m.keys.OpenURL:
+		case m.keys.OpenURL:
 			if m.entry.URL != "" {
 				return m, func() tea.Msg {
 					return OpenURLMsg{URL: m.entry.URL}
 				}
 			}
 
-		case key == "?":
+		case "?":
 			return m, func() tea.Msg { return ShowHelpMsg{} }
 
-		case key == m.keys.ShowHistory:
+		case m.keys.ShowHistory:
 			if m.entry.HistoryCount > 0 {
 				entryTitle := m.entry.Title
 				entryUUID := m.entry.UUID

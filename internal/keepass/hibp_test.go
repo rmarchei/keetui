@@ -11,9 +11,9 @@ func TestCheckHIBPBreached(t *testing.T) {
 	// SHA-1("password123") = CBFDAC6008F9CAB4083784CBD1874F76618D2A97
 	// prefix = CBFDA, suffix = C6008F9CAB4083784CBD1874F76618D2A97
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "0000000000000000000000000000000000000:1")
-		fmt.Fprintln(w, "C6008F9CAB4083784CBD1874F76618D2A97:42")
-		fmt.Fprintln(w, "1111111111111111111111111111111111111:5")
+		_, _ = fmt.Fprintln(w, "0000000000000000000000000000000000000:1")
+		_, _ = fmt.Fprintln(w, "C6008F9CAB4083784CBD1874F76618D2A97:42")
+		_, _ = fmt.Fprintln(w, "1111111111111111111111111111111111111:5")
 	}))
 	defer srv.Close()
 
@@ -31,9 +31,9 @@ func TestCheckHIBPBreached(t *testing.T) {
 
 func TestCheckHIBPSafe(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "0000000000000000000000000000000000000:1")
-		fmt.Fprintln(w, "1111111111111111111111111111111111111:5")
-		fmt.Fprintln(w, "2222222222222222222222222222222222222:3")
+		_, _ = fmt.Fprintln(w, "0000000000000000000000000000000000000:1")
+		_, _ = fmt.Fprintln(w, "1111111111111111111111111111111111111:5")
+		_, _ = fmt.Fprintln(w, "2222222222222222222222222222222222222:3")
 	}))
 	defer srv.Close()
 
@@ -70,8 +70,8 @@ func TestCheckHIBPNon200(t *testing.T) {
 
 func TestCheckHIBPMalformedResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "garbage data without colons")
-		fmt.Fprintln(w, "more nonsense")
+		_, _ = fmt.Fprintln(w, "garbage data without colons")
+		_, _ = fmt.Fprintln(w, "more nonsense")
 	}))
 	defer srv.Close()
 
@@ -87,7 +87,7 @@ func TestCheckHIBPMalformedResponse(t *testing.T) {
 func TestCheckHIBPCaseInsensitive(t *testing.T) {
 	// Return the suffix in lowercase to verify case-insensitive matching
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "c6008f9cab4083784cbd1874f76618d2a97:7")
+		_, _ = fmt.Fprintln(w, "c6008f9cab4083784cbd1874f76618d2a97:7")
 	}))
 	defer srv.Close()
 

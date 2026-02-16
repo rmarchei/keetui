@@ -53,13 +53,13 @@ func TestEvaluatePasswordStrengthAllDigits(t *testing.T) {
 
 func TestEvaluatePasswordStrengthCharClasses(t *testing.T) {
 	tests := []struct {
-		name      string
-		password  string
-		wantUpper bool
-		wantLower bool
-		wantDigit bool
+		name       string
+		password   string
+		wantUpper  bool
+		wantLower  bool
+		wantDigit  bool
 		wantSymbol bool
-		wantLen   int
+		wantLen    int
 	}{
 		{"mixed", "aB1!", true, true, true, true, 4},
 		{"lower only", "abcdef", false, true, false, false, 6},

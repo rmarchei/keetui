@@ -48,12 +48,16 @@ func (d *DB) writeGroupCSV(w *csv.Writer, g *Group, path string) error {
 }
 
 // ExportCSVFile is a convenience wrapper that writes CSV to a file.
-func (d *DB) ExportCSVFile(path string) error {
+func (d *DB) ExportCSVFile(path string) (err error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("create CSV file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close CSV file: %w", cerr)
+		}
+	}()
 	return d.ExportCSV(f)
 }
 
@@ -179,12 +183,16 @@ func (d *DB) findBinaryByName(entryUUID [16]byte, name string) []byte {
 }
 
 // ExportXMLFile is a convenience wrapper that writes XML to a file.
-func (d *DB) ExportXMLFile(path string) error {
+func (d *DB) ExportXMLFile(path string) (err error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return fmt.Errorf("create XML file: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close XML file: %w", cerr)
+		}
+	}()
 	return d.ExportXML(f)
 }
 
@@ -258,7 +266,7 @@ func (d *DB) ImportCSVFile(path string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("open CSV file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return d.ImportCSV(f)
 }
 
@@ -349,7 +357,7 @@ func (d *DB) ImportXMLFile(path string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("open XML file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return d.ImportXML(f)
 }
 

@@ -70,8 +70,8 @@ func TestExtractAttachmentAllowsSafePaths(t *testing.T) {
 	// Simple filename should work (used by UI)
 	origDir, _ := os.Getwd()
 	cwd := t.TempDir()
-	os.Chdir(cwd)
-	defer os.Chdir(origDir)
+	_ = os.Chdir(cwd)
+	defer func() { _ = os.Chdir(origDir) }()
 
 	err = db.ExtractAttachment(entry.UUID, "test.txt", "output.txt")
 	if err != nil {

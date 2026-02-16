@@ -39,13 +39,13 @@ func createTestDB(t *testing.T, path, password string) {
 		Groups: []gokeepasslib.Group{rootGroup},
 	}
 
-	db.LockProtectedEntries()
+	_ = db.LockProtectedEntries()
 
 	file, err := os.Create(path)
 	if err != nil {
 		t.Fatalf("create test db file: %v", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if err := gokeepasslib.NewEncoder(file).Encode(db); err != nil {
 		t.Fatalf("encode test db: %v", err)

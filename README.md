@@ -63,7 +63,8 @@ go build -o keetui ./cmd/keetui
 
 ```sh
 make                  # build for current OS/arch (uses container if available)
-make test             # run tests (uses container if available)
+make test             # run tests with race detector (uses container if available)
+make lint             # gofmt check + golangci-lint (uses container if available)
 make all              # cross-compile all platforms (requires docker/podman/container)
 make linux-amd64      # build a single target
 make install          # install to /usr/local/bin
