@@ -29,6 +29,8 @@ type KeyBindings struct {
 	ShowSettings   string `json:"show_settings,omitempty"`
 	ChangePassword string `json:"change_password,omitempty"`
 	Favorite       string `json:"favorite,omitempty"`
+	CycleSort      string `json:"cycle_sort,omitempty"`
+	FilterTag      string `json:"filter_tag,omitempty"`
 	Quit           string `json:"quit,omitempty"`
 
 	// Detail view
@@ -72,6 +74,8 @@ func DefaultKeyBindings() KeyBindings {
 		ShowSettings:   "c",
 		ChangePassword: "P",
 		Favorite:       "f",
+		CycleSort:      "S",
+		FilterTag:      "t",
 		Quit:           "q",
 
 		TogglePassword: "p",
@@ -147,6 +151,12 @@ func (kb KeyBindings) Merge(defaults KeyBindings) KeyBindings {
 	if kb.Favorite == "" {
 		kb.Favorite = defaults.Favorite
 	}
+	if kb.CycleSort == "" {
+		kb.CycleSort = defaults.CycleSort
+	}
+	if kb.FilterTag == "" {
+		kb.FilterTag = defaults.FilterTag
+	}
 	if kb.Quit == "" {
 		kb.Quit = defaults.Quit
 	}
@@ -220,6 +230,8 @@ func (kb KeyBindings) Validate() error {
 	addKey(browser, kb.ShowAudit, "show_audit")
 	addKey(browser, kb.ShowSettings, "show_settings")
 	addKey(browser, kb.Favorite, "favorite")
+	addKey(browser, kb.CycleSort, "cycle_sort")
+	addKey(browser, kb.FilterTag, "filter_tag")
 	addKey(browser, kb.ChangePassword, "change_password")
 	addKey(browser, kb.Quit, "quit")
 
@@ -285,6 +297,8 @@ func (kb KeyBindings) String() string {
 		{"show_audit", kb.ShowAudit},
 		{"show_settings", kb.ShowSettings},
 		{"favorite", kb.Favorite},
+		{"cycle_sort", kb.CycleSort},
+		{"filter_tag", kb.FilterTag},
 		{"change_password", kb.ChangePassword},
 		{"quit", kb.Quit},
 	})

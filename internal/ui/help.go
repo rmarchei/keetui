@@ -70,6 +70,8 @@ func (m HelpModel) buildContent() string {
 		{k.Delete, "Delete entry/group"},
 		{k.Duplicate, "Duplicate entry"},
 		{k.Favorite, "Toggle favorite"},
+		{k.CycleSort, "Cycle sort (name/modified/created)"},
+		{k.FilterTag, "Filter by tag"},
 		{k.Cut, "Cut entry/group"},
 		{k.Paste, "Paste entry/group"},
 		{k.Save + "/ctrl+s", "Save database"},
