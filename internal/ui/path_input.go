@@ -2,6 +2,7 @@ package ui
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -80,6 +81,7 @@ func (m PathInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					path = home + path[1:]
 				}
 			}
+			path = filepath.Clean(path)
 			upgrade := m.canUpgrade && m.upgrade
 			return m, func() tea.Msg {
 				return SaveAsMsg{Path: path, Upgrade: upgrade}
