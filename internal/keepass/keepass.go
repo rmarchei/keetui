@@ -330,6 +330,53 @@ func createBackup(path string) error {
 	return nil
 }
 
+// IsKdbx4 returns true if the database is in KDBX 4 format.
+func (d *DB) IsKdbx4() bool {
+	return d.Database.Header.IsKdbx4()
+}
+
+// FormatVersion returns a human-readable string describing the database format.
+func (d *DB) FormatVersion() string {
+	if d.Database.Header.IsKdbx4() {
+		return "KDBX 4 (Argon2)"
+	}
+	return "KDBX 3.1 (AES)"
+}
+
+// ConvertToKDBX4 upgrades a KDBX 3.1 database to KDBX 4 format in memory.
+// The caller must save the database afterward to persist the change.
+func (d *DB) ConvertToKDBX4() error {
+	if d.Database.Header.IsKdbx4() {
+		return fmt.Errorf("database is already KDBX 4 format")
+	}
+
+	// Extract raw binary contents before changing format.
+	// KDBX 3.1 stores binaries as base64+gzip in Meta.Binaries;
+	// KDBX 4 stores them as raw bytes in InnerHeader.Binaries.
+	var binaryContents [][]byte
+	for _, b := range d.Database.Content.Meta.Binaries {
+		content, err := b.GetContentBytes()
+		if err != nil {
+			return fmt.Errorf("read binary %d: %w", b.ID, err)
+		}
+		binaryContents = append(binaryContents, content)
+	}
+
+	// Switch to KDBX 4: replaces header (Argon2, ChaCha20) and
+	// creates InnerHeader with ChaCha20 random stream key.
+	gokeepasslib.WithDatabaseKDBXVersion4()(d.Database)
+
+	// Re-add binaries — AddBinary now routes to InnerHeader for KDBX 4.
+	for _, content := range binaryContents {
+		d.Database.AddBinary(content)
+	}
+
+	// Clear stale Meta.Binaries to avoid duplication on save.
+	d.Database.Content.Meta.Binaries = nil
+
+	return nil
+}
+
 // ChangePassword updates the master password of the database.
 func (d *DB) ChangePassword(newPassword string) {
 	d.Database.Credentials = gokeepasslib.NewPasswordCredentials(newPassword)
