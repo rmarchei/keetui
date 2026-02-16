@@ -8,6 +8,7 @@ import (
 type DBStats struct {
 	FilePath        string
 	FileSize        int64
+	FormatVersion   string
 	TotalGroups     int
 	TotalEntries    int
 	WeakPasswords   int
@@ -19,7 +20,8 @@ type DBStats struct {
 // Stats computes statistics about the database.
 func (d *DB) Stats() DBStats {
 	stats := DBStats{
-		FilePath: d.Path,
+		FilePath:      d.Path,
+		FormatVersion: d.FormatVersion(),
 	}
 
 	if info, err := os.Stat(d.Path); err == nil {

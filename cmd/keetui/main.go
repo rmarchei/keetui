@@ -32,6 +32,7 @@ func main() {
 	mergeDB := flag.String("merge", "", "merge entries from another .kdbx file")
 	dryRun := flag.Bool("dry-run", false, "preview changes without modifying (use with --merge)")
 	readOnly := flag.Bool("read-only", false, "open database in read-only mode")
+	upgradeKDBX4 := flag.Bool("upgrade-kdbx4", false, "upgrade database from KDBX 3.1 to KDBX 4 format")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "keetui - a TUI for KeePass databases\n\n")
 		fmt.Fprintf(os.Stderr, "Usage: keetui [options] <database.kdbx>\n\n")
@@ -142,13 +143,13 @@ func main() {
 	}
 
 	// Block mutating batch operations in read-only mode
-	if *readOnly && (*importCSV != "" || *importXML != "" || (*mergeDB != "" && !*dryRun)) {
-		fmt.Fprintln(os.Stderr, "Error: import and merge are not allowed in read-only mode")
+	if *readOnly && (*importCSV != "" || *importXML != "" || (*mergeDB != "" && !*dryRun) || *upgradeKDBX4) {
+		fmt.Fprintln(os.Stderr, "Error: import, merge, and upgrade are not allowed in read-only mode")
 		os.Exit(1)
 	}
 
-	// Handle non-interactive commands (export, import, merge)
-	isBatchOp := *exportCSV != "" || *exportXML != "" || *importCSV != "" || *importXML != "" || *mergeDB != ""
+	// Handle non-interactive commands (export, import, merge, upgrade)
+	isBatchOp := *exportCSV != "" || *exportXML != "" || *importCSV != "" || *importXML != "" || *mergeDB != "" || *upgradeKDBX4
 	if isBatchOp {
 		db := openDBForBatch(dbPath, *keyFile)
 
@@ -216,6 +217,22 @@ func main() {
 				fmt.Printf("Merged: %d added, %d updated, %d unchanged, %d groups created\n",
 					result.EntriesAdded, result.EntriesUpdated, result.EntriesSkipped, result.GroupsCreated)
 			}
+		}
+
+		if *upgradeKDBX4 {
+			if db.IsKdbx4() {
+				fmt.Fprintln(os.Stderr, "Database is already KDBX 4 format")
+				os.Exit(0)
+			}
+			if err := db.ConvertToKDBX4(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error upgrading to KDBX 4: %v\n", err)
+				os.Exit(1)
+			}
+			if err := db.Save(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error saving after upgrade: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Printf("Upgraded %s to KDBX 4 (Argon2) format\n", dbPath)
 		}
 
 		os.Exit(0)

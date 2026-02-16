@@ -64,6 +64,10 @@ func (m StatsModel) View() string {
 		valueStyle.Render(formatSize(m.stats.FileSize))))
 
 	b.WriteString(fmt.Sprintf("  %s %s\n",
+		labelStyle.Render("Format:"),
+		valueStyle.Render(m.stats.FormatVersion)))
+
+	b.WriteString(fmt.Sprintf("  %s %s\n",
 		labelStyle.Render("Groups:"),
 		valueStyle.Render(fmt.Sprintf("%d", m.stats.TotalGroups))))
 

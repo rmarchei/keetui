@@ -33,6 +33,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Recycle bin support -- deleted items go to recycle bin, with restore and permanent delete
 - Database stats and batch password audit (weak, reused, empty, expired)
 - Import/export (CSV, XML) and merge from other `.kdbx` files (with `--dry-run` preview)
+- Upgrade KDBX 3.1 (AES) databases to KDBX 4 (Argon2) format via TUI or CLI
 - Change database master password
 - Undo last action with `Ctrl+Z` (delete, edit, move, rename, duplicate, add)
 - Status bar showing database name, entry count, and modified state
@@ -111,6 +112,16 @@ keetui --merge other.kdbx --dry-run database.kdbx  # preview without modifying
 - **XML** format preserves group hierarchy, custom fields, and attachments
 - **Merge** matches entries by UUID; newer entries overwrite older ones; new groups are created as needed. Use `--dry-run` to preview changes without modifying the database
 
+### Format Upgrade
+
+Upgrade a KDBX 3.1 (AES) database to KDBX 4 (Argon2) format:
+
+```sh
+keetui --upgrade-kdbx4 database.kdbx
+```
+
+You can also upgrade from the TUI: press `s` to open the save dialog, then `Tab` to the format selector and choose KDBX 4 (Argon2) before saving.
+
 ## Keyboard Shortcuts
 
 All keybindings shown below are defaults and can be customized via the config file (see [Keybindings](#keybindings)).
@@ -138,7 +149,7 @@ All keybindings shown below are defaults and can be customized via the config fi
 | `c` | Settings |
 | `P` | Change master password |
 | `Ctrl+Z` | Undo last action |
-| `s` / `Ctrl+S` | Save database (edit path to save as new file) |
+| `s` / `Ctrl+S` | Save database (edit path, select format) |
 | `?` | Keyboard shortcut help |
 | `q` | Quit |
 

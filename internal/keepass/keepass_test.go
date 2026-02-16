@@ -2216,3 +2216,103 @@ func TestToggleFavorite(t *testing.T) {
 		t.Error("entry should not be a favorite after toggle off")
 	}
 }
+
+func TestConvertToKDBX4(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Should start as KDBX 3.1
+	if db.IsKdbx4() {
+		t.Fatal("newly created DB should be KDBX 3.1")
+	}
+	if db.FormatVersion() != "KDBX 3.1 (AES)" {
+		t.Errorf("FormatVersion = %q, want %q", db.FormatVersion(), "KDBX 3.1 (AES)")
+	}
+
+	// Convert
+	if err := db.ConvertToKDBX4(); err != nil {
+		t.Fatalf("ConvertToKDBX4: %v", err)
+	}
+
+	if !db.IsKdbx4() {
+		t.Fatal("DB should be KDBX 4 after conversion")
+	}
+	if db.FormatVersion() != "KDBX 4 (Argon2)" {
+		t.Errorf("FormatVersion = %q, want %q", db.FormatVersion(), "KDBX 4 (Argon2)")
+	}
+
+	// Save and reopen
+	savePath := filepath.Join(dir, "converted.kdbx")
+	if err := db.SaveAs(savePath); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open converted: %v", err)
+	}
+
+	if !db2.IsKdbx4() {
+		t.Fatal("reopened DB should be KDBX 4")
+	}
+
+	// Verify entries are intact
+	root := db2.RootGroup()
+	if root.Name != "Root" {
+		t.Errorf("root name = %q, want %q", root.Name, "Root")
+	}
+	if len(root.Groups) != 1 {
+		t.Fatalf("root groups = %d, want 1", len(root.Groups))
+	}
+	if root.Groups[0].Name != "Email" {
+		t.Errorf("group name = %q, want %q", root.Groups[0].Name, "Email")
+	}
+	if len(root.Groups[0].Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(root.Groups[0].Entries))
+	}
+	entry := root.Groups[0].Entries[0]
+	if entry.Title != "Test Entry" {
+		t.Errorf("title = %q, want %q", entry.Title, "Test Entry")
+	}
+	if entry.UserName != "testuser" {
+		t.Errorf("username = %q, want %q", entry.UserName, "testuser")
+	}
+	if entry.Password != "testpass" {
+		t.Errorf("password = %q, want %q", entry.Password, "testpass")
+	}
+}
+
+func TestConvertToKDBX4AlreadyV4(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	// Convert first time
+	if err := db.ConvertToKDBX4(); err != nil {
+		t.Fatalf("ConvertToKDBX4: %v", err)
+	}
+
+	// Second conversion should fail
+	err = db.ConvertToKDBX4()
+	if err == nil {
+		t.Fatal("expected error converting already-KDBX4 database")
+	}
+	if !strings.Contains(err.Error(), "already KDBX 4") {
+		t.Errorf("error = %q, want message about already KDBX 4", err.Error())
+	}
+}

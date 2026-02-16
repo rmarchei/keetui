@@ -725,7 +725,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.readOnly {
 			return m, statusCmd("Read-only mode", true)
 		}
-		m.pathInput = NewPathInputModel(m.filePath)
+		m.pathInput = NewPathInputModel(m.filePath, m.db.FormatVersion(), !m.db.IsKdbx4() && !m.readOnly)
 		m.state = viewPathInput
 		return m, m.pathInput.Init()
 
@@ -734,7 +734,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = viewBrowser
 			return m, statusCmd("Read-only mode", true)
 		}
-		return m.handleSaveAs(msg.Path)
+		return m.handleSaveAs(msg.Path, msg.Upgrade)
 
 	case BackToBrowserMsg:
 		m.state = viewBrowser
@@ -1078,7 +1078,13 @@ func (m AppModel) handleSaveGroup(msg SaveGroupMsg) (tea.Model, tea.Cmd) {
 	)
 }
 
-func (m AppModel) handleSaveAs(path string) (tea.Model, tea.Cmd) {
+func (m AppModel) handleSaveAs(path string, upgrade bool) (tea.Model, tea.Cmd) {
+	if upgrade {
+		if err := m.db.ConvertToKDBX4(); err != nil {
+			m.state = viewBrowser
+			return m, statusCmd(fmt.Sprintf("Error upgrading: %s", err), true)
+		}
+	}
 	if err := m.db.SaveAs(path); err != nil {
 		m.state = viewBrowser
 		return m, statusCmd(fmt.Sprintf("Error saving: %s", err), true)
@@ -1087,7 +1093,11 @@ func (m AppModel) handleSaveAs(path string) (tea.Model, tea.Cmd) {
 	m.filePath = path
 	m.dirty = false
 	m.state = viewBrowser
-	return m, statusCmd(fmt.Sprintf("Database saved as %s", filepath.Base(path)), false)
+	msg := fmt.Sprintf("Database saved as %s", filepath.Base(path))
+	if upgrade {
+		msg = fmt.Sprintf("Upgraded to KDBX 4 and saved as %s", filepath.Base(path))
+	}
+	return m, statusCmd(msg, false)
 }
 
 func statusCmd(text string, isError bool) tea.Cmd {

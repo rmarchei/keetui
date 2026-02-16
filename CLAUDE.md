@@ -77,10 +77,10 @@ keetui/
 
 The application follows the **Bubble Tea Model-View-Update (MVU)** pattern:
 
-- **`internal/keepass`** — Pure data layer. Wraps `gokeepasslib` with a simplified API (`Open`, `Save`, `SaveAs`, `AddEntry`, `UpdateEntry`, `DeleteEntry`, `AddGroup`, `DeleteGroup`, `Merge`, `MergePreview`, etc.). No TUI dependencies.
+- **`internal/keepass`** — Pure data layer. Wraps `gokeepasslib` with a simplified API (`Open`, `Save`, `SaveAs`, `AddEntry`, `UpdateEntry`, `DeleteEntry`, `AddGroup`, `DeleteGroup`, `Merge`, `MergePreview`, `ConvertToKDBX4`, etc.). No TUI dependencies.
 - **`internal/config`** — Configuration and keybinding management. Loads/saves JSON config, provides defaults, validates settings.
 - **`internal/ui`** — TUI layer. Each screen is a separate Bubble Tea model. The `AppModel` in `app.go` orchestrates view switching via message passing.
-- **`cmd/keetui`** — CLI entry point. Parses flags, handles headless operations (import/export/merge), and launches the TUI program.
+- **`cmd/keetui`** — CLI entry point. Parses flags, handles headless operations (import/export/merge/upgrade), and launches the TUI program.
 
 ### View Flow
 
@@ -120,6 +120,7 @@ make                                    # build via Makefile (uses container if 
 ./keetui database.kdbx
 ./keetui -keyfile key.key database.kdbx
 ./keetui -config                        # print config path and current settings
+./keetui --upgrade-kdbx4 database.kdbx  # upgrade KDBX 3.1 → 4
 ```
 
 ### Testing
