@@ -125,9 +125,13 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 
 ## Git Conventions
 
-- **Default branch**: `master`
+- **Default branch**: `main`
 - Write clear, imperative commit messages (e.g., "Add entry deletion with confirmation")
 - Keep commits focused on a single logical change
+
+## Related Repositories
+
+- **Homebrew tap**: [rmarchei/homebrew-keetui](https://github.com/rmarchei/homebrew-keetui) — Homebrew formula for installing keetui. Update the formula (`Formula/keetui.rb`) with new version and SHA256 checksums after each release.
 
 ## Key Notes for AI Assistants
 
