@@ -7,9 +7,12 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Unlock `.kdbx` databases with password or password + key file
 - Create new `.kdbx` databases from scratch
 - Browse groups and entries with vim-style navigation
-- Search entries across all groups by title or username
+- Search entries across all groups with fuzzy matching (searches title, username, URL, notes, custom fields)
 - Favorite/pin entries -- mark entries with `f` key, shown first with `[*]` indicator (uses KeePass Tags)
-- Entries sorted alphabetically (favorites first, then groups, then entries)
+- Tag filtering -- cycle through tags with `t` to filter entries by any KeePass tag
+- Sort options -- cycle through name, modification date, or creation date with `S`
+- Entry count per group -- groups show recursive entry count (e.g., `[+] Email (3)`)
+- Entries sorted alphabetically by default (favorites first, then groups, then entries)
 - View entry details (username, password, URL, notes, custom fields)
 - Per-field password toggle -- reveal individual protected fields independently
 - TOTP/2FA support -- live code display with countdown, compatible with KeePassXC and KeePass2
@@ -116,7 +119,9 @@ All keybindings shown below are defaults and can be customized via the config fi
 | `j` / `k` | Navigate up/down |
 | `Enter` / `l` | Open group or view entry |
 | `Esc` / `h` | Go back |
-| `/` | Search entries by title/username |
+| `/` | Search entries (fuzzy, all fields) |
+| `S` | Cycle sort mode (name/modified/created) |
+| `t` | Filter by tag (cycle through tags) |
 | `n` | New entry |
 | `g` | New group |
 | `r` | Rename group (when cursor is on a group) |
@@ -178,7 +183,7 @@ When browsing inside the recycle bin group, these additional keys are available:
 
 ## Search
 
-Press `/` in the browser to search across all entries in the database. Matches filter by title and username. Press `Enter` to confirm the search results or `Esc` to cancel.
+Press `/` in the browser to search across all entries in the database. Matches filter by title, username, URL, notes, and custom fields. Fuzzy matching is supported — typing "git" will match "GitHub". Exact substring matches are shown first, followed by fuzzy matches. Press `Enter` to confirm the search results or `Esc` to cancel.
 
 ## TOTP Support
 

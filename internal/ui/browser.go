@@ -35,6 +35,27 @@ type stackFrame struct {
 	offset int
 }
 
+// sortMode determines how entries are ordered in the browser.
+type sortMode int
+
+const (
+	sortByName     sortMode = iota // alphabetical (default)
+	sortByModified                 // newest modification first
+	sortByCreated                  // newest creation first
+	sortModeCount                  // sentinel for cycling
+)
+
+func (s sortMode) String() string {
+	switch s {
+	case sortByModified:
+		return "modified"
+	case sortByCreated:
+		return "created"
+	default:
+		return "name"
+	}
+}
+
 // BrowserModel handles navigation through groups and entries.
 type BrowserModel struct {
 	db          *keepass.DB
@@ -53,6 +74,9 @@ type BrowserModel struct {
 	cutGroup    *gokeepasslib.UUID // group UUID in the clipboard for move
 	keys        config.KeyBindings
 	readOnly    bool
+	sortBy      sortMode
+	tagFilter   string   // active tag filter (empty = no filter)
+	allTags     []string // cached unique tags for cycling
 }
 
 // ViewEntryMsg requests viewing the detail of an entry.
@@ -145,25 +169,28 @@ func NewBrowserModel(db *keepass.DB, keys ...config.KeyBindings) BrowserModel {
 	return m
 }
 
-func buildItems(g keepass.Group, rbUUID gokeepasslib.UUID) []listItem {
+func buildItems(g keepass.Group, rbUUID gokeepasslib.UUID, mode sortMode, tagFilter string) []listItem {
 	var items []listItem
 	for _, sg := range g.Groups {
 		items = append(items, listItem{isGroup: true, group: sg})
 	}
 	for _, e := range g.Entries {
+		if tagFilter != "" && !entryHasTag(e, tagFilter) {
+			continue
+		}
 		items = append(items, listItem{isGroup: false, entry: e})
 	}
-	sortItems(items, rbUUID)
+	sortItems(items, rbUUID, mode)
 	return items
 }
 
 func (m BrowserModel) buildItemsWithDB(g keepass.Group) []listItem {
-	return buildItems(g, m.db.RecycleBinUUID())
+	return buildItems(g, m.db.RecycleBinUUID(), m.sortBy, m.tagFilter)
 }
 
-func sortItems(items []listItem, rbUUID gokeepasslib.UUID) {
+func sortItems(items []listItem, rbUUID gokeepasslib.UUID, mode sortMode) {
 	sort.SliceStable(items, func(i, j int) bool {
-		// Groups first, then entries; alphabetical within each category
+		// Groups first, then entries
 		if items[i].isGroup != items[j].isGroup {
 			return items[i].isGroup
 		}
@@ -183,8 +210,70 @@ func sortItems(items []listItem, rbUUID gokeepasslib.UUID) {
 				return iFav
 			}
 		}
+		// Sort entries by selected mode; groups always sort by name
+		if !items[i].isGroup && !items[j].isGroup {
+			switch mode {
+			case sortByModified:
+				ti := items[i].entry.ModificationTime
+				tj := items[j].entry.ModificationTime
+				if !ti.Equal(tj) {
+					return ti.After(tj) // newest first
+				}
+			case sortByCreated:
+				ti := items[i].entry.CreationTime
+				tj := items[j].entry.CreationTime
+				if !ti.Equal(tj) {
+					return ti.After(tj) // newest first
+				}
+			}
+		}
 		return strings.ToLower(items[i].name()) < strings.ToLower(items[j].name())
 	})
+}
+
+// countEntries recursively counts all entries within a group.
+func countEntries(g keepass.Group) int {
+	count := len(g.Entries)
+	for _, sg := range g.Groups {
+		count += countEntries(sg)
+	}
+	return count
+}
+
+// collectTags returns all unique, non-empty tags from every entry in the database.
+func collectTags(g keepass.Group) []string {
+	seen := map[string]bool{}
+	var walk func(keepass.Group)
+	walk = func(g keepass.Group) {
+		for _, e := range g.Entries {
+			for _, t := range strings.Split(e.Tags, ";") {
+				t = strings.TrimSpace(t)
+				if t != "" {
+					seen[t] = true
+				}
+			}
+		}
+		for _, sg := range g.Groups {
+			walk(sg)
+		}
+	}
+	walk(g)
+	var tags []string
+	for t := range seen {
+		tags = append(tags, t)
+	}
+	sort.Strings(tags)
+	return tags
+}
+
+// entryHasTag returns true if the entry's tags contain the given tag.
+func entryHasTag(e keepass.Entry, tag string) bool {
+	for _, t := range strings.Split(e.Tags, ";") {
+		if strings.TrimSpace(t) == tag {
+			return true
+		}
+	}
+	return false
 }
 
 // collectAllEntries recursively gathers all entries from a group tree.
@@ -242,24 +331,85 @@ func (m BrowserModel) visibleHeight() int {
 	return h
 }
 
+// fuzzyMatch returns true if all characters in pattern appear in s in order (case-insensitive).
+func fuzzyMatch(s, pattern string) bool {
+	if len(pattern) == 0 {
+		return true
+	}
+	s = strings.ToLower(s)
+	pi := 0
+	for _, r := range s {
+		if r == rune(pattern[pi]) {
+			pi++
+			if pi == len(pattern) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// entryMatchesSubstring returns true if query is a substring of any searchable field.
+func entryMatchesSubstring(item listItem, query string) bool {
+	if strings.Contains(strings.ToLower(item.name()), query) {
+		return true
+	}
+	if item.isGroup {
+		return false
+	}
+	e := item.entry
+	if strings.Contains(strings.ToLower(e.UserName), query) ||
+		strings.Contains(strings.ToLower(e.URL), query) ||
+		strings.Contains(strings.ToLower(e.Notes), query) {
+		return true
+	}
+	for _, cf := range e.CustomFields {
+		if strings.Contains(strings.ToLower(cf.Value), query) ||
+			strings.Contains(strings.ToLower(cf.Key), query) {
+			return true
+		}
+	}
+	return false
+}
+
+// entryMatchesFuzzy returns true if query fuzzy-matches any searchable field.
+func entryMatchesFuzzy(item listItem, query string) bool {
+	if fuzzyMatch(item.name(), query) {
+		return true
+	}
+	if item.isGroup {
+		return false
+	}
+	e := item.entry
+	if fuzzyMatch(e.UserName, query) ||
+		fuzzyMatch(e.URL, query) ||
+		fuzzyMatch(e.Notes, query) {
+		return true
+	}
+	for _, cf := range e.CustomFields {
+		if fuzzyMatch(cf.Value, query) || fuzzyMatch(cf.Key, query) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *BrowserModel) applySearch() {
 	query := strings.ToLower(m.searchInput.Value())
 	m.searchQuery = query
 	if query == "" {
 		m.items = m.allItems
 	} else {
-		var filtered []listItem
+		// Exact substring matches first, then fuzzy matches
+		var exact, fuzzy []listItem
 		for _, item := range m.allItems {
-			n := strings.ToLower(item.name())
-			u := ""
-			if !item.isGroup {
-				u = strings.ToLower(item.entry.UserName)
-			}
-			if strings.Contains(n, query) || strings.Contains(u, query) {
-				filtered = append(filtered, item)
+			if entryMatchesSubstring(item, query) {
+				exact = append(exact, item)
+			} else if len(query) > 1 && entryMatchesFuzzy(item, query) {
+				fuzzy = append(fuzzy, item)
 			}
 		}
-		m.items = filtered
+		m.items = append(exact, fuzzy...)
 	}
 	m.cursor = 0
 	m.offset = 0
@@ -291,7 +441,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.searchQuery != "" {
 			// Re-run the search to preserve results
 			m.allItems = collectAllEntries(root)
-			sortItems(m.allItems, m.db.RecycleBinUUID())
+			sortItems(m.allItems, m.db.RecycleBinUUID(), m.sortBy)
 			m.searchInput.SetValue(m.searchQuery)
 			m.applySearch()
 		} else {
@@ -427,7 +577,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.keys.Search:
 			m.searching = true
 			m.allItems = collectAllEntries(m.db.RootGroup())
-			sortItems(m.allItems, m.db.RecycleBinUUID())
+			sortItems(m.allItems, m.db.RecycleBinUUID(), m.sortBy)
 			m.searchInput.SetValue("")
 			m.searchInput.Focus()
 			m.items = m.allItems
@@ -690,6 +840,43 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case key == m.keys.CycleSort:
+			m.sortBy = (m.sortBy + 1) % sortModeCount
+			if m.searchQuery != "" {
+				sortItems(m.items, m.db.RecycleBinUUID(), m.sortBy)
+			} else {
+				m.items = m.buildItemsWithDB(m.currentGroup())
+			}
+			m.cursor = 0
+			m.offset = 0
+
+		case key == m.keys.FilterTag:
+			m.allTags = collectTags(m.db.RootGroup())
+			if len(m.allTags) == 0 {
+				m.status = helpStyle.Render("No tags found")
+				break
+			}
+			if m.tagFilter == "" {
+				m.tagFilter = m.allTags[0]
+			} else {
+				// Advance to next tag, or clear
+				idx := -1
+				for i, t := range m.allTags {
+					if t == m.tagFilter {
+						idx = i
+						break
+					}
+				}
+				if idx >= 0 && idx < len(m.allTags)-1 {
+					m.tagFilter = m.allTags[idx+1]
+				} else {
+					m.tagFilter = ""
+				}
+			}
+			m.items = m.buildItemsWithDB(m.currentGroup())
+			m.cursor = 0
+			m.offset = 0
+
 		case key == m.keys.Save || key == "ctrl+s":
 			if m.readOnly {
 				m.status = errorMsgStyle.Render("Read-only mode")
@@ -713,7 +900,18 @@ func (m BrowserModel) View() string {
 	if m.searchQuery != "" && !m.searching {
 		b.WriteString(breadcrumbStyle.Render(fmt.Sprintf("Search: %q", m.searchQuery)))
 	} else {
-		b.WriteString(breadcrumbStyle.Render(m.breadcrumb()))
+		bc := m.breadcrumb()
+		var indicators []string
+		if m.sortBy != sortByName {
+			indicators = append(indicators, "sort: "+m.sortBy.String())
+		}
+		if m.tagFilter != "" {
+			indicators = append(indicators, "tag: "+m.tagFilter)
+		}
+		if len(indicators) > 0 {
+			bc += hiddenStyle.Render("  ["+strings.Join(indicators, ", ")+"]")
+		}
+		b.WriteString(breadcrumbStyle.Render(bc))
 	}
 	b.WriteString("\n\n")
 
@@ -749,10 +947,12 @@ func (m BrowserModel) View() string {
 					icon = groupStyle.Render("[x] ")
 				}
 				name := item.name()
+				count := countEntries(item.group)
+				suffix := hiddenStyle.Render(fmt.Sprintf(" (%d)", count))
 				if i == m.cursor {
-					line = fmt.Sprintf("%s%s%s", cursor, icon, selectedItemStyle.Render(name))
+					line = fmt.Sprintf("%s%s%s%s", cursor, icon, selectedItemStyle.Render(name), suffix)
 				} else {
-					line = fmt.Sprintf("%s%s%s", cursor, icon, groupStyle.Render(name))
+					line = fmt.Sprintf("%s%s%s%s", cursor, icon, groupStyle.Render(name), suffix)
 				}
 			} else {
 				icon := "    "
@@ -799,9 +999,9 @@ func (m BrowserModel) View() string {
 	if m.searching {
 		b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
 	} else if m.readOnly {
-		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: info  %s: audit  %s: quit",
+		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: sort  %s: tag  %s: info  %s: audit  %s: quit",
 			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
-			m.keys.Search, m.keys.ShowStats, m.keys.ShowAudit, m.keys.Quit)
+			m.keys.Search, m.keys.CycleSort, m.keys.FilterTag, m.keys.ShowStats, m.keys.ShowAudit, m.keys.Quit)
 		b.WriteString(helpStyle.Render(help))
 	} else if m.inRecycleBin() {
 		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: delete permanently  %s: restore  %s: empty bin  %s: save  %s: quit",
@@ -810,9 +1010,9 @@ func (m BrowserModel) View() string {
 			m.keys.Save, m.keys.Quit)
 		b.WriteString(helpStyle.Render(help))
 	} else {
-		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: new  %s: group  %s: rename  %s: dup  %s: fav  %s: cut  %s: paste  %s: del  %s: info  %s: audit  %s: config  %s: save  %s: password  %s: quit",
+		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: sort  %s: tag  %s: new  %s: group  %s: rename  %s: dup  %s: fav  %s: cut  %s: paste  %s: del  %s: info  %s: audit  %s: config  %s: save  %s: password  %s: quit",
 			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
-			m.keys.Search, m.keys.NewEntry, m.keys.NewGroup,
+			m.keys.Search, m.keys.CycleSort, m.keys.FilterTag, m.keys.NewEntry, m.keys.NewGroup,
 			m.keys.RenameGroup, m.keys.Duplicate, m.keys.Favorite, m.keys.Cut, m.keys.Paste,
 			m.keys.Delete, m.keys.ShowStats, m.keys.ShowAudit,
 			m.keys.ShowSettings, m.keys.Save, m.keys.ChangePassword, m.keys.Quit)
