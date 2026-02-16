@@ -43,18 +43,18 @@ type maskPasswordMsg struct {
 
 // EditorModel handles creating or editing an entry.
 type EditorModel struct {
-	inputs       [fixedFieldCount]textinput.Model
-	customInputs []customFieldInput
-	focused      int
-	isNew        bool
-	entryUUID    gokeepasslib.UUID
-	groupUUID    gokeepasslib.UUID
-	width        int
-	height       int
-	err          error
-	generated    bool // true after password was auto-generated
-	cfg          config.Config
-	revealSeq    int  // incremented on each keystroke that triggers auto-reveal
+	inputs        [fixedFieldCount]textinput.Model
+	customInputs  []customFieldInput
+	focused       int
+	isNew         bool
+	entryUUID     gokeepasslib.UUID
+	groupUUID     gokeepasslib.UUID
+	width         int
+	height        int
+	err           error
+	generated     bool // true after password was auto-generated
+	cfg           config.Config
+	revealSeq     int  // incremented on each keystroke that triggers auto-reveal
 	persistReveal bool // true when ctrl+r was used to persistently show password
 }
 
@@ -413,13 +413,13 @@ func (m EditorModel) save() (tea.Model, tea.Cmd) {
 	}
 	return m, func() tea.Msg {
 		entry := keepass.Entry{
-			Title:    title,
-			UserName: m.inputs[fieldUserName].Value(),
-			Password: m.inputs[fieldPassword].Value(),
-			URL:      m.inputs[fieldURL].Value(),
-			Notes:    m.inputs[fieldNotes].Value(),
-			TOTP:     m.inputs[fieldTOTP].Value(),
-			Expires:  hasExpiry,
+			Title:      title,
+			UserName:   m.inputs[fieldUserName].Value(),
+			Password:   m.inputs[fieldPassword].Value(),
+			URL:        m.inputs[fieldURL].Value(),
+			Notes:      m.inputs[fieldNotes].Value(),
+			TOTP:       m.inputs[fieldTOTP].Value(),
+			Expires:    hasExpiry,
 			ExpiryTime: expiryTime,
 		}
 		for _, cf := range m.customInputs {
