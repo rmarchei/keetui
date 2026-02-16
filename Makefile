@@ -45,9 +45,9 @@ test:
 			-v $(CURDIR):/src \
 			-w /src \
 			$(GOIMAGE) \
-			go test -race ./...; \
+			sh -c 'apk add --no-cache gcc musl-dev && CGO_ENABLED=1 go test -race ./...'; \
 	else \
-		go test -race ./...; \
+		CGO_ENABLED=1 go test -race ./...; \
 	fi
 
 lint:
