@@ -9,11 +9,11 @@ import (
 // Empty strings are filled from defaults via Merge.
 type KeyBindings struct {
 	// Browser navigation
-	NavUp  string `json:"nav_up,omitempty"`
+	NavUp   string `json:"nav_up,omitempty"`
 	NavDown string `json:"nav_down,omitempty"`
-	Open   string `json:"open,omitempty"`
-	Back   string `json:"back,omitempty"`
-	Search string `json:"search,omitempty"`
+	Open    string `json:"open,omitempty"`
+	Back    string `json:"back,omitempty"`
+	Search  string `json:"search,omitempty"`
 
 	// Browser actions
 	NewEntry       string `json:"new_entry,omitempty"`
@@ -47,7 +47,7 @@ type KeyBindings struct {
 	ShowHistory    string `json:"show_history,omitempty"`
 
 	// Recycle bin
-	Restore        string `json:"restore,omitempty"`
+	Restore         string `json:"restore,omitempty"`
 	EmptyRecycleBin string `json:"empty_recycle_bin,omitempty"`
 }
 
@@ -55,11 +55,11 @@ type KeyBindings struct {
 // hardcoded values.
 func DefaultKeyBindings() KeyBindings {
 	return KeyBindings{
-		NavUp:  "k",
+		NavUp:   "k",
 		NavDown: "j",
-		Open:   "l",
-		Back:   "h",
-		Search: "/",
+		Open:    "l",
+		Back:    "h",
+		Search:  "/",
 
 		NewEntry:       "n",
 		NewGroup:       "g",
@@ -90,7 +90,7 @@ func DefaultKeyBindings() KeyBindings {
 		ShowQR:         "Q",
 		ShowHistory:    "H",
 
-		Restore:        "R",
+		Restore:         "R",
 		EmptyRecycleBin: "E",
 	}
 }

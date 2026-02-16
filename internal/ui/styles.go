@@ -51,11 +51,6 @@ var (
 	hiddenStyle = lipgloss.NewStyle().
 			Foreground(mutedColor)
 
-	// Status bar
-	statusStyle = lipgloss.NewStyle().
-			Foreground(mutedColor).
-			Padding(0, 1)
-
 	successStyle = lipgloss.NewStyle().
 			Foreground(successColor).
 			Padding(0, 1)
@@ -72,12 +67,6 @@ var (
 	// Help
 	helpStyle = lipgloss.NewStyle().
 			Foreground(mutedColor)
-
-	// Borders
-	boxStyle = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
-			Padding(1, 2)
 
 	// Input field focused
 	focusedStyle = lipgloss.NewStyle().

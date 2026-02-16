@@ -602,8 +602,8 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		}
 
-		switch {
-		case key == "up" || key == m.keys.NavUp:
+		switch key {
+		case "up", m.keys.NavUp:
 			if m.cursor > 0 {
 				m.cursor--
 				if m.cursor < m.offset {
@@ -611,7 +611,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key == "down" || key == m.keys.NavDown:
+		case "down", m.keys.NavDown:
 			if m.cursor < len(m.items)-1 {
 				m.cursor++
 				vis := m.visibleHeight()
@@ -620,7 +620,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key == "enter" || key == m.keys.Open || key == "right":
+		case "enter", m.keys.Open, "right":
 			if len(m.items) == 0 {
 				break
 			}
@@ -640,7 +640,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key == "esc" || key == m.keys.Back || key == "left":
+		case "esc", m.keys.Back, "left":
 			if m.searchQuery != "" {
 				// Clear search results and go back to normal browsing
 				m.searchQuery = ""
@@ -657,7 +657,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.offset = frame.offset
 			}
 
-		case key == m.keys.NewEntry:
+		case m.keys.NewEntry:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -670,7 +670,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return NewEntryMsg{GroupUUID: cg.UUID}
 			}
 
-		case key == m.keys.NewGroup:
+		case m.keys.NewGroup:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -683,7 +683,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return NewGroupMsg{ParentUUID: cg.UUID}
 			}
 
-		case key == m.keys.RenameGroup:
+		case m.keys.RenameGroup:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -698,7 +698,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key == m.keys.Duplicate:
+		case m.keys.Duplicate:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -713,7 +713,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key == m.keys.Cut:
+		case m.keys.Cut:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -738,7 +738,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key == m.keys.Paste:
+		case m.keys.Paste:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -758,7 +758,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key == m.keys.Delete:
+		case m.keys.Delete:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -787,7 +787,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return DeleteEntryMsg{EntryUUID: item.entry.UUID, Name: name}
 			}
 
-		case key == m.keys.Restore:
+		case m.keys.Restore:
 			// Restore from recycle bin
 			if !m.inRecycleBin() || len(m.items) == 0 {
 				break
@@ -802,7 +802,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return RestoreEntryMsg{EntryUUID: item.entry.UUID}
 			}
 
-		case key == m.keys.EmptyRecycleBin:
+		case m.keys.EmptyRecycleBin:
 			// Empty recycle bin
 			if !m.inRecycleBin() {
 				break
@@ -811,7 +811,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return EmptyRecycleBinMsg{}
 			}
 
-		case key == m.keys.ChangePassword:
+		case m.keys.ChangePassword:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -819,25 +819,25 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return ChangePasswordStartMsg{}
 			}
 
-		case key == m.keys.ShowStats:
+		case m.keys.ShowStats:
 			return m, func() tea.Msg {
 				return ShowStatsMsg{}
 			}
 
-		case key == m.keys.ShowAudit:
+		case m.keys.ShowAudit:
 			return m, func() tea.Msg {
 				return ShowAuditMsg{}
 			}
 
-		case key == m.keys.ShowSettings:
+		case m.keys.ShowSettings:
 			return m, func() tea.Msg {
 				return ShowSettingsMsg{}
 			}
 
-		case key == "?":
+		case "?":
 			return m, func() tea.Msg { return ShowHelpMsg{} }
 
-		case key == m.keys.Favorite:
+		case m.keys.Favorite:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -852,7 +852,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case key == m.keys.CycleSort:
+		case m.keys.CycleSort:
 			m.sortBy = (m.sortBy + 1) % sortModeCount
 			if m.searchQuery != "" {
 				sortItems(m.items, m.db.RecycleBinUUID(), m.sortBy)
@@ -862,7 +862,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 			m.offset = 0
 
-		case key == m.keys.FilterTag:
+		case m.keys.FilterTag:
 			m.allTags = collectTags(m.db.RootGroup())
 			if len(m.allTags) == 0 {
 				return m, func() tea.Msg { return StatusMsg{Text: "No tags found"} }
@@ -888,7 +888,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 			m.offset = 0
 
-		case key == m.keys.Save || key == "ctrl+s":
+		case m.keys.Save, "ctrl+s":
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
@@ -919,7 +919,7 @@ func (m BrowserModel) View() string {
 			indicators = append(indicators, "tag: "+m.tagFilter)
 		}
 		if len(indicators) > 0 {
-			bc += hiddenStyle.Render("  ["+strings.Join(indicators, ", ")+"]")
+			bc += hiddenStyle.Render("  [" + strings.Join(indicators, ", ") + "]")
 		}
 		b.WriteString(breadcrumbStyle.Render(bc))
 	}

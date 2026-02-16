@@ -224,10 +224,10 @@ func TestThemeDefault(t *testing.T) {
 
 func TestSanitizeClamps(t *testing.T) {
 	tests := []struct {
-		name     string
-		cfg      Config
-		wantClip int
-		wantLock int
+		name      string
+		cfg       Config
+		wantClip  int
+		wantLock  int
 		wantPWLen int
 	}{
 		{"negative clipboard", Config{ClipboardClearSeconds: -5, AutoLockMinutes: 5, PasswordLength: 20}, 15, 5, 20},
@@ -290,17 +290,4 @@ func TestBackupEnabledSet(t *testing.T) {
 	if !cfg.BackupEnabled() {
 		t.Error("BackupEnabled() should be true when set")
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

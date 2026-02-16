@@ -16,10 +16,10 @@ import (
 
 // DB wraps a gokeepasslib.Database with file path and credentials info.
 type DB struct {
-	Path          string
-	Database      *gokeepasslib.Database
-	BackupOnSave  bool // when true, create a .bak copy before saving
-	unlocked      bool
+	Path         string
+	Database     *gokeepasslib.Database
+	BackupOnSave bool // when true, create a .bak copy before saving
+	unlocked     bool
 }
 
 // CustomField represents an extra key-value pair stored on an entry.
@@ -89,19 +89,19 @@ func Create(path, password string) (*DB, error) {
 		Groups: []gokeepasslib.Group{rootGroup},
 	}
 
-	db.LockProtectedEntries()
+	_ = db.LockProtectedEntries()
 
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return nil, fmt.Errorf("create file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if err := gokeepasslib.NewEncoder(file).Encode(db); err != nil {
 		return nil, fmt.Errorf("encode database: %w", err)
 	}
 
-	db.UnlockProtectedEntries()
+	_ = db.UnlockProtectedEntries()
 
 	return &DB{
 		Path:     path,
@@ -119,7 +119,7 @@ func Open(path, password string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	db := gokeepasslib.NewDatabase()
 	db.Credentials = gokeepasslib.NewPasswordCredentials(password)
@@ -128,7 +128,7 @@ func Open(path, password string) (*DB, error) {
 		return nil, fmt.Errorf("decode database: %w", err)
 	}
 
-	db.UnlockProtectedEntries()
+	_ = db.UnlockProtectedEntries()
 
 	return &DB{
 		Path:     path,
@@ -146,7 +146,7 @@ func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	creds, err := gokeepasslib.NewPasswordAndKeyCredentials(password, keyFilePath)
 	if err != nil {
@@ -160,7 +160,7 @@ func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 		return nil, fmt.Errorf("decode database: %w", err)
 	}
 
-	db.UnlockProtectedEntries()
+	_ = db.UnlockProtectedEntries()
 
 	return &DB{
 		Path:     path,
@@ -224,8 +224,8 @@ func (d *DB) Save() error {
 // It writes to a temporary file first, then renames it to the target path
 // to avoid data loss if the process is interrupted during save.
 func (d *DB) SaveAs(path string) error {
-	d.Database.LockProtectedEntries()
-	defer d.Database.UnlockProtectedEntries()
+	_ = d.Database.LockProtectedEntries()
+	defer func() { _ = d.Database.UnlockProtectedEntries() }()
 
 	dir := filepath.Dir(path)
 	tmpFile, err := os.CreateTemp(dir, ".keetui-save-*.tmp")
@@ -238,22 +238,22 @@ func (d *DB) SaveAs(path string) error {
 	success := false
 	defer func() {
 		if !success {
-			os.Remove(tmpPath)
+			_ = os.Remove(tmpPath)
 		}
 	}()
 
 	if err := os.Chmod(tmpPath, 0600); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return fmt.Errorf("set file permissions: %w", err)
 	}
 
 	if err := gokeepasslib.NewEncoder(tmpFile).Encode(d.Database); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return fmt.Errorf("encode database: %w", err)
 	}
 
 	if err := tmpFile.Sync(); err != nil {
-		tmpFile.Close()
+		_ = tmpFile.Close()
 		return fmt.Errorf("sync file: %w", err)
 	}
 
@@ -274,7 +274,7 @@ func (d *DB) SaveAs(path string) error {
 	// Sync the parent directory to ensure the rename is durably persisted.
 	if dirFD, err := os.Open(dir); err == nil {
 		_ = dirFD.Sync()
-		dirFD.Close()
+		_ = dirFD.Close()
 	}
 
 	success = true
@@ -291,7 +291,7 @@ func createBackup(path string) error {
 		}
 		return fmt.Errorf("open source: %w", err)
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	bakPath := path + ".bak"
 
@@ -307,7 +307,7 @@ func createBackup(path string) error {
 	if err != nil {
 		return fmt.Errorf("create backup file: %w", err)
 	}
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 
 	if _, err := io.Copy(dst, src); err != nil {
 		return fmt.Errorf("copy to backup: %w", err)
@@ -698,9 +698,7 @@ func (d *DB) DuplicateEntry(entryUUID gokeepasslib.UUID) (gokeepasslib.UUID, err
 	dup.Times.LastModificationTime = &w.TimeWrapper{Time: time.Now()}
 
 	// Copy binary attachment references
-	for _, binRef := range original.Binaries {
-		dup.Binaries = append(dup.Binaries, binRef)
-	}
+	dup.Binaries = append(dup.Binaries, original.Binaries...)
 
 	parentGroup.Entries = append(parentGroup.Entries, dup)
 	return dup.UUID, nil

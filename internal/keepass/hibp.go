@@ -37,7 +37,7 @@ func checkHIBPWithURL(password, baseURL string) HIBPResult {
 	if err != nil {
 		return HIBPResult{Err: fmt.Errorf("HIBP request failed: %w", err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return HIBPResult{Err: fmt.Errorf("HIBP returned status %d", resp.StatusCode)}

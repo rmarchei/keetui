@@ -19,13 +19,13 @@ const (
 
 // StrengthResult holds the output of a password strength evaluation.
 type StrengthResult struct {
-	Score    StrengthLevel
-	Label    string
-	Entropy  float64 // bits of entropy
-	Length   int
-	HasUpper bool
-	HasLower bool
-	HasDigit bool
+	Score     StrengthLevel
+	Label     string
+	Entropy   float64 // bits of entropy
+	Length    int
+	HasUpper  bool
+	HasLower  bool
+	HasDigit  bool
 	HasSymbol bool
 }
 

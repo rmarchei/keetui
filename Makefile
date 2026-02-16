@@ -5,6 +5,7 @@ DIST     := dist
 
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GOIMAGE  := golang:1.26-alpine
+LINTIMAGE := golangci/golangci-lint:latest
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 
 PLATFORMS := darwin-amd64 darwin-arm64 linux-amd64 linux-arm64
@@ -19,7 +20,7 @@ CROSS_PLATFORMS := $(filter-out $(HOST_OS)-$(HOST_ARCH),$(PLATFORMS))
 
 PREFIX   ?= /usr/local
 
-.PHONY: build test all clean install $(CROSS_PLATFORMS)
+.PHONY: build test lint all clean install $(CROSS_PLATFORMS)
 
 build: $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH)
 
@@ -44,9 +45,26 @@ test:
 			-v $(CURDIR):/src \
 			-w /src \
 			$(GOIMAGE) \
-			go test ./...; \
+			go test -race ./...; \
 	else \
-		go test ./...; \
+		go test -race ./...; \
+	fi
+
+lint:
+	@if [ -n "$(CONTAINER_RUNTIME)" ]; then \
+		$(CONTAINER_RUNTIME) run --rm \
+			-v $(CURDIR):/src \
+			-w /src \
+			$(GOIMAGE) \
+			sh -c 'test -z "$$(gofmt -l .)" || (echo "Files not formatted:"; gofmt -l .; exit 1)'; \
+		$(CONTAINER_RUNTIME) run --rm \
+			-v $(CURDIR):/src \
+			-w /src \
+			$(LINTIMAGE) \
+			golangci-lint run ./...; \
+	else \
+		test -z "$$(gofmt -l .)" || (echo "Files not formatted:"; gofmt -l .; exit 1); \
+		golangci-lint run ./...; \
 	fi
 
 all: build $(CROSS_PLATFORMS)

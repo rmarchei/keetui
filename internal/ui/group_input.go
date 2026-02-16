@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -91,7 +90,7 @@ func (m GroupInputModel) View() string {
 	b.WriteString("\n\n")
 	b.WriteString(m.input.View())
 	b.WriteString("\n\n")
-	b.WriteString(helpStyle.Render(fmt.Sprintf("  enter: confirm  esc: cancel")))
+	b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
 	b.WriteString("\n")
 
 	return b.String()
