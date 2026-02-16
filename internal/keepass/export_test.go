@@ -71,6 +71,74 @@ func TestExportXML(t *testing.T) {
 	}
 }
 
+func TestXMLTOTPRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "totp.kdbx")
+	password := "testmaster"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	root := db.RootGroup()
+	_, err = db.AddEntry(root.UUID, Entry{
+		Title:    "TOTP Entry",
+		UserName: "totpuser",
+		Password: "totppass",
+		TOTP:     "otpauth://totp/Example:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example",
+	})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+
+	// Export to XML
+	var buf bytes.Buffer
+	if err := db.ExportXML(&buf); err != nil {
+		t.Fatalf("ExportXML: %v", err)
+	}
+
+	xml := buf.String()
+	if !strings.Contains(xml, "JBSWY3DPEHPK3PXP") {
+		t.Error("XML export does not contain TOTP secret")
+	}
+
+	// Import into a new DB
+	newDBPath := filepath.Join(dir, "imported.kdbx")
+	newDB, err := Create(newDBPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	n, err := newDB.ImportXML(strings.NewReader(xml))
+	if err != nil {
+		t.Fatalf("ImportXML: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("imported = %d, want 1", n)
+	}
+
+	// Save and reopen to verify persistence
+	if err := newDB.SaveAs(filepath.Join(dir, "verify.kdbx")); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+	verifyDB, err := Open(filepath.Join(dir, "verify.kdbx"), password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	verifyRoot := verifyDB.RootGroup()
+	found := false
+	for _, e := range verifyRoot.Entries {
+		if e.Title == "TOTP Entry" && strings.Contains(e.TOTP, "JBSWY3DPEHPK3PXP") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("TOTP secret not preserved through XML export/import round trip")
+	}
+}
+
 func TestImportCSV(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.kdbx")
