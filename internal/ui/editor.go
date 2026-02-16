@@ -159,8 +159,7 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case maskPasswordMsg:
 		if msg.seq == m.revealSeq && !m.persistReveal {
-			m.inputs[fieldPassword].EchoMode = textinput.EchoPassword
-			m.inputs[fieldTOTP].EchoMode = textinput.EchoPassword
+			m.remaskAll()
 		}
 		return m, nil
 
@@ -184,6 +183,9 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Clear stale errors on any keypress
+		m.err = nil
+
 		switch msg.String() {
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
@@ -210,8 +212,9 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.inputs[fieldPassword].SetValue(pw)
+			m.inputs[fieldPassword].EchoMode = textinput.EchoNormal
 			m.generated = true
-			return m, nil
+			return m, m.scheduleAutoMask(fieldPassword, 2*time.Second)
 
 		case "ctrl+p":
 			// Generate diceware passphrase
@@ -221,17 +224,25 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.inputs[fieldPassword].SetValue(pp)
+			m.inputs[fieldPassword].EchoMode = textinput.EchoNormal
 			m.generated = true
-			return m, nil
+			return m, m.scheduleAutoMask(fieldPassword, 2*time.Second)
 
 		case "ctrl+r":
-			// Toggle persistent password/TOTP visibility
+			// Toggle persistent visibility on password/TOTP or protected custom fields
 			if m.focused == fieldPassword || m.focused == fieldTOTP {
 				m.persistReveal = !m.persistReveal
 				if m.persistReveal {
 					m.inputs[m.focused].EchoMode = textinput.EchoNormal
 				} else {
 					m.inputs[m.focused].EchoMode = textinput.EchoPassword
+				}
+			} else if cf, ok := m.focusedProtectedCustomField(); ok {
+				m.persistReveal = !m.persistReveal
+				if m.persistReveal {
+					cf.value.EchoMode = textinput.EchoNormal
+				} else {
+					cf.value.EchoMode = textinput.EchoPassword
 				}
 			}
 			return m, nil
@@ -260,10 +271,11 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Update only the focused input
-	isMaskedField := m.focused == fieldPassword || m.focused == fieldTOTP
+	// Update only the focused input, tracking value changes for auto-reveal
 	var oldVal string
-	if isMaskedField {
+	isMaskedFixed := m.focused == fieldPassword || m.focused == fieldTOTP
+	isMaskedCustom := false
+	if isMaskedFixed {
 		oldVal = m.inputs[m.focused].Value()
 	}
 
@@ -275,6 +287,10 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		isValue := (m.focused-fixedFieldCount)%2 == 1
 		if cfIdx < len(m.customInputs) {
 			if isValue {
+				if m.customInputs[cfIdx].protected {
+					isMaskedCustom = true
+					oldVal = m.customInputs[cfIdx].value.Value()
+				}
 				m.customInputs[cfIdx].value, cmd = m.customInputs[cfIdx].value.Update(msg)
 			} else {
 				m.customInputs[cfIdx].key, cmd = m.customInputs[cfIdx].key.Update(msg)
@@ -282,25 +298,33 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Briefly reveal password/TOTP when typing, then re-mask after 1 second
-	if isMaskedField && !m.persistReveal && m.inputs[m.focused].Value() != oldVal {
-		m.inputs[m.focused].EchoMode = textinput.EchoNormal
-		m.revealSeq++
-		seq := m.revealSeq
-		maskCmd := tea.Tick(time.Second, func(time.Time) tea.Msg {
-			return maskPasswordMsg{seq: seq}
-		})
-		return m, tea.Batch(cmd, maskCmd)
+	// Clear "Password generated!" when the password is manually edited
+	if m.focused == fieldPassword && m.generated && m.inputs[fieldPassword].Value() != oldVal {
+		m.generated = false
+	}
+
+	// Briefly reveal masked fields when typing, then re-mask after 1 second
+	if !m.persistReveal {
+		if isMaskedFixed && m.inputs[m.focused].Value() != oldVal {
+			m.inputs[m.focused].EchoMode = textinput.EchoNormal
+			return m, tea.Batch(cmd, m.scheduleAutoMask(m.focused, time.Second))
+		}
+		if isMaskedCustom {
+			cfIdx := (m.focused - fixedFieldCount) / 2
+			if m.customInputs[cfIdx].value.Value() != oldVal {
+				m.customInputs[cfIdx].value.EchoMode = textinput.EchoNormal
+				return m, tea.Batch(cmd, m.scheduleAutoMask(m.focused, time.Second))
+			}
+		}
 	}
 
 	return m, cmd
 }
 
 func (m *EditorModel) updateFocus() tea.Cmd {
-	// Re-mask password/TOTP fields and reset reveal state on focus change
+	// Re-mask all protected fields and reset reveal state on focus change
 	m.persistReveal = false
-	m.inputs[fieldPassword].EchoMode = textinput.EchoPassword
-	m.inputs[fieldTOTP].EchoMode = textinput.EchoPassword
+	m.remaskAll()
 
 	var cmds []tea.Cmd
 	for i := range m.inputs {
@@ -335,11 +359,57 @@ func (m *EditorModel) updateFocus() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// remaskAll sets EchoPassword on all protected fields (password, TOTP, custom).
+func (m *EditorModel) remaskAll() {
+	m.inputs[fieldPassword].EchoMode = textinput.EchoPassword
+	m.inputs[fieldTOTP].EchoMode = textinput.EchoPassword
+	for i := range m.customInputs {
+		if m.customInputs[i].protected {
+			m.customInputs[i].value.EchoMode = textinput.EchoPassword
+		}
+	}
+}
+
+// scheduleAutoMask briefly reveals a masked field and schedules re-masking.
+func (m *EditorModel) scheduleAutoMask(field int, delay time.Duration) tea.Cmd {
+	m.revealSeq++
+	seq := m.revealSeq
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		return maskPasswordMsg{seq: seq}
+	})
+}
+
+// focusedProtectedCustomField returns the custom field input if the currently
+// focused field is a protected custom field value, along with a bool.
+func (m *EditorModel) focusedProtectedCustomField() (*customFieldInput, bool) {
+	if m.focused < fixedFieldCount {
+		return nil, false
+	}
+	cfIdx := (m.focused - fixedFieldCount) / 2
+	isValue := (m.focused-fixedFieldCount)%2 == 1
+	if isValue && cfIdx < len(m.customInputs) && m.customInputs[cfIdx].protected {
+		return &m.customInputs[cfIdx], true
+	}
+	return nil, false
+}
+
 func (m EditorModel) save() (tea.Model, tea.Cmd) {
 	title := strings.TrimSpace(m.inputs[fieldTitle].Value())
 	if title == "" {
 		m.err = fmt.Errorf("title cannot be empty")
 		return m, nil
+	}
+	expiryStr := strings.TrimSpace(m.inputs[fieldExpiry].Value())
+	var expiryTime time.Time
+	var hasExpiry bool
+	if expiryStr != "" {
+		t, err := time.Parse("2006-01-02", expiryStr)
+		if err != nil {
+			m.err = fmt.Errorf("invalid expiry date (expected YYYY-MM-DD)")
+			return m, nil
+		}
+		expiryTime = t
+		hasExpiry = true
 	}
 	return m, func() tea.Msg {
 		entry := keepass.Entry{
@@ -349,14 +419,8 @@ func (m EditorModel) save() (tea.Model, tea.Cmd) {
 			URL:      m.inputs[fieldURL].Value(),
 			Notes:    m.inputs[fieldNotes].Value(),
 			TOTP:     m.inputs[fieldTOTP].Value(),
-		}
-		expiryStr := strings.TrimSpace(m.inputs[fieldExpiry].Value())
-		if expiryStr != "" {
-			t, err := time.Parse("2006-01-02", expiryStr)
-			if err == nil {
-				entry.Expires = true
-				entry.ExpiryTime = t
-			}
+			Expires:  hasExpiry,
+			ExpiryTime: expiryTime,
 		}
 		for _, cf := range m.customInputs {
 			key := cf.key.Value()

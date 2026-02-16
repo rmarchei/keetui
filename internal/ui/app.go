@@ -244,7 +244,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case EditEntryMsg:
 		m.editor = NewEditorModel(&msg.Entry, gokeepasslib.UUID{}, m.cfg)
 		m.state = viewEditor
-		return m, nil
+		return m, m.editor.Init()
 
 	case NewEntryMsg:
 		m.editor = NewEditorModel(nil, msg.GroupUUID, m.cfg)
