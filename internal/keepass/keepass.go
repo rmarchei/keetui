@@ -224,6 +224,18 @@ func (d *DB) Save() error {
 // It writes to a temporary file first, then renames it to the target path
 // to avoid data loss if the process is interrupted during save.
 func (d *DB) SaveAs(path string) error {
+	// For KDBX 4, binaries live in the InnerHeader (raw bytes).
+	// Some tools also write them into the XML <Meta><Binaries> section.
+	// gokeepasslib's cleanupBinaries only cleans the "active" location,
+	// so stale Meta.Binaries would be re-serialised as base64 in the XML,
+	// duplicating every attachment and inflating the file.
+	if d.Database.Header.IsKdbx4() {
+		d.Database.Content.Meta.Binaries = nil
+	}
+
+	// Lock before encoding: the encoder's internal Unlock→Lock cycle assumes
+	// entries are locked. Since we keep them unlocked in memory, we must lock
+	// first so the encoder's Unlock correctly decrypts them.
 	_ = d.Database.LockProtectedEntries()
 	defer func() { _ = d.Database.UnlockProtectedEntries() }()
 
