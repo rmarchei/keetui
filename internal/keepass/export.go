@@ -126,6 +126,9 @@ func (d *DB) convertGroupToXML(g *Group) XMLGroup {
 				{Key: "Notes", Value: e.Notes},
 			},
 		}
+		if e.TOTP != "" {
+			xe.Strings = append(xe.Strings, XMLString{Key: "TOTP", Value: e.TOTP})
+		}
 		for _, cf := range e.CustomFields {
 			xe.Strings = append(xe.Strings, XMLString{Key: cf.Key, Value: cf.Value})
 		}
@@ -298,6 +301,8 @@ func (d *DB) importXMLGroup(xg *XMLGroup, parentUUID [16]byte) (int, error) {
 				entry.URL = xs.Value
 			case "Notes":
 				entry.Notes = xs.Value
+			case "TOTP":
+				entry.TOTP = xs.Value
 			default:
 				entry.CustomFields = append(entry.CustomFields, CustomField{
 					Key:   xs.Key,

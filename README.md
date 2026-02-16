@@ -107,6 +107,8 @@ keetui --merge other.kdbx database.kdbx
 
 ## Keyboard Shortcuts
 
+All keybindings shown below are defaults and can be customized via the config file (see [Keybindings](#keybindings)).
+
 ### Browser
 
 | Key | Action |
@@ -163,6 +165,16 @@ keetui --merge other.kdbx database.kdbx
 | `Ctrl+D` | Delete current custom field |
 | `Ctrl+S` | Save |
 | `Esc` | Cancel |
+
+### Recycle Bin
+
+When browsing inside the recycle bin group, these additional keys are available:
+
+| Key | Action |
+|-----|--------|
+| `d` | Permanently delete item |
+| `R` | Restore item to root group |
+| `E` | Empty recycle bin |
 
 ## Search
 
