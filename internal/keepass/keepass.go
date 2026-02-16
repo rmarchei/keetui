@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/tobischo/gokeepasslib/v3"
@@ -254,10 +255,7 @@ func (d *DB) SaveAs(path string) error {
 		}
 	}()
 
-	if err := os.Chmod(tmpPath, 0600); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("set file permissions: %w", err)
-	}
+	// os.CreateTemp already creates with mode 0600 (O_EXCL ensures no race).
 
 	if err := gokeepasslib.NewEncoder(tmpFile).Encode(d.Database); err != nil {
 		_ = tmpFile.Close()
@@ -315,7 +313,8 @@ func createBackup(path string) error {
 		}
 	}
 
-	dst, err := os.OpenFile(bakPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	// O_NOFOLLOW prevents following a symlink that appears between Lstat and Open (TOCTOU).
+	dst, err := os.OpenFile(bakPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
 		return fmt.Errorf("create backup file: %w", err)
 	}

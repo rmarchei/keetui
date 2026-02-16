@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/tobischo/gokeepasslib/v3"
 )
@@ -86,7 +87,17 @@ func (d *DB) ExtractAttachment(entryUUID gokeepasslib.UUID, name, destPath strin
 			if err != nil {
 				return fmt.Errorf("decode binary %q: %w", name, err)
 			}
-			return os.WriteFile(destPath, data, 0600)
+			// O_NOFOLLOW prevents following a symlink that appears after the Lstat check (TOCTOU).
+			f, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0600)
+			if err != nil {
+				return fmt.Errorf("create file %q: %w", destPath, err)
+			}
+			_, writeErr := f.Write(data)
+			closeErr := f.Close()
+			if writeErr != nil {
+				return fmt.Errorf("write file %q: %w", destPath, writeErr)
+			}
+			return closeErr
 		}
 	}
 	return fmt.Errorf("attachment %q not found", name)
