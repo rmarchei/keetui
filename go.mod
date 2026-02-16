@@ -12,6 +12,8 @@ require (
 	golang.org/x/term v0.40.0
 )
 
+replace github.com/tobischo/gokeepasslib/v3 => github.com/rmarchei/gokeepasslib/v3 v3.6.2
+
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
