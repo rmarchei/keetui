@@ -11,6 +11,7 @@ type Theme struct {
 	Error     string
 	Warn      string
 	Text      string
+	TitleFg   string // foreground for title bar (over Primary background)
 	StatusBg  string
 	StatusFg  string
 }
@@ -24,6 +25,7 @@ var builtinThemes = map[string]Theme{
 		Error:     "#FF4444",
 		Warn:      "#FFAA00",
 		Text:      "#FAFAFA",
+		TitleFg:   "#000000",
 		StatusBg:  "#3C3C3C",
 		StatusFg:  "#FAFAFA",
 	},
@@ -35,6 +37,7 @@ var builtinThemes = map[string]Theme{
 		Error:     "#DC2626",
 		Warn:      "#D97706",
 		Text:      "#1F2937",
+		TitleFg:   "#FFFFFF",
 		StatusBg:  "#E5E7EB",
 		StatusFg:  "#1F2937",
 	},
@@ -46,6 +49,7 @@ var builtinThemes = map[string]Theme{
 		Error:     "#FF0000",
 		Warn:      "#FFAA00",
 		Text:      "#FFFFFF",
+		TitleFg:   "#000000",
 		StatusBg:  "#000000",
 		StatusFg:  "#FFFFFF",
 	},
@@ -74,10 +78,11 @@ func ApplyTheme(t Theme) {
 	warnColor = lipgloss.Color(t.Warn)
 
 	textColor := lipgloss.Color(t.Text)
+	titleFg := lipgloss.Color(t.TitleFg)
 
 	titleStyle = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(textColor).
+		Foreground(titleFg).
 		Background(primaryColor).
 		Padding(0, 1)
 

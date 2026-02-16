@@ -14,7 +14,7 @@ var (
 	// Title bar
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#FAFAFA")).
+			Foreground(lipgloss.Color("#000000")).
 			Background(primaryColor).
 			Padding(0, 1)
 
