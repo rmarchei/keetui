@@ -389,10 +389,20 @@ func (m DetailModel) footerView() string {
 		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
 		return helpStyle.Render(help)
 	}
-	// Show copied message or selected field name in footer
+	// Show status messages or selected field name in footer
 	var fieldPrefix string
 	fields := m.selectableFields()
-	if m.copied != "" {
+	if m.hibpChecking {
+		fieldPrefix = helpStyle.Render("  Checking HIBP...")
+	} else if m.hibpResult != nil {
+		if m.hibpResult.Err != nil {
+			fieldPrefix = errorMsgStyle.Render(fmt.Sprintf("  HIBP check failed: %s", m.hibpResult.Err))
+		} else if m.hibpResult.Breached {
+			fieldPrefix = errorMsgStyle.Render(fmt.Sprintf("  WARNING: Password found in %d breaches!", m.hibpResult.Count))
+		} else {
+			fieldPrefix = successStyle.Render("  Password not found in any known breaches")
+		}
+	} else if m.copied != "" {
 		fieldPrefix = successStyle.Render(fmt.Sprintf("  Copied %s!", m.copied))
 	} else if m.selectedField < len(fields) {
 		f := fields[m.selectedField]
@@ -576,23 +586,6 @@ func (m DetailModel) buildContent() string {
 		b.WriteString("\n")
 	}
 
-	// HIBP result
-	if m.hibpChecking {
-		b.WriteString("\n")
-		b.WriteString(helpStyle.Render("  Checking HIBP..."))
-		b.WriteString("\n")
-	} else if m.hibpResult != nil {
-		b.WriteString("\n")
-		if m.hibpResult.Err != nil {
-			b.WriteString(errorMsgStyle.Render(fmt.Sprintf("  HIBP check failed: %s", m.hibpResult.Err)))
-		} else if m.hibpResult.Breached {
-			b.WriteString(errorMsgStyle.Render(fmt.Sprintf("  WARNING: Password found in %d data breaches!", m.hibpResult.Count)))
-		} else {
-			b.WriteString(successStyle.Render("  Password not found in any known breaches"))
-		}
-		b.WriteString("\n")
-	}
-
 	return b.String()
 }
 
@@ -748,6 +741,9 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		}
+
+		// Dismiss HIBP result on any interaction
+		m.hibpResult = nil
 
 		fields := m.selectableFields()
 
