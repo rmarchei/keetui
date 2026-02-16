@@ -389,18 +389,14 @@ func (m DetailModel) footerView() string {
 		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
 		return helpStyle.Render(help)
 	}
-	// Show selected field name in footer when it's a custom field
+	// Show copied message or selected field name in footer
 	var fieldPrefix string
 	fields := m.selectableFields()
-	if m.selectedField < len(fields) {
+	if m.copied != "" {
+		fieldPrefix = successStyle.Render(fmt.Sprintf("  Copied %s!", m.copied))
+	} else if m.selectedField < len(fields) {
 		f := fields[m.selectedField]
-		// Show full label for custom fields (which may have been truncated in the view)
-		for _, cf := range m.entry.CustomFields {
-			if cf.Key == f.label {
-				fieldPrefix = fmt.Sprintf("  [%s]", f.label)
-				break
-			}
-		}
+		fieldPrefix = fmt.Sprintf("  [%s]", f.label)
 	}
 
 	var help string
@@ -594,12 +590,6 @@ func (m DetailModel) buildContent() string {
 		} else {
 			b.WriteString(successStyle.Render("  Password not found in any known breaches"))
 		}
-		b.WriteString("\n")
-	}
-
-	if m.copied != "" {
-		b.WriteString("\n")
-		b.WriteString(successStyle.Render(fmt.Sprintf("  Copied %s to clipboard!", m.copied)))
 		b.WriteString("\n")
 	}
 
