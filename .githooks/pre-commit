@@ -1,0 +1,12 @@
+#!/bin/sh
+#
+# Pre-commit hook: reject commits with unformatted Go files.
+
+unformatted=$(gofmt -l .)
+if [ -n "$unformatted" ]; then
+	echo "gofmt: files not formatted:"
+	echo "$unformatted"
+	echo ""
+	echo "Run: gofmt -w ."
+	exit 1
+fi
