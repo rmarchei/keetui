@@ -138,7 +138,7 @@ All keybindings shown below are defaults and can be customized via the config fi
 | `c` | Settings |
 | `P` | Change master password |
 | `Ctrl+Z` | Undo last action |
-| `s` / `Ctrl+S` | Save database |
+| `s` / `Ctrl+S` | Save database (edit path to save as new file) |
 | `?` | Keyboard shortcut help |
 | `q` | Quit |
 
