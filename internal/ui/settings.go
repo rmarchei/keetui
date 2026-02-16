@@ -22,6 +22,8 @@ const (
 	settingPWDigits
 	settingPWSymbols
 	settingTheme
+	settingConfirmQuit
+	settingBackupOnSave
 	settingCount
 )
 
@@ -35,6 +37,8 @@ var settingLabels = [settingCount]string{
 	"Digits (0-9)",
 	"Symbols (!@#...)",
 	"Theme",
+	"Confirm on quit",
+	"Backup on save",
 }
 
 var settingDescriptions = [settingCount]string{
@@ -47,6 +51,8 @@ var settingDescriptions = [settingCount]string{
 	"Include digits in generated passwords (1: on, 0: off)",
 	"Include symbols in generated passwords (1: on, 0: off)",
 	"Color theme: dark, light, high-contrast",
+	"Always confirm before quitting (1: on, 0: off)",
+	"Create .kdbx.bak backup before each save (1: on, 0: off)",
 }
 
 // ShowSettingsMsg requests showing the settings view.
@@ -107,6 +113,12 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 
 	inputs[settingTheme].SetValue(cfg.Theme())
 	inputs[settingTheme].CharLimit = 15
+
+	inputs[settingConfirmQuit].SetValue(boolToStr(cfg.ConfirmOnQuit()))
+	inputs[settingConfirmQuit].CharLimit = 1
+
+	inputs[settingBackupOnSave].SetValue(boolToStr(cfg.BackupEnabled()))
+	inputs[settingBackupOnSave].CharLimit = 1
 
 	inputs[0].Focus()
 
@@ -247,6 +259,16 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	confirmQuit, ok := parseBoolSetting(settingConfirmQuit, "Confirm on quit")
+	if !ok {
+		return m, nil
+	}
+
+	backupOnSave, ok := parseBoolSetting(settingBackupOnSave, "Backup on save")
+	if !ok {
+		return m, nil
+	}
+
 	boolPtr := func(b bool) *bool { return &b }
 
 	newCfg := config.Config{
@@ -259,6 +281,8 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		PasswordDigits:        boolPtr(digits),
 		PasswordSymbols:       boolPtr(symbols),
 		ThemeName:             themeName,
+		ConfirmQuit:           boolPtr(confirmQuit),
+		BackupOnSave:          boolPtr(backupOnSave),
 	}
 
 	if err := newCfg.Save(); err != nil {

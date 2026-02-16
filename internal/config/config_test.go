@@ -262,6 +262,36 @@ func TestThemeCustom(t *testing.T) {
 	}
 }
 
+func TestConfirmOnQuitDefault(t *testing.T) {
+	cfg := Default()
+	if cfg.ConfirmOnQuit() {
+		t.Error("ConfirmOnQuit() should be false by default")
+	}
+}
+
+func TestConfirmOnQuitEnabled(t *testing.T) {
+	tr := true
+	cfg := Config{ConfirmQuit: &tr}
+	if !cfg.ConfirmOnQuit() {
+		t.Error("ConfirmOnQuit() should be true when set")
+	}
+}
+
+func TestBackupEnabledDefault(t *testing.T) {
+	cfg := Default()
+	if cfg.BackupEnabled() {
+		t.Error("BackupEnabled() should be false by default")
+	}
+}
+
+func TestBackupEnabledSet(t *testing.T) {
+	tr := true
+	cfg := Config{BackupOnSave: &tr}
+	if !cfg.BackupEnabled() {
+		t.Error("BackupEnabled() should be true when set")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

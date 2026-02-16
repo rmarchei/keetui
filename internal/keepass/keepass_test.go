@@ -2047,6 +2047,7 @@ func TestSaveCreatesBackup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	db.BackupOnSave = true // enable backup for this test
 
 	// Modify something
 	root := db.RootGroup()
@@ -2088,6 +2089,29 @@ func TestSaveCreatesBackup(t *testing.T) {
 	mainEntry := db2.RootGroup().Groups[0].Entries[0]
 	if mainEntry.Title != "Modified" {
 		t.Errorf("main entry title = %q, want %q", mainEntry.Title, "Modified")
+	}
+}
+
+func TestSaveNoBackupWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	// BackupOnSave defaults to false
+
+	if err := db.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	bakPath := dbPath + ".bak"
+	if _, err := os.Stat(bakPath); !os.IsNotExist(err) {
+		t.Error("backup file should not exist when BackupOnSave is false")
 	}
 }
 

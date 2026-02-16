@@ -20,6 +20,8 @@ type Config struct {
 	PasswordDigits        *bool        `json:"password_digits,omitempty"`
 	PasswordSymbols       *bool        `json:"password_symbols,omitempty"`
 	ThemeName             string       `json:"theme,omitempty"`
+	ConfirmQuit           *bool        `json:"confirm_quit,omitempty"`
+	BackupOnSave          *bool        `json:"backup_on_save,omitempty"`
 	KeyBindingsPtr        *KeyBindings `json:"keybindings,omitempty"`
 }
 
@@ -102,6 +104,16 @@ func (c Config) PasswordCharset() string {
 		charset = "abcdefghijklmnopqrstuvwxyz"
 	}
 	return charset
+}
+
+// ConfirmOnQuit returns whether the user should always be prompted before quitting.
+func (c Config) ConfirmOnQuit() bool {
+	return c.ConfirmQuit != nil && *c.ConfirmQuit
+}
+
+// BackupEnabled returns whether a .bak copy should be created before saving.
+func (c Config) BackupEnabled() bool {
+	return c.BackupOnSave != nil && *c.BackupOnSave
 }
 
 // Theme returns the configured theme name, defaulting to "dark".
