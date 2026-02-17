@@ -2294,6 +2294,101 @@ func TestConvertToKDBX4(t *testing.T) {
 	}
 }
 
+func TestUpdateEntryNotFound(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	fakeUUID := gokeepasslib.NewUUID()
+	err = db.UpdateEntry(fakeUUID, Entry{Title: "Updated"})
+	if err == nil {
+		t.Fatal("UpdateEntry should fail for non-existent entry")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %q, want 'not found'", err.Error())
+	}
+}
+
+func TestToggleFavoriteNotFound(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	fakeUUID := gokeepasslib.NewUUID()
+	err = db.ToggleFavorite(fakeUUID)
+	if err == nil {
+		t.Fatal("ToggleFavorite should fail for non-existent entry")
+	}
+}
+
+func TestGetEntryNotFound(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	fakeUUID := gokeepasslib.NewUUID()
+	_, err = db.GetEntry(fakeUUID)
+	if err == nil {
+		t.Fatal("GetEntry should fail for non-existent entry")
+	}
+}
+
+func TestGetEntryEmptyRoot(t *testing.T) {
+	db := &DB{
+		Database: &gokeepasslib.Database{
+			Content: &gokeepasslib.DBContent{
+				Root: &gokeepasslib.RootData{
+					Groups: nil,
+				},
+			},
+		},
+	}
+
+	fakeUUID := gokeepasslib.NewUUID()
+	_, err := db.GetEntry(fakeUUID)
+	if err == nil {
+		t.Fatal("GetEntry should fail with empty root")
+	}
+	if !strings.Contains(err.Error(), "no root group") {
+		t.Errorf("error = %q, want 'no root group'", err.Error())
+	}
+}
+
+func TestTOTPSecretInvalidOtpauthURI(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"malformed URI", "otpauth://%%%invalid", ""},
+		{"otpauth missing secret", "otpauth://totp/Test?issuer=Foo", ""},
+		{"otpauth empty secret", "otpauth://totp/Test?secret=&issuer=Foo", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TOTPSecret(tt.input)
+			if got != tt.want {
+				t.Errorf("TOTPSecret(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConvertToKDBX4AlreadyV4(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.kdbx")

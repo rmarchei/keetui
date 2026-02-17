@@ -304,6 +304,102 @@ Root,OTP Entry,otpuser,otppass,https://example.com,,JBSWY3DPEHPK3PXP
 	}
 }
 
+func TestExportCSVSpecialCharacters(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	root := db.RootGroup()
+	_, err = db.AddEntry(root.UUID, Entry{
+		Title:    `Entry with "quotes"`,
+		UserName: "user,with,commas",
+		Password: "pass\nwith\nnewlines",
+		URL:      "https://example.com",
+		Notes:    "notes with, commas and \"quotes\"",
+	})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := db.ExportCSV(&buf); err != nil {
+		t.Fatalf("ExportCSV: %v", err)
+	}
+
+	output := buf.String()
+	// CSV encoding should properly escape these values
+	if !strings.Contains(output, `"quotes"`) {
+		t.Error("CSV should contain the quotes in some form")
+	}
+	if !strings.Contains(output, "commas") {
+		t.Error("CSV should contain 'commas'")
+	}
+
+	// Verify it can be imported back
+	newDBPath := filepath.Join(dir, "imported.kdbx")
+	newDB, err := Create(newDBPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	n, err := newDB.ImportCSV(strings.NewReader(output))
+	if err != nil {
+		t.Fatalf("ImportCSV: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("imported = %d, want 1", n)
+	}
+}
+
+func TestExportCSVEmptyDatabase(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := db.ExportCSV(&buf); err != nil {
+		t.Fatalf("ExportCSV: %v", err)
+	}
+
+	output := buf.String()
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	// Should have header only
+	if len(lines) != 1 {
+		t.Errorf("CSV lines = %d, want 1 (header only for empty db)", len(lines))
+	}
+}
+
+func TestExportXMLEmptyDatabase(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := db.ExportXML(&buf); err != nil {
+		t.Fatalf("ExportXML: %v", err)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "<KeePassFile>") {
+		t.Error("XML output should have KeePassFile root even for empty db")
+	}
+}
+
 func TestImportExportRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.kdbx")

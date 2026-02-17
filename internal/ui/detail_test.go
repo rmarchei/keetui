@@ -405,3 +405,218 @@ func TestDetailView(t *testing.T) {
 		t.Error("View() should contain entry title")
 	}
 }
+
+// bigNotesEntry returns an entry with more than maxNoteLines lines of notes.
+func bigNotesEntry() keepass.Entry {
+	lines := make([]string, 20)
+	for i := range lines {
+		lines[i] = strings.Repeat("x", 10)
+	}
+	return keepass.Entry{
+		Title:    "Big Notes",
+		UserName: "user",
+		Password: "pass",
+		URL:      "https://example.com",
+		Notes:    strings.Join(lines, "\n"),
+		TOTP:     "JBSWY3DPEHPK3PXP",
+		CustomFields: []keepass.CustomField{
+			{Key: "cf1", Value: "val1"},
+		},
+	}
+}
+
+func TestNotesBodyLinesTruncated(t *testing.T) {
+	m := NewDetailModel(bigNotesEntry(), config.Default())
+	m.SetSize(80, 24)
+
+	// Collapsed: maxNoteLines body + 1 hint line
+	want := maxNoteLines + 1
+	if got := m.notesBodyLines(); got != want {
+		t.Errorf("notesBodyLines() collapsed = %d, want %d", got, want)
+	}
+
+	// Expanded: all 20 lines
+	m.notesExpanded = true
+	if got := m.notesBodyLines(); got != 20 {
+		t.Errorf("notesBodyLines() expanded = %d, want 20", got)
+	}
+}
+
+func TestNotesTruncationInContent(t *testing.T) {
+	m := NewDetailModel(bigNotesEntry(), config.Default())
+	m.SetSize(80, 24)
+
+	content := m.buildContent()
+
+	if !strings.Contains(content, "15 more lines") {
+		t.Error("truncated notes should show '15 more lines' hint")
+	}
+	if !strings.Contains(content, "p to expand") {
+		t.Error("truncated notes should show 'p to expand' hint")
+	}
+
+	// Expand
+	m.notesExpanded = true
+	content = m.buildContent()
+	if strings.Contains(content, "more lines") {
+		t.Error("expanded notes should not show truncation hint")
+	}
+}
+
+func TestNotesExpandToggle(t *testing.T) {
+	m := NewDetailModel(bigNotesEntry(), config.Default())
+	m.SetSize(80, 24)
+
+	// Navigate to Notes field: username(0), password(1), URL(2), TOTP(3), Notes(4)
+	fields := m.selectableFields()
+	notesIdx := -1
+	for i, f := range fields {
+		if f.label == "Notes" {
+			notesIdx = i
+			break
+		}
+	}
+	if notesIdx == -1 {
+		t.Fatal("Notes field not found in selectableFields")
+	}
+	m.selectedField = notesIdx
+
+	if m.notesExpanded {
+		t.Error("notes should start collapsed")
+	}
+
+	// Press p to expand
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = updated.(DetailModel)
+	if !m.notesExpanded {
+		t.Error("notes should be expanded after p")
+	}
+
+	// Press p to collapse
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	m = updated.(DetailModel)
+	if m.notesExpanded {
+		t.Error("notes should be collapsed after second p")
+	}
+}
+
+func TestTOTPVisibleWithBigNotes(t *testing.T) {
+	m := NewDetailModel(bigNotesEntry(), config.Default())
+	m.SetSize(80, 24)
+
+	// TOTP field should appear in selectableFields
+	fields := m.selectableFields()
+	found := false
+	for _, f := range fields {
+		if f.label == "TOTP" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("TOTP should be in selectableFields when entry has TOTP secret")
+	}
+
+	// TOTP should appear in rendered content
+	content := m.buildContent()
+	if !strings.Contains(content, "TOTP:") {
+		t.Error("buildContent should include TOTP field")
+	}
+}
+
+func TestTOTPVisibleWhenCodeGenerationFails(t *testing.T) {
+	entry := keepass.Entry{
+		Title:    "Bad TOTP",
+		UserName: "user",
+		Password: "pass",
+		URL:      "https://example.com",
+		TOTP:     "not-a-valid-base32-secret!!!", // will fail code generation
+	}
+	m := NewDetailModel(entry, config.Default())
+	m.SetSize(80, 24)
+
+	// TOTP code generation should have failed
+	if m.totpCode != "" {
+		t.Fatalf("expected totpCode to be empty for invalid secret, got %q", m.totpCode)
+	}
+
+	// But the field should still appear
+	fields := m.selectableFields()
+	found := false
+	for _, f := range fields {
+		if f.label == "TOTP" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("TOTP should be in selectableFields even when code generation fails")
+	}
+
+	content := m.buildContent()
+	if !strings.Contains(content, "TOTP:") {
+		t.Error("buildContent should include TOTP field even when code generation fails")
+	}
+}
+
+func TestLineForFieldBigNotes(t *testing.T) {
+	m := NewDetailModel(bigNotesEntry(), config.Default())
+	m.SetSize(80, 24)
+
+	// Fields: username(0), password(1), URL(2), TOTP(3), Notes(4), cf1(5)
+	// Lines when collapsed:
+	//   0: username, 1: password, 2: URL, 3: TOTP, 4: Notes label,
+	//   5-9: 5 body lines, 10: hint line
+	//   then timestamps, then custom fields
+
+	if line := m.lineForField(3); line != 3 {
+		t.Errorf("lineForField(3/TOTP) = %d, want 3", line)
+	}
+	if line := m.lineForField(4); line != 4 {
+		t.Errorf("lineForField(4/Notes) = %d, want 4", line)
+	}
+
+	// Notes takes 1 label + 5 body + 1 hint = 7 lines (4..10)
+	// Custom field should be after notes + timestamps
+	cfLine := m.lineForField(5)
+	if cfLine <= 10 {
+		t.Errorf("lineForField(5/cf1) = %d, should be > 10 (after truncated notes)", cfLine)
+	}
+
+	// After expanding, notes take 1 label + 20 body = 21 lines (4..24)
+	m.notesExpanded = true
+	cfLineExpanded := m.lineForField(5)
+	if cfLineExpanded <= 24 {
+		t.Errorf("lineForField(5/cf1) expanded = %d, should be > 24", cfLineExpanded)
+	}
+	if cfLineExpanded <= cfLine {
+		t.Errorf("custom field line should increase after expanding notes: collapsed=%d expanded=%d", cfLine, cfLineExpanded)
+	}
+}
+
+func TestFieldAtLineBigNotes(t *testing.T) {
+	m := NewDetailModel(bigNotesEntry(), config.Default())
+	m.SetSize(80, 24)
+
+	// Line 3 = TOTP
+	if idx, ok := m.fieldAtLine(3); !ok || idx != 3 {
+		t.Errorf("fieldAtLine(3) = (%d, %v), want (3, true) for TOTP", idx, ok)
+	}
+
+	// Line 4 = Notes label
+	if idx, ok := m.fieldAtLine(4); !ok || idx != 4 {
+		t.Errorf("fieldAtLine(4) = (%d, %v), want (4, true) for Notes label", idx, ok)
+	}
+
+	// Lines 5-9 = Notes body (should also map to Notes field)
+	for line := 5; line <= 9; line++ {
+		if idx, ok := m.fieldAtLine(line); !ok || idx != 4 {
+			t.Errorf("fieldAtLine(%d) = (%d, %v), want (4, true) for Notes body", line, idx, ok)
+		}
+	}
+
+	// Line 10 = hint line (inside notes total)
+	if idx, ok := m.fieldAtLine(10); !ok || idx != 4 {
+		t.Errorf("fieldAtLine(10) = (%d, %v), want (4, true) for Notes hint", idx, ok)
+	}
+}

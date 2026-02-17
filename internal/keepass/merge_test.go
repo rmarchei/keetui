@@ -164,6 +164,68 @@ func TestMergePreview(t *testing.T) {
 	}
 }
 
+func TestMergeSkipsOlderEntries(t *testing.T) {
+	dir := t.TempDir()
+	password := "testmaster"
+
+	// Create a DB with an entry and save it
+	basePath := filepath.Join(dir, "base.kdbx")
+	base, err := Create(basePath, password)
+	if err != nil {
+		t.Fatalf("Create base: %v", err)
+	}
+	root := base.RootGroup()
+	uuid, err := base.AddEntry(root.UUID, Entry{
+		Title:    "Shared Entry",
+		UserName: "user",
+		Password: "originalpass",
+	})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	if err := base.SaveAs(basePath); err != nil {
+		t.Fatalf("SaveAs base: %v", err)
+	}
+
+	// Open the same file as the source (has original timestamp)
+	source, err := Open(basePath, password)
+	if err != nil {
+		t.Fatalf("Open source: %v", err)
+	}
+
+	// Reopen as target and update the entry (makes it newer)
+	target, err := Open(basePath, password)
+	if err != nil {
+		t.Fatalf("Open target: %v", err)
+	}
+	if err := target.UpdateEntry(uuid, Entry{
+		Title:    "Shared Entry",
+		UserName: "user",
+		Password: "updatedpass",
+	}); err != nil {
+		t.Fatalf("UpdateEntry target: %v", err)
+	}
+
+	// Merge source into target — source entry is older, should be skipped
+	result, err := target.Merge(source)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	if result.EntriesSkipped != 1 {
+		t.Errorf("EntriesSkipped = %d, want 1 (older entry should be skipped)", result.EntriesSkipped)
+	}
+
+	// Verify target entry was NOT overwritten
+	entry, err := target.GetEntry(uuid)
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if entry.Password != "updatedpass" {
+		t.Errorf("password = %q, want %q (should not be overwritten by older source)", entry.Password, "updatedpass")
+	}
+}
+
 func TestMergePreviewDoesNotModify(t *testing.T) {
 	dir := t.TempDir()
 	password := "testmaster"

@@ -1,6 +1,10 @@
 package ui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/tobischo/gokeepasslib/v3"
+)
 
 func TestUndoStackPushPop(t *testing.T) {
 	var s undoStack
@@ -68,5 +72,86 @@ func TestUndoStackClear(t *testing.T) {
 	_, ok := s.pop()
 	if ok {
 		t.Error("pop after clear should return false")
+	}
+}
+
+func TestUndoStackPreservesMetadata(t *testing.T) {
+	var s undoStack
+
+	testUUID := gokeepasslib.NewUUID()
+	parentUUID := gokeepasslib.NewUUID()
+
+	s.push(undoAction{
+		actionType:  undoDeleteEntry,
+		description: "Delete test entry",
+		entryUUID:   testUUID,
+		parentUUID:  parentUUID,
+	})
+
+	a, ok := s.pop()
+	if !ok {
+		t.Fatal("pop should return true")
+	}
+	if a.actionType != undoDeleteEntry {
+		t.Errorf("actionType = %d, want %d (undoDeleteEntry)", a.actionType, undoDeleteEntry)
+	}
+	if a.entryUUID != testUUID {
+		t.Error("entryUUID not preserved")
+	}
+	if a.parentUUID != parentUUID {
+		t.Error("parentUUID not preserved")
+	}
+}
+
+func TestUndoStackMaxSizeEvictsOldest(t *testing.T) {
+	var s undoStack
+
+	// Push maxUndoStack+5 items, verify oldest are evicted
+	for i := 0; i < maxUndoStack+5; i++ {
+		s.push(undoAction{description: "item"})
+	}
+
+	if s.length() != maxUndoStack {
+		t.Errorf("length = %d, want %d", s.length(), maxUndoStack)
+	}
+
+	// All pops should succeed
+	for i := 0; i < maxUndoStack; i++ {
+		_, ok := s.pop()
+		if !ok {
+			t.Fatalf("pop %d should return true", i)
+		}
+	}
+
+	// Next pop should fail
+	_, ok := s.pop()
+	if ok {
+		t.Error("pop from empty stack should return false")
+	}
+}
+
+func TestUndoStackActionTypes(t *testing.T) {
+	var s undoStack
+
+	// Verify all action types can be pushed and popped
+	types := []undoActionType{
+		undoDeleteEntry, undoDeleteGroup, undoEditEntry,
+		undoRenameGroup, undoMoveEntry, undoMoveGroup,
+		undoDuplicateEntry, undoAddEntry, undoAddGroup,
+		undoToggleFavorite,
+	}
+	for _, at := range types {
+		s.push(undoAction{actionType: at})
+	}
+
+	// Pop in reverse order
+	for i := len(types) - 1; i >= 0; i-- {
+		a, ok := s.pop()
+		if !ok {
+			t.Fatalf("pop for type %d should return true", types[i])
+		}
+		if a.actionType != types[i] {
+			t.Errorf("actionType = %d, want %d", a.actionType, types[i])
+		}
 	}
 }

@@ -152,6 +152,49 @@ func TestAuditSkipsRecycleBin(t *testing.T) {
 	}
 }
 
+func TestAuditEntryMultipleCategories(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	db, err := Create(dbPath, password)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	root := db.RootGroup()
+	// Add an entry that is weak AND expired
+	_, _ = db.AddEntry(root.UUID, Entry{
+		Title:      "Weak and Expired",
+		UserName:   "user",
+		Password:   "123",
+		Expires:    true,
+		ExpiryTime: time.Now().Add(-24 * time.Hour),
+	})
+
+	result := db.Audit()
+
+	foundWeak := false
+	for _, ae := range result.WeakEntries {
+		if ae.Entry.Title == "Weak and Expired" {
+			foundWeak = true
+		}
+	}
+	foundExpired := false
+	for _, ae := range result.ExpiredEntries {
+		if ae.Entry.Title == "Weak and Expired" {
+			foundExpired = true
+		}
+	}
+
+	if !foundWeak {
+		t.Error("entry should appear in WeakEntries")
+	}
+	if !foundExpired {
+		t.Error("entry should appear in ExpiredEntries")
+	}
+}
+
 func TestAuditEmptyDatabase(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.kdbx")

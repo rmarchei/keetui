@@ -88,6 +88,54 @@ func TestEvaluatePasswordStrengthCharClasses(t *testing.T) {
 	}
 }
 
+func TestEntropyToScoreBoundaries(t *testing.T) {
+	// Verify the exact boundaries: <28 Weak, <36 Fair, <60 Good, <80 Strong, >=80 Excellent
+	tests := []struct {
+		name    string
+		entropy float64
+		want    StrengthLevel
+	}{
+		{"0 bits", 0, StrengthWeak},
+		{"27.9 bits", 27.9, StrengthWeak},
+		{"28 bits", 28, StrengthFair},
+		{"35.9 bits", 35.9, StrengthFair},
+		{"36 bits", 36, StrengthGood},
+		{"59.9 bits", 59.9, StrengthGood},
+		{"60 bits", 60, StrengthStrong},
+		{"79.9 bits", 79.9, StrengthStrong},
+		{"80 bits", 80, StrengthExcellent},
+		{"100 bits", 100, StrengthExcellent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := entropyToScore(tt.entropy)
+			if got != tt.want {
+				t.Errorf("entropyToScore(%v) = %v (%s), want %v (%s)",
+					tt.entropy, got, got.String(), tt.want, tt.want.String())
+			}
+		})
+	}
+}
+
+func TestSequentialAndRepeatedPenalties(t *testing.T) {
+	// Sequential: "abcdef" has 5 sequential pairs, penalty = 5*2 = 10
+	seqResult := EvaluatePasswordStrength("abcdef")
+	// Same length, no sequences: "afbgch"
+	noSeqResult := EvaluatePasswordStrength("afbgch")
+	if seqResult.Entropy >= noSeqResult.Entropy {
+		t.Errorf("sequential 'abcdef' entropy (%v) should be less than non-sequential 'afbgch' (%v)",
+			seqResult.Entropy, noSeqResult.Entropy)
+	}
+
+	// Repeated: "aaaaaa" has 5 repeat pairs (>2), penalty = 5*2 = 10
+	repResult := EvaluatePasswordStrength("aaaaaa")
+	noRepResult := EvaluatePasswordStrength("afbgch")
+	if repResult.Entropy >= noRepResult.Entropy {
+		t.Errorf("repeated 'aaaaaa' entropy (%v) should be less than 'afbgch' (%v)",
+			repResult.Entropy, noRepResult.Entropy)
+	}
+}
+
 func TestStrengthLevelString(t *testing.T) {
 	tests := []struct {
 		level StrengthLevel
