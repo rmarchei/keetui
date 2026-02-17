@@ -72,11 +72,13 @@ type DetailModel struct {
 	selectedField int // index into selectableFields()
 
 	// Attachment mode state
-	attachMode       bool
-	attachIdx        int
-	addingAttachment bool            // true when file path input is shown
-	attachPathInput  textinput.Model // input for file path when adding attachment
-	keys             config.KeyBindings
+	attachMode           bool
+	attachIdx            int
+	addingAttachment     bool            // true when file path input is shown for adding
+	extractingAttachment bool            // true when file path input is shown for extracting
+	extractAttachName    string          // name of attachment being extracted
+	attachPathInput      textinput.Model // input for file path (add or extract)
+	keys                 config.KeyBindings
 }
 
 // selectableField represents a field the user can highlight and act on.
@@ -568,7 +570,7 @@ func (m DetailModel) buildContent() string {
 		}
 	}
 
-	if m.addingAttachment {
+	if m.addingAttachment || m.extractingAttachment {
 		b.WriteString("\n")
 		b.WriteString(m.attachPathInput.View())
 		b.WriteString("\n")
@@ -645,6 +647,40 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// File path input mode for extracting attachments
+		if m.extractingAttachment {
+			switch msg.String() {
+			case "esc":
+				m.extractingAttachment = false
+				m.attachPathInput.Blur()
+				m.attachPathInput.SetValue("")
+				if m.ready {
+					m.viewport.SetContent(m.buildContent())
+				}
+				return m, nil
+			case "enter":
+				path := strings.TrimSpace(m.attachPathInput.Value())
+				if path != "" {
+					m.extractingAttachment = false
+					m.attachPathInput.Blur()
+					m.attachPathInput.SetValue("")
+					entryUUID := m.entry.UUID
+					name := m.extractAttachName
+					return m, func() tea.Msg {
+						return ExtractAttachmentMsg{EntryUUID: entryUUID, Name: name, DestPath: path}
+					}
+				}
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.attachPathInput, cmd = m.attachPathInput.Update(msg)
+				if m.ready {
+					m.viewport.SetContent(m.buildContent())
+				}
+				return m, cmd
+			}
+		}
+
 		// Attachment selection mode
 		if m.attachMode {
 			switch msg.String() {
@@ -673,14 +709,17 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "s", "enter":
 				if len(m.attachments) > 0 {
 					a := m.attachments[m.attachIdx]
-					entryUUID := m.entry.UUID
-					return m, func() tea.Msg {
-						return ExtractAttachmentMsg{
-							EntryUUID: entryUUID,
-							Name:      a.Name,
-							DestPath:  filepath.Base(a.Name), // strip directory components for safety
-						}
+					m.extractingAttachment = true
+					m.extractAttachName = a.Name
+					m.attachPathInput.Prompt = "  Save to: "
+					m.attachPathInput.Placeholder = "/path/to/save"
+					m.attachPathInput.SetValue(filepath.Base(a.Name))
+					m.attachPathInput.CursorEnd()
+					m.attachPathInput.Focus()
+					if m.ready {
+						m.viewport.SetContent(m.buildContent())
 					}
+					return m, textinput.Blink
 				}
 				return m, nil
 			case "d":
