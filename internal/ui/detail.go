@@ -626,7 +626,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "enter":
-				path := m.attachPathInput.Value()
+				path := cleanInputPath(m.attachPathInput.Value())
 				if path != "" {
 					m.addingAttachment = false
 					m.attachPathInput.Blur()
@@ -659,7 +659,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "enter":
-				path := strings.TrimSpace(m.attachPathInput.Value())
+				path := cleanInputPath(m.attachPathInput.Value())
 				if path != "" {
 					m.extractingAttachment = false
 					m.attachPathInput.Blur()
@@ -984,6 +984,22 @@ func renderStrengthDetail(s keepass.StrengthResult) string {
 		hiddenStyle.Render(fmt.Sprintf("len:%d", s.Length)))
 
 	return base + classes
+}
+
+// cleanInputPath strips surrounding quotes and backslash escapes that terminals
+// insert when a file is dragged into the window (e.g. '/path/to/file' or
+// /path/to/my\ file.txt), then trims whitespace.
+func cleanInputPath(raw string) string {
+	s := strings.TrimSpace(raw)
+	// Strip matching quotes
+	if len(s) >= 2 {
+		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
+			s = s[1 : len(s)-1]
+		}
+	}
+	// Remove backslash escapes (e.g. "my\ file" -> "my file")
+	s = strings.ReplaceAll(s, "\\ ", " ")
+	return strings.TrimSpace(s)
 }
 
 func formatAttachmentSize(bytes int) string {
