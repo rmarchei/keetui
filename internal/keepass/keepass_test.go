@@ -336,6 +336,10 @@ func TestTOTPSecret(t *testing.T) {
 	}{
 		{"empty", "", ""},
 		{"raw base32", "JBSWY3DPEHPK3PXP", "JBSWY3DPEHPK3PXP"},
+		{"base32 with spaces", "JBSW Y3DP EHPK 3PXP", "JBSWY3DPEHPK3PXP"},
+		{"base32 with hyphens", "JBSW-Y3DP-EHPK-3PXP", "JBSWY3DPEHPK3PXP"},
+		{"base32 with spaces and hyphens", "JBSW Y3DP-EHPK 3PXP", "JBSWY3DPEHPK3PXP"},
+		{"lowercase with spaces", "d7pr o4x7 e3g6 5wt2 yaf7 kkdm di", "d7pro4x7e3g65wt2yaf7kkdmdi"},
 		{"otpauth URI", "otpauth://totp/Example:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example", "JBSWY3DPEHPK3PXP"},
 		{"otpauth with period", "otpauth://totp/Test?secret=ABCDEFGH&period=60", "ABCDEFGH"},
 	}

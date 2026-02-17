@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tobischo/gokeepasslib/v3"
@@ -20,8 +21,8 @@ const (
 	fieldUserName
 	fieldPassword
 	fieldURL
-	fieldNotes
 	fieldTOTP
+	fieldNotes
 	fieldExpiry
 	fixedFieldCount // number of built-in fields
 )
@@ -31,9 +32,9 @@ var fieldLabels = [fixedFieldCount]string{
 	"Username",
 	"Password",
 	"URL",
+	"TOTP",
 	"Notes",
-	"TOTP Secret",
-	"Expiry (YYYY-MM-DD)",
+	"Expiry",
 }
 
 // maskPasswordMsg is sent after a delay to re-mask a password field.
@@ -44,6 +45,7 @@ type maskPasswordMsg struct {
 // EditorModel handles creating or editing an entry.
 type EditorModel struct {
 	inputs        [fixedFieldCount]textinput.Model
+	notesInput    textarea.Model // multi-line notes editor
 	customInputs  []customFieldInput
 	focused       int
 	isNew         bool
@@ -90,13 +92,26 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 	inputs[fieldTOTP].EchoMode = textinput.EchoPassword
 	inputs[fieldTOTP].EchoCharacter = '*'
 	inputs[fieldTOTP].Placeholder = "base32 secret or otpauth:// URI"
-	inputs[fieldExpiry].Placeholder = "blank = no expiry"
+	inputs[fieldExpiry].Placeholder = "YYYY-MM-DD (blank = no expiry)"
+
+	// Notes uses a multi-line textarea instead of textinput.
+	ta := textarea.New()
+	ta.Prompt = "  "
+	ta.ShowLineNumbers = false
+	ta.SetHeight(4)
+	ta.SetWidth(54)
+	ta.CharLimit = 0 // no limit
+	// Disable Tab in textarea so our editor Tab navigation works.
+	km := ta.KeyMap
+	km.InsertNewline.SetEnabled(true)
+	ta.KeyMap = km
 
 	m := EditorModel{
-		inputs:    inputs,
-		groupUUID: groupUUID,
-		isNew:     entry == nil,
-		cfg:       cfg,
+		inputs:     inputs,
+		notesInput: ta,
+		groupUUID:  groupUUID,
+		isNew:      entry == nil,
+		cfg:        cfg,
 	}
 
 	if entry != nil {
@@ -105,7 +120,7 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 		inputs[fieldUserName].SetValue(entry.UserName)
 		inputs[fieldPassword].SetValue(entry.Password)
 		inputs[fieldURL].SetValue(entry.URL)
-		inputs[fieldNotes].SetValue(entry.Notes)
+		m.notesInput.SetValue(entry.Notes)
 		inputs[fieldTOTP].SetValue(entry.TOTP)
 		if entry.Expires && !entry.ExpiryTime.IsZero() {
 			inputs[fieldExpiry].SetValue(entry.ExpiryTime.Local().Format("2006-01-02"))
@@ -167,17 +182,24 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
 			// Header: 1 blank + 1 title + 1 blank = 3 lines
 			row := msg.Y - 3
-			if row >= 0 && row < fixedFieldCount {
-				m.focused = row
-				return m, m.updateFocus()
-			}
-			// Custom fields start after fixed fields + 1 blank + 1 "Custom Fields:" header
-			cfStart := fixedFieldCount + 2
-			cfRow := msg.Y - 3 - cfStart
-			if len(m.customInputs) > 0 && cfRow >= 0 && cfRow < len(m.customInputs) {
-				// Each custom field row has key + value; click focuses the key
-				m.focused = fixedFieldCount + cfRow*2
-				return m, m.updateFocus()
+			// Notes field has a label line + textarea height, so fields after
+			// notes are shifted down by (notesHeight - 1 + 1 for label) extra rows.
+			notesExtraRows := m.notesInput.Height() // label + textarea - 1 regular row
+			if row >= 0 {
+				if row < fieldNotes {
+					m.focused = row
+					return m, m.updateFocus()
+				}
+				if row >= fieldNotes && row < fieldNotes+notesExtraRows+1 {
+					m.focused = fieldNotes
+					return m, m.updateFocus()
+				}
+				// Adjust row for fields after notes
+				adjustedRow := row - notesExtraRows
+				if adjustedRow >= fieldNotes+1 && adjustedRow < fixedFieldCount {
+					m.focused = adjustedRow
+					return m, m.updateFocus()
+				}
 			}
 		}
 		return m, nil
@@ -280,7 +302,9 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	if m.focused < fixedFieldCount {
+	if m.focused == fieldNotes {
+		m.notesInput, cmd = m.notesInput.Update(msg)
+	} else if m.focused < fixedFieldCount {
 		m.inputs[m.focused], cmd = m.inputs[m.focused].Update(msg)
 	} else {
 		cfIdx := (m.focused - fixedFieldCount) / 2
@@ -328,6 +352,9 @@ func (m *EditorModel) updateFocus() tea.Cmd {
 
 	var cmds []tea.Cmd
 	for i := range m.inputs {
+		if i == fieldNotes {
+			continue // notes uses textarea, handled below
+		}
 		if i == m.focused {
 			cmds = append(cmds, m.inputs[i].Focus())
 			m.inputs[i].TextStyle = focusedStyle
@@ -335,6 +362,13 @@ func (m *EditorModel) updateFocus() tea.Cmd {
 			m.inputs[i].Blur()
 			m.inputs[i].TextStyle = blurredStyle
 		}
+	}
+	// Notes textarea focus
+	if m.focused == fieldNotes {
+		m.notesInput.Focus()
+	} else {
+		m.notesInput.Blur()
+		m.notesInput.SetCursor(0)
 	}
 	for ci := range m.customInputs {
 		keyIdx := fixedFieldCount + ci*2
@@ -417,7 +451,7 @@ func (m EditorModel) save() (tea.Model, tea.Cmd) {
 			UserName:   m.inputs[fieldUserName].Value(),
 			Password:   m.inputs[fieldPassword].Value(),
 			URL:        m.inputs[fieldURL].Value(),
-			Notes:      m.inputs[fieldNotes].Value(),
+			Notes:      m.notesInput.Value(),
 			TOTP:       m.inputs[fieldTOTP].Value(),
 			Expires:    hasExpiry,
 			ExpiryTime: expiryTime,
@@ -454,6 +488,13 @@ func (m EditorModel) View() string {
 	b.WriteString("\n\n")
 
 	for i := range m.inputs {
+		if i == fieldNotes {
+			// Render multi-line textarea for notes
+			b.WriteString(fmt.Sprintf("  %s\n", labelStyle.Render("Notes:")))
+			b.WriteString(m.notesInput.View())
+			b.WriteString("\n")
+			continue
+		}
 		b.WriteString(m.inputs[i].View())
 		if i == fieldPassword && m.cfg.ShowPasswordStrength {
 			// Show password strength with character class breakdown

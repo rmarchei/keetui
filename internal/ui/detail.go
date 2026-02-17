@@ -18,6 +18,9 @@ import (
 	"github.com/rmarchei/keetui/internal/keepass"
 )
 
+// maxNoteLines is the number of note body lines shown before truncation.
+const maxNoteLines = 5
+
 // totpTickMsg is sent every second to refresh the TOTP code.
 type totpTickMsg time.Time
 
@@ -66,7 +69,8 @@ type DetailModel struct {
 	ready          bool // true after first size is set
 	cfg            config.Config
 
-	readOnly bool // when true, edit and attachment mutations are suppressed
+	readOnly      bool // when true, edit and attachment mutations are suppressed
+	notesExpanded bool // true when long notes are fully shown
 
 	// Field selection
 	selectedField int // index into selectableFields()
@@ -95,11 +99,15 @@ func (m DetailModel) selectableFields() []selectableField {
 	f = append(f, selectableField{label: "username", value: m.entry.UserName})
 	f = append(f, selectableField{label: "password", value: m.entry.Password, protected: true})
 	f = append(f, selectableField{label: "URL", value: m.entry.URL})
-	if m.totpCode != "" {
-		f = append(f, selectableField{label: "TOTP", value: m.totpCode, qrValue: m.entry.TOTP, protected: true})
+	if m.entry.TOTP != "" {
+		val := m.totpCode
+		if val == "" {
+			val = m.entry.TOTP // fallback to raw secret when code generation fails
+		}
+		f = append(f, selectableField{label: "TOTP", value: val, qrValue: m.entry.TOTP, protected: true})
 	}
 	if m.entry.Notes != "" {
-		f = append(f, selectableField{label: "notes", value: m.entry.Notes})
+		f = append(f, selectableField{label: "Notes", value: m.entry.Notes})
 	}
 	for _, cf := range m.entry.CustomFields {
 		f = append(f, selectableField{label: cf.Key, value: cf.Value, protected: cf.Protected})
@@ -138,7 +146,7 @@ func (m DetailModel) fieldAtLine(line int) (int, bool) {
 	currentLine++
 
 	// TOTP (1 line, optional)
-	if m.totpCode != "" {
+	if m.entry.TOTP != "" {
 		if line == currentLine {
 			return fieldIdx, true
 		}
@@ -146,10 +154,9 @@ func (m DetailModel) fieldAtLine(line int) (int, bool) {
 		currentLine++
 	}
 
-	// Notes (1 label line + N body lines, optional)
+	// Notes (1 label line + visible body lines, optional)
 	if m.entry.Notes != "" {
-		bodyLines := len(strings.Split(m.entry.Notes, "\n"))
-		totalNotesLines := 1 + bodyLines // label + body
+		totalNotesLines := 1 + m.notesBodyLines() // label + body
 		if line == currentLine {
 			return fieldIdx, true // click on "Notes:" label
 		}
@@ -235,6 +242,20 @@ func (m *DetailModel) RefreshContent() {
 	}
 }
 
+// notesBodyLines returns the number of visible body lines rendered for the notes
+// field, including the hint line when notes are truncated.
+func (m DetailModel) notesBodyLines() int {
+	if m.entry.Notes == "" {
+		return 0
+	}
+	noteLines := strings.Split(m.entry.Notes, "\n")
+	bodyLines := len(noteLines)
+	if len(noteLines) > maxNoteLines && !m.notesExpanded {
+		bodyLines = maxNoteLines + 1 // truncated lines + "(N more lines)" hint
+	}
+	return bodyLines
+}
+
 // lineForField returns the content line number for the given selectable field index.
 func (m DetailModel) lineForField(fieldIdx int) int {
 	idx := 0
@@ -262,7 +283,7 @@ func (m DetailModel) lineForField(fieldIdx int) int {
 	line++
 
 	// TOTP (optional, 1 line)
-	if m.totpCode != "" {
+	if m.entry.TOTP != "" {
 		if idx == fieldIdx {
 			return line
 		}
@@ -270,13 +291,13 @@ func (m DetailModel) lineForField(fieldIdx int) int {
 		line++
 	}
 
-	// Notes (optional, 1 label line + N body lines)
+	// Notes (optional, 1 label line + visible body lines)
 	if m.entry.Notes != "" {
 		if idx == fieldIdx {
 			return line
 		}
 		idx++
-		line += 1 + len(strings.Split(m.entry.Notes, "\n"))
+		line += 1 + m.notesBodyLines()
 	}
 
 	// Timestamps (non-selectable)
@@ -487,19 +508,25 @@ func (m DetailModel) buildContent() string {
 		labelStyle.Render("URL:"),
 		valueStyle.Render(m.entry.URL)))
 
-	if m.totpCode != "" {
+	if m.entry.TOTP != "" {
 		if m.revealedFields["TOTP"] {
 			b.WriteString(fmt.Sprintf("%s%s %s\n",
 				cursor(),
 				labelStyle.Render("TOTP:"),
 				valueStyle.Render(m.entry.TOTP)))
-		} else {
+		} else if m.totpCode != "" {
 			bar := totpCountdownBar(m.totpRemain, int(keepass.TOTPPeriod(m.entry.TOTP)))
 			b.WriteString(fmt.Sprintf("%s%s %s  %s\n",
 				cursor(),
 				labelStyle.Render("TOTP:"),
 				valueStyle.Render(m.totpCode),
 				helpStyle.Render(fmt.Sprintf("%s %ds", bar, m.totpRemain))))
+		} else {
+			// TOTP secret exists but code generation failed; show masked
+			b.WriteString(fmt.Sprintf("%s%s %s\n",
+				cursor(),
+				labelStyle.Render("TOTP:"),
+				hiddenStyle.Render(strings.Repeat("*", len(m.entry.TOTP)))))
 		}
 	}
 
@@ -507,10 +534,18 @@ func (m DetailModel) buildContent() string {
 		b.WriteString(fmt.Sprintf("%s%s\n",
 			cursor(),
 			labelStyle.Render("Notes:")))
-		for _, line := range strings.Split(m.entry.Notes, "\n") {
-			b.WriteString(fmt.Sprintf("  %s%s\n",
-				strings.Repeat(" ", 13),
-				valueStyle.Render(line)))
+		noteLines := strings.Split(m.entry.Notes, "\n")
+		show := noteLines
+		if len(noteLines) > maxNoteLines && !m.notesExpanded {
+			show = noteLines[:maxNoteLines]
+		}
+		indent := strings.Repeat(" ", 13)
+		for _, line := range show {
+			b.WriteString(fmt.Sprintf("  %s%s\n", indent, valueStyle.Render(line)))
+		}
+		if len(noteLines) > maxNoteLines && !m.notesExpanded {
+			b.WriteString(fmt.Sprintf("  %s%s\n", indent,
+				helpStyle.Render(fmt.Sprintf("(%d more lines — p to expand)", len(noteLines)-maxNoteLines))))
 		}
 	}
 
@@ -776,6 +811,16 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		switch key {
 		case "j", "down":
+			// When notes are expanded, scroll within the notes body before
+			// moving to the next field so the user can read all content.
+			if m.notesExpanded && m.selectedField < len(fields) && fields[m.selectedField].label == "Notes" {
+				notesStart := m.lineForField(m.selectedField)
+				notesEnd := notesStart + 1 + m.notesBodyLines()
+				if m.viewport.YOffset+m.viewport.Height < notesEnd {
+					m.viewport.LineDown(1)
+					return m, nil
+				}
+			}
 			if m.selectedField < len(fields)-1 {
 				m.selectedField++
 				m.refreshContentAndFollow()
@@ -783,6 +828,15 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case "k", "up":
+			// When notes are expanded, scroll within the notes body before
+			// moving to the previous field.
+			if m.notesExpanded && m.selectedField < len(fields) && fields[m.selectedField].label == "Notes" {
+				notesStart := m.lineForField(m.selectedField)
+				if m.viewport.YOffset > notesStart {
+					m.viewport.LineUp(1)
+					return m, nil
+				}
+			}
 			if m.selectedField > 0 {
 				m.selectedField--
 				m.refreshContentAndFollow()
@@ -812,11 +866,12 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.keys.TogglePassword:
 			if m.selectedField < len(fields) {
 				f := fields[m.selectedField]
-				if f.protected {
+				if f.label == "Notes" {
+					m.notesExpanded = !m.notesExpanded
+					m.refreshContentAndFollow()
+				} else if f.protected {
 					m.revealedFields[f.label] = !m.revealedFields[f.label]
-					if m.ready {
-						m.viewport.SetContent(m.buildContent())
-					}
+					m.refreshContentAndFollow()
 				}
 			}
 			return m, nil

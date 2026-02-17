@@ -977,6 +977,8 @@ func extractTOTP(e gokeepasslib.Entry) string {
 
 // TOTPSecret extracts the base32 secret from a TOTP value.
 // The value may be a raw base32 string or an otpauth:// URI.
+// Spaces and hyphens are stripped since base32 secrets are often
+// displayed with separators for readability.
 func TOTPSecret(totp string) string {
 	if totp == "" {
 		return ""
@@ -988,7 +990,9 @@ func TOTPSecret(totp string) string {
 		}
 		return u.Query().Get("secret")
 	}
-	return totp
+	s := strings.ReplaceAll(totp, " ", "")
+	s = strings.ReplaceAll(s, "-", "")
+	return s
 }
 
 // TOTPPeriod extracts the period (in seconds) from a TOTP value.
