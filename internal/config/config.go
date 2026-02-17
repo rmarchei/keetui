@@ -19,6 +19,7 @@ type Config struct {
 	PasswordLowercase     *bool        `json:"password_lowercase,omitempty"`
 	PasswordDigits        *bool        `json:"password_digits,omitempty"`
 	PasswordSymbols       *bool        `json:"password_symbols,omitempty"`
+	DefaultPreset         string       `json:"default_preset,omitempty"`
 	ThemeName             string       `json:"theme,omitempty"`
 	ConfirmQuit           *bool        `json:"confirm_quit,omitempty"`
 	BackupOnSave          *bool        `json:"backup_on_save,omitempty"`
@@ -118,6 +119,14 @@ func (c Config) ConfirmOnQuit() bool {
 // BackupEnabled returns whether a .bak copy should be created before saving.
 func (c Config) BackupEnabled() bool {
 	return c.BackupOnSave != nil && *c.BackupOnSave
+}
+
+// Preset returns the configured default preset name, defaulting to "Strong".
+func (c Config) Preset() string {
+	if c.DefaultPreset == "" {
+		return "Strong"
+	}
+	return c.DefaultPreset
 }
 
 // Theme returns the configured theme name, defaulting to "dark".

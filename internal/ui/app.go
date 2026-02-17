@@ -34,6 +34,7 @@ const (
 	viewAudit
 	viewHelp
 	viewPathInput
+	viewPresetPicker
 )
 
 // clipboardClearMsg signals that the clipboard should be cleared.
@@ -108,6 +109,7 @@ type AppModel struct {
 	audit        AuditModel
 	help         HelpModel
 	pathInput    PathInputModel
+	presetPicker PresetPickerModel
 	width        int
 	height       int
 	lastActivity time.Time // tracks last user interaction for auto-lock
@@ -618,6 +620,26 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewSettings
 		return m, m.settings.Init()
 
+	case ShowPresetPickerMsg:
+		m.presetPicker = NewPresetPickerModel(m.cfg, msg.CurrentPassword)
+		m.presetPicker.width = m.width
+		m.presetPicker.height = m.viewHeight()
+		m.state = viewPresetPicker
+		return m, m.presetPicker.Init()
+
+	case GeneratedPasswordMsg:
+		cmd := m.editor.SetGeneratedPassword(msg.Password)
+		m.state = viewEditor
+		return m, tea.Batch(cmd, statusCmd("Password generated", false))
+
+	case CancelPresetMsg:
+		m.state = viewEditor
+		return m, nil
+
+	case DefaultPresetChangedMsg:
+		m.cfg = msg.Cfg
+		return m, statusCmd("Default preset updated", false)
+
 	case ConfigSavedMsg:
 		m.cfg = msg.Cfg
 		if m.db != nil {
@@ -859,6 +881,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var updated tea.Model
 		updated, cmd = m.pathInput.Update(msg)
 		m.pathInput = updated.(PathInputModel)
+	case viewPresetPicker:
+		var updated tea.Model
+		updated, cmd = m.presetPicker.Update(msg)
+		m.presetPicker = updated.(PresetPickerModel)
 	}
 
 	return m, cmd
@@ -893,6 +919,8 @@ func (m AppModel) View() string {
 		view = m.help.View()
 	case viewPathInput:
 		view = m.pathInput.View()
+	case viewPresetPicker:
+		view = m.presetPicker.View()
 	}
 	return view + "\n" + m.statusBar()
 }

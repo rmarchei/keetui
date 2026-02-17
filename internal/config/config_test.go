@@ -291,3 +291,17 @@ func TestBackupEnabledSet(t *testing.T) {
 		t.Error("BackupEnabled() should be true when set")
 	}
 }
+
+func TestPresetDefault(t *testing.T) {
+	cfg := Default()
+	if got := cfg.Preset(); got != "Strong" {
+		t.Errorf("Preset() = %q, want %q", got, "Strong")
+	}
+}
+
+func TestPresetCustom(t *testing.T) {
+	cfg := Config{DefaultPreset: "PIN"}
+	if got := cfg.Preset(); got != "PIN" {
+		t.Errorf("Preset() = %q, want %q", got, "PIN")
+	}
+}

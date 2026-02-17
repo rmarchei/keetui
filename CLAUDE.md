@@ -42,6 +42,7 @@ keetui/
 │       ├── history.go           # Entry password history view
 │       ├── password.go          # Master password change dialog
 │       ├── path_input.go        # Save-as file path input
+│       ├── preset.go            # Password generation preset picker
 │       ├── settings.go          # Settings editor view
 │       ├── stats.go             # Database stats view
 │       ├── styles.go            # Lip Gloss style definitions
@@ -87,7 +88,7 @@ The application follows the **Bubble Tea Model-View-Update (MVU)** pattern:
 ```
 UnlockModel → BrowserModel ↔ DetailModel
                    ↕              ↓
-              GroupInputModel  EditorModel
+              GroupInputModel  EditorModel ↔ PresetPickerModel
                    ↕              ↕
               ConfirmModel    ConfirmModel
                    ↕
@@ -148,6 +149,7 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 | `auto_lock_minutes` | 5 | Minutes of inactivity before database is locked (0: disable, min: 5) |
 | `password_length` | 20 | Default length for generated passwords (min: 8) |
 | `show_password_strength` | true | Show password strength indicator in detail and editor views |
+| `default_preset` | `"Strong"` | Default password preset: `PIN`, `Alphanumeric`, `Strong`, `Passphrase`, `Custom` |
 | `theme` | `"dark"` | Color theme: `dark`, `light`, or `high-contrast` |
 | `backup_on_save` | false | Create `.kdbx.bak` backup before each save |
 | `keybindings` | (object) | Override default keybindings (see `keybindings.go` for keys) |

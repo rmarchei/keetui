@@ -20,7 +20,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Copy username, password, URL, or TOTP code to clipboard (auto-cleared after 15s)
 - Mouse support -- click to select fields and entries, scroll wheel navigation
 - Open entry URL in system browser
-- Password generator for creating strong random passwords and diceware passphrases
+- Password generator with preset picker (PIN, Alphanumeric, Strong, Passphrase, Like current, Custom)
 - Password strength indicator with character class breakdown and HIBP breach check
 - Create, edit, and delete entries and groups
 - Rename groups
@@ -179,8 +179,7 @@ All keybindings shown below are defaults and can be customized via the config fi
 |-----|--------|
 | `Tab` / `Shift+Tab` | Navigate fields |
 | `Ctrl+R` | Toggle password/TOTP visibility |
-| `Ctrl+G` | Generate random password |
-| `Ctrl+P` | Generate diceware passphrase |
+| `Ctrl+G` | Generate password (preset picker) |
 | `Ctrl+A` | Add custom field |
 | `Ctrl+D` | Delete current custom field |
 | `Ctrl+S` | Save |
@@ -223,6 +222,7 @@ Settings are stored in `~/.config/keetui/config.json`:
   "password_lowercase": true,
   "password_digits": true,
   "password_symbols": true,
+  "default_preset": "Strong",
   "theme": "dark",
   "confirm_quit": false,
   "backup_on_save": false
@@ -239,6 +239,7 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `password_lowercase` | true | Include lowercase letters (a-z) in generated passwords |
 | `password_digits` | true | Include digits (0-9) in generated passwords |
 | `password_symbols` | true | Include symbols (!@#$%^&*()-_=+) in generated passwords |
+| `default_preset` | `"Strong"` | Default password preset: `PIN`, `Alphanumeric`, `Strong`, `Passphrase`, `Custom` |
 | `theme` | `"dark"` | Color theme: `dark`, `light`, or `high-contrast` |
 | `confirm_quit` | false | Always confirm before quitting (even without unsaved changes) |
 | `backup_on_save` | false | Create a `.kdbx.bak` backup copy before each save |
