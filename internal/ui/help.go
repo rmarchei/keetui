@@ -108,6 +108,7 @@ func (m HelpModel) buildContent() string {
 		{"ctrl+s", "Save entry"},
 		{"ctrl+g", "Generate password (preset picker)"},
 		{"ctrl+a", "Add custom field"},
+		{"ctrl+t", "Toggle protected on custom field"},
 		{"ctrl+d", "Delete custom field"},
 		{"esc", "Cancel"},
 	})

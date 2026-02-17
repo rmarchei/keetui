@@ -181,6 +181,7 @@ All keybindings shown below are defaults and can be customized via the config fi
 | `Ctrl+R` | Toggle password/TOTP visibility |
 | `Ctrl+G` | Generate password (preset picker) |
 | `Ctrl+A` | Add custom field |
+| `Ctrl+T` | Toggle protected (hidden) on custom field |
 | `Ctrl+D` | Delete current custom field |
 | `Ctrl+S` | Save |
 | `Esc` | Cancel |
