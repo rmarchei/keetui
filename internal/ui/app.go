@@ -654,12 +654,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, statusCmd("Password not found in any known breaches", false)
 
 	case ExtractAttachmentMsg:
-		if err := m.db.ExtractAttachment(msg.EntryUUID, msg.Name, msg.DestPath); err != nil {
+		// Resolve relative paths against the database directory.
+		destPath := msg.DestPath
+		if !filepath.IsAbs(destPath) {
+			destPath = filepath.Join(filepath.Dir(m.filePath), destPath)
+		}
+		destPath = filepath.Clean(destPath)
+		if err := m.db.ExtractAttachment(msg.EntryUUID, msg.Name, destPath); err != nil {
 			return m, statusCmd(fmt.Sprintf("Error extracting attachment: %s", err), true)
 		}
 		m.detail.copied = ""
 		m.detail.RefreshContent()
-		return m, statusCmd(fmt.Sprintf("Attachment saved to %s", msg.DestPath), false)
+		return m, statusCmd(fmt.Sprintf("Attachment saved to %s", destPath), false)
 
 	case DeleteAttachmentMsg:
 		m.confirm = NewConfirmModel(fmt.Sprintf("Delete attachment %q?", msg.Name), func() tea.Msg {

@@ -54,18 +54,17 @@ func (d *DB) ExtractAttachment(entryUUID gokeepasslib.UUID, name, destPath strin
 		}
 	}
 
+	// Resolve symlinks in the parent directory so that legitimate system
+	// symlinks (e.g. /tmp -> /private/tmp on macOS) are accepted.
+	parentDir := filepath.Dir(destPath)
+	if resolvedParent, err := filepath.EvalSymlinks(parentDir); err == nil {
+		destPath = filepath.Join(resolvedParent, filepath.Base(destPath))
+	}
+
 	// Refuse to write through a symlink to prevent overwriting arbitrary files.
 	if fi, err := os.Lstat(destPath); err == nil {
 		if fi.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("destination path is a symlink, refusing to write: %q", destPath)
-		}
-	}
-
-	// Verify the parent directory exists and is not a symlink.
-	parentDir := filepath.Dir(destPath)
-	if fi, err := os.Lstat(parentDir); err == nil {
-		if fi.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("parent directory is a symlink, refusing to write: %q", parentDir)
 		}
 	}
 
