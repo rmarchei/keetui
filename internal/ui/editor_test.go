@@ -3,6 +3,7 @@ package ui
 import (
 	"testing"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tobischo/gokeepasslib/v3"
 
@@ -110,6 +111,23 @@ func TestEditorCustomFields(t *testing.T) {
 		t.Errorf("custom fields after ctrl+a = %d, want 1", len(m.customInputs))
 	}
 
+	// Toggle protected (focus is on the custom field key)
+	if m.customInputs[0].protected {
+		t.Error("new custom field should not be protected initially")
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = updated.(EditorModel)
+	if !m.customInputs[0].protected {
+		t.Error("custom field should be protected after ctrl+t")
+	}
+
+	// Toggle back
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = updated.(EditorModel)
+	if m.customInputs[0].protected {
+		t.Error("custom field should not be protected after second ctrl+t")
+	}
+
 	// Delete custom field (focus should be on the new field)
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	m = updated.(EditorModel)
@@ -156,6 +174,52 @@ func TestEditorEditExisting(t *testing.T) {
 	}
 	if len(m.customInputs) != 1 {
 		t.Errorf("custom fields = %d, want 1", len(m.customInputs))
+	}
+	if !m.customInputs[0].protected {
+		t.Error("loaded protected custom field should retain protected flag")
+	}
+	if m.customInputs[0].value.EchoMode != textinput.EchoPassword {
+		t.Error("loaded protected custom field should have EchoPassword mode")
+	}
+}
+
+func TestEditorToggleProtectedOnFixedField(t *testing.T) {
+	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
+	m.width, m.height = 80, 24
+
+	// Focus is on Title (a fixed field); ctrl+t should be a no-op
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = updated.(EditorModel)
+	// No crash, no custom fields created
+	if len(m.customInputs) != 0 {
+		t.Error("ctrl+t on fixed field should not create custom fields")
+	}
+}
+
+func TestEditorToggleProtectedSetsEchoMode(t *testing.T) {
+	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
+	m.width, m.height = 80, 24
+
+	// Add a custom field
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	m = updated.(EditorModel)
+
+	if m.customInputs[0].value.EchoMode != textinput.EchoNormal {
+		t.Error("new custom field value should have EchoNormal")
+	}
+
+	// Toggle protected on
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = updated.(EditorModel)
+	if m.customInputs[0].value.EchoMode != textinput.EchoPassword {
+		t.Error("protected custom field value should have EchoPassword")
+	}
+
+	// Toggle protected off
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	m = updated.(EditorModel)
+	if m.customInputs[0].value.EchoMode != textinput.EchoNormal {
+		t.Error("unprotected custom field value should have EchoNormal")
 	}
 }
 

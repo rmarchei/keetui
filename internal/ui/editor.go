@@ -252,6 +252,23 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "ctrl+t":
+			// Toggle protected (hidden) state on focused custom field
+			if m.focused >= fixedFieldCount && len(m.customInputs) > 0 {
+				cfIdx := (m.focused - fixedFieldCount) / 2
+				if cfIdx < len(m.customInputs) {
+					cf := &m.customInputs[cfIdx]
+					cf.protected = !cf.protected
+					if cf.protected {
+						cf.value.EchoMode = textinput.EchoPassword
+						cf.value.EchoCharacter = '*'
+					} else {
+						cf.value.EchoMode = textinput.EchoNormal
+					}
+				}
+			}
+			return m, nil
+
 		case "ctrl+a":
 			// Add a new custom field
 			m.customInputs = append(m.customInputs, newCustomFieldInput("", "", false))
@@ -508,6 +525,9 @@ func (m EditorModel) View() string {
 			b.WriteString(cf.key.View())
 			b.WriteString("  ")
 			b.WriteString(cf.value.View())
+			if cf.protected {
+				b.WriteString(hiddenStyle.Render("  [protected]"))
+			}
 			b.WriteString("\n")
 		}
 	}
@@ -525,7 +545,7 @@ func (m EditorModel) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+r: reveal  ctrl+g: gen password  ctrl+a: add field  ctrl+d: del field  ctrl+s: save  esc: cancel"))
+	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+r: reveal  ctrl+g: gen password  ctrl+a: add field  ctrl+t: protect  ctrl+d: del field  ctrl+s: save  esc: cancel"))
 	b.WriteString("\n")
 
 	return b.String()
