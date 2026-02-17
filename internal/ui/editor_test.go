@@ -63,16 +63,32 @@ func TestEditorSave(t *testing.T) {
 	}
 }
 
-func TestEditorPasswordGeneration(t *testing.T) {
+func TestEditorPasswordGenerationShowsPicker(t *testing.T) {
 	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
 	m.width, m.height = 80, 24
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
-	m = updated.(EditorModel)
+	m.inputs[fieldPassword].SetValue("existing")
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	if cmd == nil {
+		t.Fatal("ctrl+g should produce a command")
+	}
+	msg := cmd()
+	pickerMsg, ok := msg.(ShowPresetPickerMsg)
+	if !ok {
+		t.Fatalf("expected ShowPresetPickerMsg, got %T", msg)
+	}
+	if pickerMsg.CurrentPassword != "existing" {
+		t.Errorf("CurrentPassword = %q, want %q", pickerMsg.CurrentPassword, "existing")
+	}
+}
 
-	pw := m.inputs[fieldPassword].Value()
-	if len(pw) != 20 { // default password length
-		t.Errorf("generated password length = %d, want 20", len(pw))
+func TestEditorSetGeneratedPassword(t *testing.T) {
+	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
+	m.width, m.height = 80, 24
+
+	m.SetGeneratedPassword("newpass123")
+	if m.inputs[fieldPassword].Value() != "newpass123" {
+		t.Errorf("password = %q, want %q", m.inputs[fieldPassword].Value(), "newpass123")
 	}
 	if !m.generated {
 		t.Error("generated flag should be true")

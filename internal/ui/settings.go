@@ -21,6 +21,7 @@ const (
 	settingPWLowercase
 	settingPWDigits
 	settingPWSymbols
+	settingDefaultPreset
 	settingTheme
 	settingConfirmQuit
 	settingBackupOnSave
@@ -36,6 +37,7 @@ var settingLabels = [settingCount]string{
 	"Lowercase (a-z)",
 	"Digits (0-9)",
 	"Symbols (!@#...)",
+	"Default preset",
 	"Theme",
 	"Confirm on quit",
 	"Backup on save",
@@ -50,6 +52,7 @@ var settingDescriptions = [settingCount]string{
 	"Include lowercase letters in generated passwords (1: on, 0: off)",
 	"Include digits in generated passwords (1: on, 0: off)",
 	"Include symbols in generated passwords (1: on, 0: off)",
+	"Default preset: PIN, Alphanumeric, Strong, Passphrase, Custom",
 	"Color theme: dark, light, high-contrast",
 	"Always confirm before quitting (1: on, 0: off)",
 	"Create .kdbx.bak backup before each save (1: on, 0: off)",
@@ -111,8 +114,11 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 	inputs[settingPWSymbols].SetValue(boolToStr(cfg.PasswordHasSymbols()))
 	inputs[settingPWSymbols].CharLimit = 1
 
-	inputs[settingTheme].SetValue(cfg.Theme())
+	inputs[settingDefaultPreset].CharLimit = 15
+	inputs[settingDefaultPreset].SetValue(cfg.Preset())
+
 	inputs[settingTheme].CharLimit = 15
+	inputs[settingTheme].SetValue(cfg.Theme())
 
 	inputs[settingConfirmQuit].SetValue(boolToStr(cfg.ConfirmOnQuit()))
 	inputs[settingConfirmQuit].CharLimit = 1
@@ -245,6 +251,20 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	presetName := strings.TrimSpace(m.inputs[settingDefaultPreset].Value())
+	validPreset := false
+	for _, name := range PresetNames {
+		if presetName == name {
+			validPreset = true
+			break
+		}
+	}
+	if !validPreset {
+		m.status = "Default preset must be one of: PIN, Alphanumeric, Strong, Passphrase, Custom"
+		m.isError = true
+		return m, nil
+	}
+
 	themeName := strings.TrimSpace(m.inputs[settingTheme].Value())
 	validTheme := false
 	for _, name := range ThemeNames() {
@@ -280,6 +300,7 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		PasswordLowercase:     boolPtr(lower),
 		PasswordDigits:        boolPtr(digits),
 		PasswordSymbols:       boolPtr(symbols),
+		DefaultPreset:         presetName,
 		ThemeName:             themeName,
 		ConfirmQuit:           boolPtr(confirmQuit),
 		BackupOnSave:          boolPtr(backupOnSave),

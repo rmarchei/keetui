@@ -228,27 +228,10 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return updated, cmd
 
 		case "ctrl+g":
-			pw, err := generatePassword(m.cfg.PasswordLen(), m.cfg.PasswordCharset())
-			if err != nil {
-				m.err = fmt.Errorf("password generation failed: %w", err)
-				return m, nil
+			pw := m.inputs[fieldPassword].Value()
+			return m, func() tea.Msg {
+				return ShowPresetPickerMsg{CurrentPassword: pw}
 			}
-			m.inputs[fieldPassword].SetValue(pw)
-			m.inputs[fieldPassword].EchoMode = textinput.EchoNormal
-			m.generated = true
-			return m, m.scheduleAutoMask(fieldPassword, 2*time.Second)
-
-		case "ctrl+p":
-			// Generate diceware passphrase
-			pp, err := keepass.GeneratePassphrase(6, "-")
-			if err != nil {
-				m.err = fmt.Errorf("passphrase generation failed: %w", err)
-				return m, nil
-			}
-			m.inputs[fieldPassword].SetValue(pp)
-			m.inputs[fieldPassword].EchoMode = textinput.EchoNormal
-			m.generated = true
-			return m, m.scheduleAutoMask(fieldPassword, 2*time.Second)
 
 		case "ctrl+r":
 			// Toggle persistent visibility on password/TOTP or protected custom fields
@@ -476,6 +459,15 @@ func (m EditorModel) save() (tea.Model, tea.Cmd) {
 	}
 }
 
+// SetGeneratedPassword sets the password field to the given value and
+// reveals it briefly. Returns a command to schedule re-masking.
+func (m *EditorModel) SetGeneratedPassword(pw string) tea.Cmd {
+	m.inputs[fieldPassword].SetValue(pw)
+	m.inputs[fieldPassword].EchoMode = textinput.EchoNormal
+	m.generated = true
+	return m.scheduleAutoMask(fieldPassword, 2*time.Second)
+}
+
 func (m EditorModel) View() string {
 	var b strings.Builder
 
@@ -533,7 +525,7 @@ func (m EditorModel) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+r: reveal  ctrl+g: gen password  ctrl+p: gen passphrase  ctrl+a: add field  ctrl+d: del field  ctrl+s: save  esc: cancel"))
+	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+r: reveal  ctrl+g: gen password  ctrl+a: add field  ctrl+d: del field  ctrl+s: save  esc: cancel"))
 	b.WriteString("\n")
 
 	return b.String()
