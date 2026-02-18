@@ -989,8 +989,8 @@ func (m BrowserModel) View() string {
 		}
 
 		if len(m.items) > vis {
-			b.WriteString(fmt.Sprintf("\n%s",
-				helpStyle.Render(fmt.Sprintf("  %d/%d items", m.cursor+1, len(m.items)))))
+			fmt.Fprintf(&b, "\n%s",
+				helpStyle.Render(fmt.Sprintf("  %d/%d items", m.cursor+1, len(m.items))))
 			b.WriteString("\n")
 		}
 	}

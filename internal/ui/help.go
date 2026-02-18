@@ -45,11 +45,11 @@ func (m HelpModel) buildContent() string {
 	b.WriteString("\n\n")
 
 	section := func(title string, bindings []struct{ key, desc string }) {
-		b.WriteString(fmt.Sprintf("  %s\n", labelStyle.Render(title)))
+		fmt.Fprintf(&b, "  %s\n", labelStyle.Render(title))
 		for _, bind := range bindings {
-			b.WriteString(fmt.Sprintf("    %-16s %s\n",
+			fmt.Fprintf(&b, "    %-16s %s\n",
 				selectedItemStyle.Render(bind.key),
-				helpStyle.Render(bind.desc)))
+				helpStyle.Render(bind.desc))
 		}
 		b.WriteString("\n")
 	}

@@ -82,12 +82,12 @@ func (m UnlockModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" keetui "))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("  File: %s\n", m.filePath))
+	fmt.Fprintf(&b, "  File: %s\n", m.filePath)
 	if m.keyFilePath != "" {
-		b.WriteString(fmt.Sprintf("  Key:  %s\n", m.keyFilePath))
+		fmt.Fprintf(&b, "  Key:  %s\n", m.keyFilePath)
 	}
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  %s\n", m.input.View()))
+	fmt.Fprintf(&b, "  %s\n", m.input.View())
 
 	if m.err != nil {
 		b.WriteString("\n")

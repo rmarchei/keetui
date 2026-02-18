@@ -496,7 +496,7 @@ func (m EditorModel) View() string {
 	for i := range m.inputs {
 		if i == fieldNotes {
 			// Render multi-line textarea for notes
-			b.WriteString(fmt.Sprintf("  %s\n", labelStyle.Render("Notes:")))
+			fmt.Fprintf(&b, "  %s\n", labelStyle.Render("Notes:"))
 			b.WriteString(m.notesInput.View())
 			b.WriteString("\n")
 			continue

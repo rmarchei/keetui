@@ -369,7 +369,7 @@ func (m PresetPickerModel) viewList() string {
 		}
 
 		desc := hiddenStyle.Render(" — " + p.desc)
-		b.WriteString(fmt.Sprintf("%s%s%s%s\n", cursor, marker, name, desc))
+		fmt.Fprintf(&b, "%s%s%s%s\n", cursor, marker, name, desc)
 	}
 
 	if m.err != nil {
@@ -417,7 +417,7 @@ func (m PresetPickerModel) viewCustom() string {
 			check = selectedItemStyle.Render(check)
 		}
 
-		b.WriteString(fmt.Sprintf("  %s%s %s   %s\n", focus, check, tl.label, hiddenStyle.Render(tl.desc)))
+		fmt.Fprintf(&b, "  %s%s %s   %s\n", focus, check, tl.label, hiddenStyle.Render(tl.desc))
 	}
 
 	if m.err != nil {
@@ -443,7 +443,7 @@ func (m PresetPickerModel) viewPreview() string {
 	if !m.passwordVisible {
 		pw = strings.Repeat("*", len([]rune(pw)))
 	}
-	b.WriteString(fmt.Sprintf("  %s %s\n", labelStyle.Render("Password:"), valueStyle.Render(pw)))
+	fmt.Fprintf(&b, "  %s %s\n", labelStyle.Render("Password:"), valueStyle.Render(pw))
 
 	if m.err != nil {
 		b.WriteString("\n")

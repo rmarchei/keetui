@@ -55,68 +55,68 @@ func (m StatsModel) View() string {
 	b.WriteString(titleStyle.Render(" Database Info "))
 	b.WriteString("\n\n")
 
-	b.WriteString(fmt.Sprintf("  %s %s\n",
+	fmt.Fprintf(&b, "  %s %s\n",
 		labelStyle.Render("File:"),
-		valueStyle.Render(m.stats.FilePath)))
+		valueStyle.Render(m.stats.FilePath))
 
-	b.WriteString(fmt.Sprintf("  %s %s\n",
+	fmt.Fprintf(&b, "  %s %s\n",
 		labelStyle.Render("Size:"),
-		valueStyle.Render(formatSize(m.stats.FileSize))))
+		valueStyle.Render(formatSize(m.stats.FileSize)))
 
-	b.WriteString(fmt.Sprintf("  %s %s\n",
+	fmt.Fprintf(&b, "  %s %s\n",
 		labelStyle.Render("Format:"),
-		valueStyle.Render(m.stats.FormatVersion)))
+		valueStyle.Render(m.stats.FormatVersion))
 
-	b.WriteString(fmt.Sprintf("  %s %s\n",
+	fmt.Fprintf(&b, "  %s %s\n",
 		labelStyle.Render("Groups:"),
-		valueStyle.Render(fmt.Sprintf("%d", m.stats.TotalGroups))))
+		valueStyle.Render(fmt.Sprintf("%d", m.stats.TotalGroups)))
 
-	b.WriteString(fmt.Sprintf("  %s %s\n",
+	fmt.Fprintf(&b, "  %s %s\n",
 		labelStyle.Render("Entries:"),
-		valueStyle.Render(fmt.Sprintf("%d", m.stats.TotalEntries))))
+		valueStyle.Render(fmt.Sprintf("%d", m.stats.TotalEntries)))
 
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  Password Health:"))
 	b.WriteString("\n")
 
 	if m.stats.WeakPasswords > 0 {
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		fmt.Fprintf(&b, "  %s %s\n",
 			labelStyle.Render("Weak:"),
-			errorMsgStyle.Render(fmt.Sprintf("%d", m.stats.WeakPasswords))))
+			errorMsgStyle.Render(fmt.Sprintf("%d", m.stats.WeakPasswords)))
 	} else {
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		fmt.Fprintf(&b, "  %s %s\n",
 			labelStyle.Render("Weak:"),
-			successStyle.Render("0")))
+			successStyle.Render("0"))
 	}
 
 	if m.stats.ReusedPasswords > 0 {
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		fmt.Fprintf(&b, "  %s %s\n",
 			labelStyle.Render("Reused:"),
-			errorMsgStyle.Render(fmt.Sprintf("%d entries share passwords", m.stats.ReusedPasswords))))
+			errorMsgStyle.Render(fmt.Sprintf("%d entries share passwords", m.stats.ReusedPasswords)))
 	} else {
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		fmt.Fprintf(&b, "  %s %s\n",
 			labelStyle.Render("Reused:"),
-			successStyle.Render("0")))
+			successStyle.Render("0"))
 	}
 
 	if m.stats.EmptyPasswords > 0 {
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		fmt.Fprintf(&b, "  %s %s\n",
 			labelStyle.Render("Empty:"),
-			errorMsgStyle.Render(fmt.Sprintf("%d", m.stats.EmptyPasswords))))
+			errorMsgStyle.Render(fmt.Sprintf("%d", m.stats.EmptyPasswords)))
 	} else {
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		fmt.Fprintf(&b, "  %s %s\n",
 			labelStyle.Render("Empty:"),
-			successStyle.Render("0")))
+			successStyle.Render("0"))
 	}
 
 	if m.stats.ExpiredEntries > 0 {
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		fmt.Fprintf(&b, "  %s %s\n",
 			labelStyle.Render("Expired:"),
-			errorMsgStyle.Render(fmt.Sprintf("%d", m.stats.ExpiredEntries))))
+			errorMsgStyle.Render(fmt.Sprintf("%d", m.stats.ExpiredEntries)))
 	} else {
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		fmt.Fprintf(&b, "  %s %s\n",
 			labelStyle.Render("Expired:"),
-			successStyle.Render("0")))
+			successStyle.Render("0"))
 	}
 
 	b.WriteString("\n")
