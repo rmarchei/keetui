@@ -1834,7 +1834,7 @@ func TestPasswordHistoryTrim(t *testing.T) {
 	entry := root.Groups[0].Entries[0]
 
 	// Make 5 updates
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		err = db.UpdateEntry(entry.UUID, Entry{
 			Title:    entry.Title,
 			UserName: entry.UserName,

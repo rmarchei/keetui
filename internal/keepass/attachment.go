@@ -48,7 +48,7 @@ func (d *DB) EntryAttachments(entryUUID gokeepasslib.UUID) []Attachment {
 func (d *DB) ExtractAttachment(entryUUID gokeepasslib.UUID, name, destPath string) error {
 	// Reject paths containing ".." to prevent directory traversal
 	destPath = filepath.Clean(destPath)
-	for _, part := range strings.Split(destPath, string(filepath.Separator)) {
+	for part := range strings.SplitSeq(destPath, string(filepath.Separator)) {
 		if part == ".." {
 			return fmt.Errorf("invalid destination path (directory traversal): %q", destPath)
 		}

@@ -282,10 +282,7 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if cfIdx < len(m.customInputs) {
 					m.customInputs = append(m.customInputs[:cfIdx], m.customInputs[cfIdx+1:]...)
 					if m.focused >= m.totalFields() {
-						m.focused = m.totalFields() - 1
-						if m.focused < 0 {
-							m.focused = 0
-						}
+						m.focused = max(m.totalFields()-1, 0)
 					}
 					return m, m.updateFocus()
 				}

@@ -55,7 +55,7 @@ func (e Entry) IsExpired() bool {
 
 // IsFavorite returns true if the entry has the "favorite" tag.
 func (e Entry) IsFavorite() bool {
-	for _, tag := range strings.Split(e.Tags, ";") {
+	for tag := range strings.SplitSeq(e.Tags, ";") {
 		if strings.TrimSpace(tag) == "favorite" {
 			return true
 		}
@@ -529,7 +529,7 @@ func (d *DB) ToggleFavorite(entryUUID gokeepasslib.UUID) error {
 		return fmt.Errorf("entry not found")
 	}
 	var tags []string
-	for _, t := range strings.Split(entry.Tags, ";") {
+	for t := range strings.SplitSeq(entry.Tags, ";") {
 		t = strings.TrimSpace(t)
 		if t != "" && t != "favorite" {
 			tags = append(tags, t)
@@ -537,7 +537,7 @@ func (d *DB) ToggleFavorite(entryUUID gokeepasslib.UUID) error {
 	}
 	// Check if it was a favorite before
 	isFav := false
-	for _, t := range strings.Split(entry.Tags, ";") {
+	for t := range strings.SplitSeq(entry.Tags, ";") {
 		if strings.TrimSpace(t) == "favorite" {
 			isFav = true
 			break

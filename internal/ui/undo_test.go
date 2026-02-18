@@ -49,7 +49,7 @@ func TestUndoStackEmpty(t *testing.T) {
 func TestUndoStackMaxSize(t *testing.T) {
 	var s undoStack
 
-	for i := 0; i < maxUndoStack+10; i++ {
+	for range maxUndoStack + 10 {
 		s.push(undoAction{description: "item"})
 	}
 
@@ -107,7 +107,7 @@ func TestUndoStackMaxSizeEvictsOldest(t *testing.T) {
 	var s undoStack
 
 	// Push maxUndoStack+5 items, verify oldest are evicted
-	for i := 0; i < maxUndoStack+5; i++ {
+	for range maxUndoStack + 5 {
 		s.push(undoAction{description: "item"})
 	}
 
@@ -116,7 +116,7 @@ func TestUndoStackMaxSizeEvictsOldest(t *testing.T) {
 	}
 
 	// All pops should succeed
-	for i := 0; i < maxUndoStack; i++ {
+	for i := range maxUndoStack {
 		_, ok := s.pop()
 		if !ok {
 			t.Fatalf("pop %d should return true", i)

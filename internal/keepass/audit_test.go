@@ -46,7 +46,7 @@ func TestAuditReusedPasswords(t *testing.T) {
 	}
 
 	root := db.RootGroup()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, _ = db.AddEntry(root.UUID, Entry{
 			Title:    "Reused",
 			UserName: "user",
