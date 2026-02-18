@@ -8,11 +8,9 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/pquerna/otp v1.5.0
-	github.com/tobischo/gokeepasslib/v3 v3.6.1
+	github.com/tobischo/gokeepasslib/v3 v3.6.2
 	golang.org/x/term v0.40.0
 )
-
-replace github.com/tobischo/gokeepasslib/v3 => github.com/rmarchei/gokeepasslib/v3 v3.6.2
 
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect

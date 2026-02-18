@@ -67,7 +67,7 @@ keetui/
 
 | Package | Purpose |
 |---------|---------|
-| `github.com/tobischo/gokeepasslib/v3` | KeePass .kdbx file reading/writing (using fork `rmarchei/gokeepasslib` via go.mod replace) |
+| `github.com/tobischo/gokeepasslib/v3` | KeePass .kdbx file reading/writing |
 | `github.com/charmbracelet/bubbletea` | TUI framework (Elm-style MVU architecture) |
 | `github.com/charmbracelet/bubbles` | TUI components (text input, viewport) |
 | `github.com/charmbracelet/lipgloss` | Terminal styling |
@@ -188,7 +188,6 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 ## Related Repositories
 
 - **Homebrew tap**: [rmarchei/homebrew-keetui](https://github.com/rmarchei/homebrew-keetui) — Homebrew formula for installing keetui
-- **gokeepasslib fork**: [rmarchei/gokeepasslib](https://github.com/rmarchei/gokeepasslib) — Fork with KDBX 3.1 block composition fix (referenced via `replace` directive in `go.mod`)
 
 ## Key Notes for AI Assistants
 
