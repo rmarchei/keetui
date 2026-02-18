@@ -817,7 +817,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				notesStart := m.lineForField(m.selectedField)
 				notesEnd := notesStart + 1 + m.notesBodyLines()
 				if m.viewport.YOffset+m.viewport.Height < notesEnd {
-					m.viewport.LineDown(1)
+					m.viewport.ScrollDown(1)
 					return m, nil
 				}
 			}
@@ -833,7 +833,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.notesExpanded && m.selectedField < len(fields) && fields[m.selectedField].label == "Notes" {
 				notesStart := m.lineForField(m.selectedField)
 				if m.viewport.YOffset > notesStart {
-					m.viewport.LineUp(1)
+					m.viewport.ScrollUp(1)
 					return m, nil
 				}
 			}
