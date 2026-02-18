@@ -146,15 +146,15 @@ func (m AuditModel) View() string {
 		b.WriteString(successStyle.Render("  No issues found!"))
 		b.WriteString("\n")
 	} else {
-		b.WriteString(fmt.Sprintf("  %s\n\n",
-			warnStyle.Render(fmt.Sprintf("%d issues found", total))))
+		fmt.Fprintf(&b, "  %s\n\n",
+			warnStyle.Render(fmt.Sprintf("%d issues found", total)))
 
 		vis := m.visibleHeight()
 		end := min(m.offset+vis, len(m.lines))
 		for i := m.offset; i < end; i++ {
 			line := m.lines[i]
 			if line.isHeader {
-				b.WriteString(fmt.Sprintf("\n  %s\n", helpStyle.Render(line.header)))
+				fmt.Fprintf(&b, "\n  %s\n", helpStyle.Render(line.header))
 			} else {
 				cursor := "  "
 				if i == m.cursor {
@@ -166,16 +166,16 @@ func (m AuditModel) View() string {
 				}
 				path := hiddenStyle.Render(fmt.Sprintf("  (%s)", line.entry.GroupPath))
 				if i == m.cursor {
-					b.WriteString(fmt.Sprintf("  %s%s%s\n", cursor, selectedItemStyle.Render(title), path))
+					fmt.Fprintf(&b, "  %s%s%s\n", cursor, selectedItemStyle.Render(title), path)
 				} else {
-					b.WriteString(fmt.Sprintf("  %s%s%s\n", cursor, entryStyle.Render(title), path))
+					fmt.Fprintf(&b, "  %s%s%s\n", cursor, entryStyle.Render(title), path)
 				}
 			}
 		}
 
 		if len(m.lines) > vis {
-			b.WriteString(fmt.Sprintf("\n%s\n",
-				helpStyle.Render(fmt.Sprintf("  %d/%d", m.cursor+1, len(m.lines)))))
+			fmt.Fprintf(&b, "\n%s\n",
+				helpStyle.Render(fmt.Sprintf("  %d/%d", m.cursor+1, len(m.lines))))
 		}
 	}
 
