@@ -39,10 +39,7 @@ func (m HistoryModel) Init() tea.Cmd {
 }
 
 func (m HistoryModel) visibleHeight() int {
-	h := m.height - 8
-	if h < 5 {
-		h = 5
-	}
+	h := max(m.height-8, 5)
 	return h
 }
 
@@ -107,10 +104,7 @@ func (m HistoryModel) View() string {
 		b.WriteString("\n")
 	} else {
 		vis := m.visibleHeight()
-		end := m.offset + vis
-		if end > len(m.history) {
-			end = len(m.history)
-		}
+		end := min(m.offset+vis, len(m.history))
 		for i := m.offset; i < end; i++ {
 			h := m.history[i]
 			cursor := "  "

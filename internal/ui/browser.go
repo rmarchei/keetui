@@ -246,7 +246,7 @@ func collectTags(g keepass.Group) []string {
 	var walk func(keepass.Group)
 	walk = func(g keepass.Group) {
 		for _, e := range g.Entries {
-			for _, t := range strings.Split(e.Tags, ";") {
+			for t := range strings.SplitSeq(e.Tags, ";") {
 				t = strings.TrimSpace(t)
 				if t != "" {
 					seen[t] = true
@@ -268,7 +268,7 @@ func collectTags(g keepass.Group) []string {
 
 // entryHasTag returns true if the entry's tags contain the given tag.
 func entryHasTag(e keepass.Entry, tag string) bool {
-	for _, t := range strings.Split(e.Tags, ";") {
+	for t := range strings.SplitSeq(e.Tags, ";") {
 		if strings.TrimSpace(t) == tag {
 			return true
 		}
@@ -936,10 +936,7 @@ func (m BrowserModel) View() string {
 		b.WriteString("\n")
 	} else {
 		vis := m.visibleHeight()
-		end := m.offset + vis
-		if end > len(m.items) {
-			end = len(m.items)
-		}
+		end := min(m.offset+vis, len(m.items))
 		for i := m.offset; i < end; i++ {
 			item := m.items[i]
 			cursor := "  "

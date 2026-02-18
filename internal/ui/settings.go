@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -252,13 +253,7 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 	}
 
 	presetName := strings.TrimSpace(m.inputs[settingDefaultPreset].Value())
-	validPreset := false
-	for _, name := range PresetNames {
-		if presetName == name {
-			validPreset = true
-			break
-		}
-	}
+	validPreset := slices.Contains(PresetNames, presetName)
 	if !validPreset {
 		m.status = "Default preset must be one of: PIN, Alphanumeric, Strong, Passphrase, Custom"
 		m.isError = true
@@ -266,13 +261,7 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 	}
 
 	themeName := strings.TrimSpace(m.inputs[settingTheme].Value())
-	validTheme := false
-	for _, name := range ThemeNames() {
-		if themeName == name {
-			validTheme = true
-			break
-		}
-	}
+	validTheme := slices.Contains(ThemeNames(), themeName)
 	if !validTheme {
 		m.status = "Theme must be one of: dark, light, high-contrast"
 		m.isError = true

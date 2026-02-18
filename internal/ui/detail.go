@@ -379,10 +379,7 @@ func (m *DetailModel) syncViewportSize() {
 	footerNewlines := strings.Count(m.footerView(), "\n")
 	// Total lines = headerNewlines + vpHeight + 1 + footerNewlines
 	// We need total lines = m.height
-	vpHeight := m.height - headerNewlines - footerNewlines - 1
-	if vpHeight < 1 {
-		vpHeight = 1
-	}
+	vpHeight := max(m.height-headerNewlines-footerNewlines-1, 1)
 	if !m.ready {
 		m.viewport = viewport.New(m.width, vpHeight)
 		m.viewport.SetContent(m.buildContent())
@@ -1111,7 +1108,7 @@ func (m DetailModel) renderQR(text string, maxWidth, maxHeight int) string {
 	for row := 0; row < totalH; row += 2 {
 		var line strings.Builder
 		line.WriteString(pad)
-		for col := 0; col < totalW; col++ {
+		for col := range totalW {
 			topBlack := isBlack(col, row)
 			bottomBlack := row+1 < totalH && isBlack(col, row+1)
 
@@ -1135,9 +1132,6 @@ func (m DetailModel) renderQR(text string, maxWidth, maxHeight int) string {
 // totpCountdownBar renders a visual progress bar for the TOTP countdown.
 func totpCountdownBar(remaining, period int) string {
 	const width = 10
-	filled := remaining * width / period
-	if filled > width {
-		filled = width
-	}
+	filled := min(remaining*width/period, width)
 	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", width-filled) + "]"
 }

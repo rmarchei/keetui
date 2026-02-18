@@ -159,7 +159,7 @@ func TestPresetPickerPreviewRefresh(t *testing.T) {
 	// Press 'r' to refresh — password should change (with very high probability)
 	// Try multiple times to avoid flaky test
 	changed := false
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 		m = updated.(PresetPickerModel)
 		if m.generatedPassword != firstPW {

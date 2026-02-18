@@ -70,10 +70,7 @@ func (m AuditModel) Init() tea.Cmd {
 }
 
 func (m AuditModel) visibleHeight() int {
-	h := m.height - 8
-	if h < 5 {
-		h = 5
-	}
+	h := max(m.height-8, 5)
 	return h
 }
 
@@ -153,10 +150,7 @@ func (m AuditModel) View() string {
 			warnStyle.Render(fmt.Sprintf("%d issues found", total))))
 
 		vis := m.visibleHeight()
-		end := m.offset + vis
-		if end > len(m.lines) {
-			end = len(m.lines)
-		}
+		end := min(m.offset+vis, len(m.lines))
 		for i := m.offset; i < end; i++ {
 			line := m.lines[i]
 			if line.isHeader {

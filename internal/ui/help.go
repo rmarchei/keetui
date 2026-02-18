@@ -30,10 +30,7 @@ func NewHelpModel(keys config.KeyBindings, width, height int) HelpModel {
 		height: height,
 	}
 	footerHeight := 1
-	vpHeight := height - footerHeight
-	if vpHeight < 1 {
-		vpHeight = 1
-	}
+	vpHeight := max(height-footerHeight, 1)
 	m.viewport = viewport.New(width, vpHeight)
 	m.viewport.SetContent(m.buildContent())
 	m.ready = true
@@ -132,10 +129,7 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		footerHeight := 1
-		vpHeight := m.height - footerHeight
-		if vpHeight < 1 {
-			vpHeight = 1
-		}
+		vpHeight := max(m.height-footerHeight, 1)
 		m.viewport.Width = m.width
 		m.viewport.Height = vpHeight
 		return m, nil

@@ -82,7 +82,7 @@ func TestStatsReusedPasswords(t *testing.T) {
 
 	root := db.RootGroup()
 	// Add two entries with same password
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		_, err = db.AddEntry(root.UUID, Entry{
 			Title:    "Reused Entry",
 			UserName: "user",
