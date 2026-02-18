@@ -317,14 +317,14 @@ func (m SettingsModel) View() string {
 	b.WriteString(titleStyle.Render(" Settings "))
 	b.WriteString("\n\n")
 
-	b.WriteString(fmt.Sprintf("  %s %s\n\n",
+	fmt.Fprintf(&b, "  %s %s\n\n",
 		helpStyle.Render("Config file:"),
-		valueStyle.Render(config.Path())))
+		valueStyle.Render(config.Path()))
 
 	for i := range m.inputs {
 		b.WriteString(m.inputs[i].View())
 		b.WriteString("\n")
-		b.WriteString(fmt.Sprintf("  %s\n", hiddenStyle.Render(settingDescriptions[i])))
+		fmt.Fprintf(&b, "  %s\n", hiddenStyle.Render(settingDescriptions[i]))
 		if i < settingCount-1 {
 			b.WriteString("\n")
 		}
@@ -333,9 +333,9 @@ func (m SettingsModel) View() string {
 	b.WriteString("\n")
 	if m.status != "" {
 		if m.isError {
-			b.WriteString(fmt.Sprintf("  %s\n", errorMsgStyle.Render(m.status)))
+			fmt.Fprintf(&b, "  %s\n", errorMsgStyle.Render(m.status))
 		} else {
-			b.WriteString(fmt.Sprintf("  %s\n", successStyle.Render(m.status)))
+			fmt.Fprintf(&b, "  %s\n", successStyle.Render(m.status))
 		}
 	}
 	b.WriteString("\n")

@@ -477,10 +477,10 @@ func (m DetailModel) buildContent() string {
 		return "  "
 	}
 
-	b.WriteString(fmt.Sprintf("%s%s %s\n",
+	fmt.Fprintf(&b, "%s%s %s\n",
 		cursor(),
 		labelStyle.Render("Username:"),
-		valueStyle.Render(m.entry.UserName)))
+		valueStyle.Render(m.entry.UserName))
 
 	pw := strings.Repeat("*", len(m.entry.Password))
 	if m.revealedFields["password"] {
@@ -488,49 +488,49 @@ func (m DetailModel) buildContent() string {
 	}
 	if m.cfg.ShowPasswordStrength {
 		strengthStr := renderStrength(m.strength)
-		b.WriteString(fmt.Sprintf("%s%s %s  %s\n",
+		fmt.Fprintf(&b, "%s%s %s  %s\n",
 			cursor(),
 			labelStyle.Render("Password:"),
 			hiddenStyle.Render(pw),
-			strengthStr))
+			strengthStr)
 	} else {
-		b.WriteString(fmt.Sprintf("%s%s %s\n",
+		fmt.Fprintf(&b, "%s%s %s\n",
 			cursor(),
 			labelStyle.Render("Password:"),
-			hiddenStyle.Render(pw)))
+			hiddenStyle.Render(pw))
 	}
 
-	b.WriteString(fmt.Sprintf("%s%s %s\n",
+	fmt.Fprintf(&b, "%s%s %s\n",
 		cursor(),
 		labelStyle.Render("URL:"),
-		valueStyle.Render(m.entry.URL)))
+		valueStyle.Render(m.entry.URL))
 
 	if m.entry.TOTP != "" {
 		if m.revealedFields["TOTP"] {
-			b.WriteString(fmt.Sprintf("%s%s %s\n",
+			fmt.Fprintf(&b, "%s%s %s\n",
 				cursor(),
 				labelStyle.Render("TOTP:"),
-				valueStyle.Render(m.entry.TOTP)))
+				valueStyle.Render(m.entry.TOTP))
 		} else if m.totpCode != "" {
 			bar := totpCountdownBar(m.totpRemain, int(keepass.TOTPPeriod(m.entry.TOTP)))
-			b.WriteString(fmt.Sprintf("%s%s %s  %s\n",
+			fmt.Fprintf(&b, "%s%s %s  %s\n",
 				cursor(),
 				labelStyle.Render("TOTP:"),
 				valueStyle.Render(m.totpCode),
-				helpStyle.Render(fmt.Sprintf("%s %ds", bar, m.totpRemain))))
+				helpStyle.Render(fmt.Sprintf("%s %ds", bar, m.totpRemain)))
 		} else {
 			// TOTP secret exists but code generation failed; show masked
-			b.WriteString(fmt.Sprintf("%s%s %s\n",
+			fmt.Fprintf(&b, "%s%s %s\n",
 				cursor(),
 				labelStyle.Render("TOTP:"),
-				hiddenStyle.Render(strings.Repeat("*", len(m.entry.TOTP)))))
+				hiddenStyle.Render(strings.Repeat("*", len(m.entry.TOTP))))
 		}
 	}
 
 	if m.entry.Notes != "" {
-		b.WriteString(fmt.Sprintf("%s%s\n",
+		fmt.Fprintf(&b, "%s%s\n",
 			cursor(),
-			labelStyle.Render("Notes:")))
+			labelStyle.Render("Notes:"))
 		noteLines := strings.Split(m.entry.Notes, "\n")
 		show := noteLines
 		if len(noteLines) > maxNoteLines && !m.notesExpanded {
@@ -538,34 +538,34 @@ func (m DetailModel) buildContent() string {
 		}
 		indent := strings.Repeat(" ", 13)
 		for _, line := range show {
-			b.WriteString(fmt.Sprintf("  %s%s\n", indent, valueStyle.Render(line)))
+			fmt.Fprintf(&b, "  %s%s\n", indent, valueStyle.Render(line))
 		}
 		if len(noteLines) > maxNoteLines && !m.notesExpanded {
-			b.WriteString(fmt.Sprintf("  %s%s\n", indent,
-				helpStyle.Render(fmt.Sprintf("(%d more lines — p to expand)", len(noteLines)-maxNoteLines))))
+			fmt.Fprintf(&b, "  %s%s\n", indent,
+				helpStyle.Render(fmt.Sprintf("(%d more lines — p to expand)", len(noteLines)-maxNoteLines)))
 		}
 	}
 
 	if !m.entry.CreationTime.IsZero() {
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		fmt.Fprintf(&b, "  %s %s\n",
 			labelStyle.Render("Created:"),
-			hiddenStyle.Render(m.entry.CreationTime.Local().Format("2006-01-02 15:04:05"))))
+			hiddenStyle.Render(m.entry.CreationTime.Local().Format("2006-01-02 15:04:05")))
 	}
 	if !m.entry.ModificationTime.IsZero() {
-		b.WriteString(fmt.Sprintf("  %s %s\n",
+		fmt.Fprintf(&b, "  %s %s\n",
 			labelStyle.Render("Modified:"),
-			hiddenStyle.Render(m.entry.ModificationTime.Local().Format("2006-01-02 15:04:05"))))
+			hiddenStyle.Render(m.entry.ModificationTime.Local().Format("2006-01-02 15:04:05")))
 	}
 	if m.entry.Expires {
 		expiryStr := m.entry.ExpiryTime.Local().Format("2006-01-02 15:04:05")
 		if m.entry.IsExpired() {
-			b.WriteString(fmt.Sprintf("  %s %s\n",
+			fmt.Fprintf(&b, "  %s %s\n",
 				labelStyle.Render("Expires:"),
-				errorMsgStyle.Render(expiryStr+" (EXPIRED)")))
+				errorMsgStyle.Render(expiryStr+" (EXPIRED)"))
 		} else {
-			b.WriteString(fmt.Sprintf("  %s %s\n",
+			fmt.Fprintf(&b, "  %s %s\n",
 				labelStyle.Render("Expires:"),
-				hiddenStyle.Render(expiryStr)))
+				hiddenStyle.Render(expiryStr))
 		}
 	}
 
@@ -575,10 +575,10 @@ func (m DetailModel) buildContent() string {
 			val = strings.Repeat("*", len(cf.Value))
 		}
 		label := truncateLabel(cf.Key + ":")
-		b.WriteString(fmt.Sprintf("%s%s %s\n",
+		fmt.Fprintf(&b, "%s%s %s\n",
 			cursor(),
 			labelStyle.Render(label),
-			valueStyle.Render(val)))
+			valueStyle.Render(val))
 	}
 
 	// Attachments
@@ -587,7 +587,7 @@ func (m DetailModel) buildContent() string {
 		if m.attachMode {
 			label = "Attachments (select):"
 		}
-		b.WriteString(fmt.Sprintf("\n  %s\n", helpStyle.Render(label)))
+		fmt.Fprintf(&b, "\n  %s\n", helpStyle.Render(label))
 		for i, a := range m.attachments {
 			cursor := "  "
 			nameStyle := valueStyle
@@ -595,10 +595,10 @@ func (m DetailModel) buildContent() string {
 				cursor = "> "
 				nameStyle = selectedItemStyle
 			}
-			b.WriteString(fmt.Sprintf("  %s%s (%s)\n",
+			fmt.Fprintf(&b, "  %s%s (%s)\n",
 				cursor,
 				nameStyle.Render(a.Name),
-				hiddenStyle.Render(formatAttachmentSize(a.Size))))
+				hiddenStyle.Render(formatAttachmentSize(a.Size)))
 		}
 	}
 

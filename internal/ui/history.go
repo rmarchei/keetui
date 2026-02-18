@@ -136,8 +136,8 @@ func (m HistoryModel) View() string {
 		}
 
 		if len(m.history) > vis {
-			b.WriteString(fmt.Sprintf("\n%s",
-				helpStyle.Render(fmt.Sprintf("  %d/%d entries", m.cursor+1, len(m.history)))))
+			fmt.Fprintf(&b, "\n%s",
+				helpStyle.Render(fmt.Sprintf("  %d/%d entries", m.cursor+1, len(m.history))))
 			b.WriteString("\n")
 		}
 	}

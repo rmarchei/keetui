@@ -77,7 +77,7 @@ func (m ConfirmModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Confirm "))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("  %s\n\n", m.message))
+	fmt.Fprintf(&b, "  %s\n\n", m.message)
 
 	var no, yes string
 	if m.selected {
@@ -87,7 +87,7 @@ func (m ConfirmModel) View() string {
 		no = selectedItemStyle.Render("  [>No ]")
 		yes = helpStyle.Render("  [ Yes ]")
 	}
-	b.WriteString(fmt.Sprintf("  %s  %s\n", no, yes))
+	fmt.Fprintf(&b, "  %s  %s\n", no, yes)
 
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("  y: yes  n/esc: no  tab: toggle  enter: confirm"))

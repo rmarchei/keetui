@@ -275,7 +275,7 @@ func (kb KeyBindings) String() string {
 	section := func(title string, bindings []struct{ name, key string }) {
 		b.WriteString(title + ":\n")
 		for _, bind := range bindings {
-			b.WriteString(fmt.Sprintf("  %-20s %s\n", bind.name, bind.key))
+			fmt.Fprintf(&b, "  %-20s %s\n", bind.name, bind.key)
 		}
 	}
 
