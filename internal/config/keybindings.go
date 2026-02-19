@@ -264,7 +264,7 @@ func (kb KeyBindings) Validate() error {
 	}
 
 	if len(dupes) > 0 {
-		return fmt.Errorf("duplicate keybindings: %s", dupes)
+		return fmt.Errorf("duplicate keybindings: %s", strings.Join(dupes, "; "))
 	}
 	return nil
 }

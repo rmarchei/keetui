@@ -2,6 +2,7 @@ package keepass
 
 import (
 	"fmt"
+	"time"
 )
 
 // MergeEntryAction describes what would happen to a single entry during merge.
@@ -53,7 +54,11 @@ func (d *DB) mergeGroup(src *Group, targetParentUUID [16]byte, result *MergeResu
 			_, _ = d.AddEntry(targetParentUUID, srcEntry)
 			result.EntriesAdded++
 		} else {
-			if srcEntry.ModificationTime.After(existing.Times.LastModificationTime.Time) {
+			var existingMod time.Time
+			if existing.Times.LastModificationTime != nil {
+				existingMod = existing.Times.LastModificationTime.Time
+			}
+			if srcEntry.ModificationTime.After(existingMod) {
 				_ = d.UpdateEntry(srcEntry.UUID, srcEntry)
 				result.EntriesUpdated++
 			} else {
@@ -126,12 +131,18 @@ func (d *DB) mergePreviewGroup(src *Group, targetParentUUID [16]byte, parentPath
 		if existing == nil {
 			action.Action = "add"
 			result.EntriesAdded++
-		} else if srcEntry.ModificationTime.After(existing.Times.LastModificationTime.Time) {
-			action.Action = "update"
-			result.EntriesUpdated++
 		} else {
-			action.Action = "skip"
-			result.EntriesSkipped++
+			var existingMod time.Time
+			if existing.Times.LastModificationTime != nil {
+				existingMod = existing.Times.LastModificationTime.Time
+			}
+			if srcEntry.ModificationTime.After(existingMod) {
+				action.Action = "update"
+				result.EntriesUpdated++
+			} else {
+				action.Action = "skip"
+				result.EntriesSkipped++
+			}
 		}
 		result.EntryActions = append(result.EntryActions, action)
 	}

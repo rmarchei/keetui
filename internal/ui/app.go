@@ -1218,13 +1218,13 @@ func copyToClipboard(text string) error {
 		return nil // OSC 52 already attempted
 	}
 	if err := cmd.Start(); err != nil {
+		_ = pipe.Close()
 		return nil // OSC 52 already attempted
 	}
-	if _, err := pipe.Write([]byte(text)); err != nil {
-		return nil // OSC 52 already attempted
-	}
+	_, writeErr := pipe.Write([]byte(text))
 	_ = pipe.Close()
 	_ = cmd.Wait() // best-effort; OSC 52 already attempted
+	_ = writeErr
 	return nil
 }
 
