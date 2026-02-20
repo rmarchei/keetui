@@ -57,6 +57,9 @@ func checkHIBPWithURL(password, baseURL string) HIBPResult {
 			return HIBPResult{Breached: true, Count: count}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return HIBPResult{Err: fmt.Errorf("reading HIBP response: %w", err)}
+	}
 
 	return HIBPResult{Breached: false, Count: 0}
 }

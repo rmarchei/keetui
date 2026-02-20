@@ -337,11 +337,12 @@ func fuzzyMatch(s, pattern string) bool {
 		return true
 	}
 	s = strings.ToLower(s)
+	patRunes := []rune(strings.ToLower(pattern))
 	pi := 0
 	for _, r := range s {
-		if r == rune(pattern[pi]) {
+		if r == patRunes[pi] {
 			pi++
-			if pi == len(pattern) {
+			if pi == len(patRunes) {
 				return true
 			}
 		}
