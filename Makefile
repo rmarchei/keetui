@@ -4,7 +4,7 @@ CMD      := ./cmd/keetui
 DIST     := dist
 
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-GOIMAGE  := golang:1.26-alpine
+GOIMAGE  := golang:1.26
 LINTIMAGE := golangci/golangci-lint:latest
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 
@@ -45,7 +45,7 @@ test:
 			-v $(CURDIR):/src \
 			-w /src \
 			$(GOIMAGE) \
-			sh -c 'apk add --no-cache gcc musl-dev && CGO_ENABLED=1 go test -race ./...'; \
+			go test -race ./...; \
 	else \
 		CGO_ENABLED=1 go test -race ./...; \
 	fi

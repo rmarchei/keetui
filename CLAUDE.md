@@ -180,14 +180,14 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 
 1. Tag the commit: `git tag v0.X.Y && git push origin v0.X.Y`
 2. The `release.yml` workflow builds binaries for all platforms and creates a GitHub release with checksums
-3. Update the Homebrew formula in `rmarchei/homebrew-keetui`:
+3. Update the Homebrew formula in `rmarchei/homebrew-tap`:
    - Download `SHA256SUMS` from the release: `gh release download v0.X.Y --pattern SHA256SUMS --output -`
    - Update `version` and all `sha256` values in `Formula/keetui.rb`
    - Commit and push
 
 ## Related Repositories
 
-- **Homebrew tap**: [rmarchei/homebrew-keetui](https://github.com/rmarchei/homebrew-keetui) — Homebrew formula for installing keetui (local path: `../homebrew-keetui`)
+- **Homebrew tap**: [rmarchei/homebrew-tap](https://github.com/rmarchei/homebrew-tap) — Homebrew tap for installing keetui (local path: `../homebrew-tap`)
 
 ## Key Notes for AI Assistants
 
