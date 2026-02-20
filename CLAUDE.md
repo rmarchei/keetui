@@ -187,7 +187,7 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 
 ## Related Repositories
 
-- **Homebrew tap**: [rmarchei/homebrew-keetui](https://github.com/rmarchei/homebrew-keetui) — Homebrew formula for installing keetui
+- **Homebrew tap**: [rmarchei/homebrew-keetui](https://github.com/rmarchei/homebrew-keetui) — Homebrew formula for installing keetui (local path: `../homebrew-keetui`)
 
 ## Key Notes for AI Assistants
 
