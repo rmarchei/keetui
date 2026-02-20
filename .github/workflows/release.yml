@@ -67,3 +67,84 @@ jobs:
             --title "${{ github.ref_name }}" \
             --generate-notes \
             artifacts/*
+
+  update-homebrew:
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+
+      - name: Update Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          # Extract checksums
+          SHA_DARWIN_ARM64=$(grep 'keetui-darwin-arm64$' artifacts/SHA256SUMS | awk '{print $1}')
+          SHA_DARWIN_AMD64=$(grep 'keetui-darwin-amd64$' artifacts/SHA256SUMS | awk '{print $1}')
+          SHA_LINUX_ARM64=$(grep 'keetui-linux-arm64$' artifacts/SHA256SUMS | awk '{print $1}')
+          SHA_LINUX_AMD64=$(grep 'keetui-linux-amd64$' artifacts/SHA256SUMS | awk '{print $1}')
+          FORMULA_VERSION="${VERSION#v}"
+
+          # Generate formula
+          cat > /tmp/keetui.rb <<FORMULA
+          require_relative "lib/custom_download_strategy"
+
+          class Keetui < Formula
+            desc "Terminal user interface for reading and writing KeePass .kdbx files"
+            homepage "https://github.com/rmarchei/keetui"
+            version "${FORMULA_VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-darwin-arm64",
+                    using: GitHubPrivateRepositoryReleaseDownloadStrategy
+                sha256 "${SHA_DARWIN_ARM64}"
+              else
+                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-darwin-amd64",
+                    using: GitHubPrivateRepositoryReleaseDownloadStrategy
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-linux-arm64",
+                    using: GitHubPrivateRepositoryReleaseDownloadStrategy
+                sha256 "${SHA_LINUX_ARM64}"
+              else
+                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-linux-amd64",
+                    using: GitHubPrivateRepositoryReleaseDownloadStrategy
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              binary = Dir["keetui-*"].first || "keetui"
+              bin.install binary => "keetui"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/keetui -version 2>&1", 0)
+            end
+          end
+          FORMULA
+
+          # Get current file SHA (required by GitHub contents API for updates)
+          FILE_SHA=$(gh api repos/rmarchei/homebrew-tap/contents/Formula/keetui.rb --jq '.sha')
+
+          # Push updated formula
+          gh api repos/rmarchei/homebrew-tap/contents/Formula/keetui.rb \
+            --method PUT \
+            --field message="Update keetui to ${VERSION}" \
+            --field content="$(base64 -w0 /tmp/keetui.rb)" \
+            --field sha="$FILE_SHA"
