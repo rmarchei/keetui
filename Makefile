@@ -18,13 +18,15 @@ HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/')
 
 CROSS_PLATFORMS := $(filter-out $(HOST_OS)-$(HOST_ARCH),$(PLATFORMS))
 
+GO_SOURCES := $(shell find cmd internal -name '*.go') go.mod go.sum
+
 PREFIX   ?= /usr/local
 
 .PHONY: build test lint check all clean install $(CROSS_PLATFORMS)
 
 build: $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH)
 
-$(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH): $(shell find cmd internal -name '*.go')
+$(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH): $(GO_SOURCES)
 	@mkdir -p $(DIST)
 	@if [ -n "$(CONTAINER_RUNTIME)" ]; then \
 		$(CONTAINER_RUNTIME) run --rm \
@@ -73,7 +75,7 @@ all: build $(CROSS_PLATFORMS)
 
 define BUILD_PLATFORM
 $(1): $(DIST)/$(APP)-$(1)
-$(DIST)/$(APP)-$(1):
+$(DIST)/$(APP)-$(1): $(GO_SOURCES)
 	@if [ -z "$(CONTAINER_RUNTIME)" ]; then echo "Error: No container runtime found. Install docker or podman." >&2; exit 1; fi
 	@mkdir -p $(DIST)
 	$(CONTAINER_RUNTIME) run --rm \

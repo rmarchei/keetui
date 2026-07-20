@@ -280,20 +280,21 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 
 	boolPtr := func(b bool) *bool { return &b }
 
-	newCfg := config.Config{
-		ClipboardClearSeconds: clipSec,
-		AutoLockMinutes:       lockMin,
-		PasswordLength:        pwLen,
-		ShowPasswordStrength:  strengthVal == "1",
-		PasswordUppercase:     boolPtr(upper),
-		PasswordLowercase:     boolPtr(lower),
-		PasswordDigits:        boolPtr(digits),
-		PasswordSymbols:       boolPtr(symbols),
-		DefaultPreset:         presetName,
-		ThemeName:             themeName,
-		ConfirmQuit:           boolPtr(confirmQuit),
-		BackupOnSave:          boolPtr(backupOnSave),
-	}
+	// Start from the existing config so fields the settings form does not
+	// manage (custom keybindings, any future additions) survive the save.
+	newCfg := m.cfg
+	newCfg.ClipboardClearSeconds = clipSec
+	newCfg.AutoLockMinutes = lockMin
+	newCfg.PasswordLength = pwLen
+	newCfg.ShowPasswordStrength = strengthVal == "1"
+	newCfg.PasswordUppercase = boolPtr(upper)
+	newCfg.PasswordLowercase = boolPtr(lower)
+	newCfg.PasswordDigits = boolPtr(digits)
+	newCfg.PasswordSymbols = boolPtr(symbols)
+	newCfg.DefaultPreset = presetName
+	newCfg.ThemeName = themeName
+	newCfg.ConfirmQuit = boolPtr(confirmQuit)
+	newCfg.BackupOnSave = boolPtr(backupOnSave)
 
 	if err := newCfg.Save(); err != nil {
 		m.status = fmt.Sprintf("Error saving config: %s", err)

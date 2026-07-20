@@ -53,7 +53,9 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
-			return m, tea.Quit
+			// Route through RequestQuitMsg so the app can warn about
+			// unsaved changes, like every other post-unlock view.
+			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "y", "Y":
 			return m, m.onConfirm
 		case "n", "N", "esc":

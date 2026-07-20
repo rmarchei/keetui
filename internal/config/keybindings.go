@@ -233,6 +233,8 @@ func (kb KeyBindings) Validate() error {
 	addKey(browser, kb.CycleSort, "cycle_sort")
 	addKey(browser, kb.FilterTag, "filter_tag")
 	addKey(browser, kb.ChangePassword, "change_password")
+	addKey(browser, kb.Restore, "restore")
+	addKey(browser, kb.EmptyRecycleBin, "empty_recycle_bin")
 	addKey(browser, kb.Quit, "quit")
 
 	// Detail context keys
@@ -250,6 +252,31 @@ func (kb KeyBindings) Validate() error {
 	addKey(detail, kb.ShowHistory, "show_history")
 	addKey(detail, kb.Back, "back")
 	addKey(detail, kb.Quit, "quit")
+
+	// Hardcoded keys handled before configurable bindings in the key
+	// switches; a user binding that collides with one is shadowed and
+	// never fires. aliasOf names the action the built-in key duplicates —
+	// binding that same action to the key is harmless and not flagged.
+	addReserved := func(m map[string][]string, key, aliasOf string) {
+		if names, ok := m[key]; ok && len(names) == 1 && names[0] == aliasOf {
+			return
+		}
+		m[key] = append(m[key], "built-in "+key)
+	}
+	addReserved(browser, "up", "nav_up")
+	addReserved(browser, "down", "nav_down")
+	addReserved(browser, "enter", "open")
+	addReserved(browser, "right", "open")
+	addReserved(browser, "esc", "back")
+	addReserved(browser, "left", "back")
+	addReserved(browser, "?", "")
+	addReserved(detail, "j", "")
+	addReserved(detail, "k", "")
+	addReserved(detail, "enter", "")
+	addReserved(detail, "esc", "back")
+	addReserved(detail, "left", "back")
+	addReserved(detail, "q", "quit")
+	addReserved(detail, "ctrl+c", "")
 
 	var dupes []string
 	for key, names := range browser {

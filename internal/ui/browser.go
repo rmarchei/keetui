@@ -19,6 +19,7 @@ type listItem struct {
 	group     keepass.Group
 	entry     keepass.Entry
 	groupPath string // parent group path for search results (e.g., "Root > Email")
+	inBin     bool   // true when the item lives inside the recycle bin (search results)
 }
 
 func (l listItem) name() string {
@@ -277,20 +278,30 @@ func entryHasTag(e keepass.Entry, tag string) bool {
 }
 
 // collectAllEntries recursively gathers all entries from a group tree.
-func collectAllEntries(g keepass.Group) []listItem {
-	return collectAllEntriesWithPath(g, g.Name)
+func collectAllEntries(g keepass.Group, rbUUID gokeepasslib.UUID) []listItem {
+	return collectAllEntriesWithPath(g, g.Name, rbUUID, false)
 }
 
-func collectAllEntriesWithPath(g keepass.Group, path string) []listItem {
+func collectAllEntriesWithPath(g keepass.Group, path string, rbUUID gokeepasslib.UUID, inBin bool) []listItem {
 	var items []listItem
 	for _, e := range g.Entries {
-		items = append(items, listItem{isGroup: false, entry: e, groupPath: path})
+		items = append(items, listItem{isGroup: false, entry: e, groupPath: path, inBin: inBin})
 	}
 	for _, sg := range g.Groups {
 		subPath := path + " > " + sg.Name
-		items = append(items, collectAllEntriesWithPath(sg, subPath)...)
+		items = append(items, collectAllEntriesWithPath(sg, subPath, rbUUID, inBin || sg.UUID == rbUUID)...)
 	}
 	return items
+}
+
+// itemInRecycleBin reports whether the item at the cursor is inside the
+// recycle bin. During a search the flattened results span the whole tree,
+// so membership comes from the item itself rather than the nav stack.
+func (m BrowserModel) itemInRecycleBin(item listItem) bool {
+	if m.searchQuery != "" {
+		return item.inBin
+	}
+	return m.inRecycleBin()
 }
 
 func (m BrowserModel) currentGroup() keepass.Group {
@@ -438,18 +449,17 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Rebuild navigation stack from old group UUIDs through fresh root
-		oldUUIDs := make([]gokeepasslib.UUID, len(m.stack))
-		for i, f := range m.stack {
-			oldUUIDs[i] = f.group.UUID
-		}
-		m.stack = []stackFrame{{group: root, cursor: 0, offset: 0}}
+		// Rebuild navigation stack from old group UUIDs through fresh root,
+		// carrying over each frame's saved cursor/offset so popping back
+		// out after a mutation returns to the same position.
+		oldFrames := m.stack
+		m.stack = []stackFrame{{group: root, cursor: oldFrames[0].cursor, offset: oldFrames[0].offset}}
 		current := root
-		for _, uuid := range oldUUIDs[1:] { // skip root (index 0)
+		for _, oldFrame := range oldFrames[1:] { // skip root (index 0)
 			found := false
 			for _, sg := range current.Groups {
-				if sg.UUID == uuid {
-					m.stack = append(m.stack, stackFrame{group: sg, cursor: 0, offset: 0})
+				if sg.UUID == oldFrame.group.UUID {
+					m.stack = append(m.stack, stackFrame{group: sg, cursor: oldFrame.cursor, offset: oldFrame.offset})
 					current = sg
 					found = true
 					break
@@ -462,7 +472,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.searchQuery != "" {
 			// Re-run the search to preserve results
-			m.allItems = collectAllEntries(root)
+			m.allItems = collectAllEntries(root, m.db.RecycleBinUUID())
 			sortItems(m.allItems, m.db.RecycleBinUUID(), m.sortBy)
 			m.searchInput.SetValue(m.searchQuery)
 			m.applySearch()
@@ -559,7 +569,11 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.searching {
 			switch msg.String() {
 			case "esc":
+				// Fully leave search state: a stale searchQuery would
+				// re-render the search header and resurrect the canceled
+				// search on the next RefreshMsg.
 				m.searching = false
+				m.searchQuery = ""
 				m.searchInput.SetValue("")
 				m.searchInput.Blur()
 				m.items = m.buildItemsWithDB(m.currentGroup())
@@ -567,6 +581,19 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.offset = 0
 				return m, nil
 			case "enter":
+				if strings.TrimSpace(m.searchInput.Value()) == "" {
+					// Committing an empty search would strand the browser
+					// in the flattened all-entries view; treat it as a
+					// cancel instead.
+					m.searching = false
+					m.searchQuery = ""
+					m.searchInput.SetValue("")
+					m.searchInput.Blur()
+					m.items = m.buildItemsWithDB(m.currentGroup())
+					m.cursor = 0
+					m.offset = 0
+					return m, nil
+				}
 				m.searching = false
 				m.searchInput.Blur()
 				return m, nil
@@ -590,7 +617,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case m.keys.Search:
 			m.searching = true
-			m.allItems = collectAllEntries(m.db.RootGroup())
+			m.allItems = collectAllEntries(m.db.RootGroup(), m.db.RecycleBinUUID())
 			sortItems(m.allItems, m.db.RecycleBinUUID(), m.sortBy)
 			m.searchInput.SetValue("")
 			m.searchInput.Focus()
@@ -765,7 +792,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			item := m.items[m.cursor]
 			name := item.name()
-			if m.inRecycleBin() {
+			if m.itemInRecycleBin(item) {
 				// In recycle bin: permanently delete
 				if item.isGroup {
 					return m, func() tea.Msg {
@@ -787,10 +814,13 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case m.keys.Restore:
 			// Restore from recycle bin
-			if !m.inRecycleBin() || len(m.items) == 0 {
+			if len(m.items) == 0 {
 				break
 			}
 			item := m.items[m.cursor]
+			if !m.itemInRecycleBin(item) {
+				break
+			}
 			if item.isGroup {
 				return m, func() tea.Msg {
 					return RestoreGroupMsg{GroupUUID: item.group.UUID}

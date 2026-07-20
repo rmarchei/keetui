@@ -56,10 +56,17 @@ func EvaluatePasswordStrength(password string) StrengthResult {
 
 	entropy, classes := calculateEntropy(password)
 
-	// Apply penalties for common patterns
-	entropy -= patternPenalty(password)
-	if entropy < 0 {
-		entropy = 0
+	// Diceware-style passphrases have known combinatorial entropy; the
+	// char-pool estimate overstates them ~3x (a 6-word passphrase would
+	// show ~170 bits instead of its real ~60).
+	if pe, ok := passphraseEntropy(password); ok {
+		entropy = pe
+	} else {
+		// Apply penalties for common patterns
+		entropy -= patternPenalty(password)
+		if entropy < 0 {
+			entropy = 0
+		}
 	}
 
 	score := entropyToScore(entropy)
@@ -78,6 +85,33 @@ func EvaluatePasswordStrength(password string) StrengthResult {
 
 type charClasses struct {
 	lower, upper, digit, symbol bool
+}
+
+// dicewareWordSet indexes the passphrase word list for membership checks.
+var dicewareWordSet = func() map[string]bool {
+	s := make(map[string]bool, len(dicewareWordList))
+	for _, w := range dicewareWordList {
+		s[w] = true
+	}
+	return s
+}()
+
+// passphraseEntropy returns the combinatorial entropy of a diceware-style
+// passphrase — three or more words from the built-in list joined by
+// non-letter separators — and true when the password has that shape.
+func passphraseEntropy(password string) (float64, bool) {
+	words := strings.FieldsFunc(password, func(r rune) bool {
+		return !unicode.IsLetter(r)
+	})
+	if len(words) < 3 {
+		return 0, false
+	}
+	for _, w := range words {
+		if !dicewareWordSet[strings.ToLower(w)] {
+			return 0, false
+		}
+	}
+	return float64(len(words)) * math.Log2(float64(len(dicewareWordList))), true
 }
 
 // calculateEntropy estimates the bits of entropy in a password based on

@@ -1,6 +1,7 @@
 package keepass
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -841,7 +842,9 @@ func TestChangePassword(t *testing.T) {
 	}
 
 	newPassword := "newpassword123"
-	db.ChangePassword(newPassword)
+	if err := db.ChangePassword(newPassword); err != nil {
+		t.Fatalf("ChangePassword: %v", err)
+	}
 
 	savePath := filepath.Join(dir, "test2.kdbx")
 	err = db.SaveAs(savePath)
@@ -864,6 +867,243 @@ func TestChangePassword(t *testing.T) {
 	root := db2.RootGroup()
 	if len(root.Groups) != 1 {
 		t.Errorf("groups = %d, want 1", len(root.Groups))
+	}
+}
+
+func createTestDBWithKeyFile(t *testing.T, dbPath, password, keyPath string) {
+	t.Helper()
+
+	if err := os.WriteFile(keyPath, []byte("test key material"), 0600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+
+	rootGroup := gokeepasslib.NewGroup()
+	rootGroup.Name = "Root"
+
+	creds, err := gokeepasslib.NewPasswordAndKeyCredentials(password, keyPath)
+	if err != nil {
+		t.Fatalf("create credentials: %v", err)
+	}
+
+	db := gokeepasslib.NewDatabase()
+	db.Credentials = creds
+	db.Content.Root = &gokeepasslib.RootData{
+		Groups: []gokeepasslib.Group{rootGroup},
+	}
+
+	_ = db.LockProtectedEntries()
+
+	file, err := os.Create(dbPath)
+	if err != nil {
+		t.Fatalf("create test db file: %v", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	if err := gokeepasslib.NewEncoder(file).Encode(db); err != nil {
+		t.Fatalf("encode test db: %v", err)
+	}
+}
+
+func TestChangePasswordWithKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	keyPath := filepath.Join(dir, "test.key")
+	password := "testmaster"
+
+	createTestDBWithKeyFile(t, dbPath, password, keyPath)
+
+	db, err := OpenWithKeyFile(dbPath, password, keyPath)
+	if err != nil {
+		t.Fatalf("OpenWithKeyFile: %v", err)
+	}
+
+	newPassword := "newpassword123"
+	if err := db.ChangePassword(newPassword); err != nil {
+		t.Fatalf("ChangePassword: %v", err)
+	}
+
+	savePath := filepath.Join(dir, "test2.kdbx")
+	if err := db.SaveAs(savePath); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	// The key file factor must be preserved: password alone should fail.
+	if _, err := Open(savePath, newPassword); err == nil {
+		t.Fatal("expected error opening without key file, got nil")
+	}
+
+	// Old password with the key file should fail.
+	if _, err := OpenWithKeyFile(savePath, password, keyPath); err == nil {
+		t.Fatal("expected error with old password, got nil")
+	}
+
+	// New password with the key file should work.
+	if _, err := OpenWithKeyFile(savePath, newPassword, keyPath); err != nil {
+		t.Fatalf("OpenWithKeyFile with new password: %v", err)
+	}
+}
+
+func TestStatsSkipsRecycleBin(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Create(filepath.Join(dir, "test.kdbx"), "pw")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	db.Database.Content.Meta.RecycleBinEnabled.Bool = true
+	root := db.RootGroup()
+	uuid, err := db.AddEntry(root.UUID, Entry{Title: "Weak", Password: "abc"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	if got := db.Stats().WeakPasswords; got != 1 {
+		t.Fatalf("weak before delete = %d, want 1", got)
+	}
+
+	if err := db.DeleteEntry(uuid); err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+	stats := db.Stats()
+	if stats.WeakPasswords != 0 {
+		t.Errorf("weak after delete = %d, want 0 (recycle bin must be skipped, matching Audit)", stats.WeakPasswords)
+	}
+	if stats.TotalEntries != 0 {
+		t.Errorf("total entries = %d, want 0 (binned entries excluded)", stats.TotalEntries)
+	}
+}
+
+func TestDuplicateEntryPreservesFields(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Create(filepath.Join(dir, "test.kdbx"), "pw")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	root := db.RootGroup()
+	expiry := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	uuid, err := db.AddEntry(root.UUID, Entry{
+		Title:      "Orig",
+		Password:   "secret",
+		Tags:       "favorite",
+		Expires:    true,
+		ExpiryTime: expiry,
+	})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	raw := findEntry(&db.Database.Content.Root.Groups[0], uuid)
+	raw.IconID = 42
+
+	dupUUID, err := db.DuplicateEntry(uuid)
+	if err != nil {
+		t.Fatalf("DuplicateEntry: %v", err)
+	}
+	if dupUUID == uuid {
+		t.Fatal("duplicate must have a fresh UUID")
+	}
+
+	dup, err := db.GetEntry(dupUUID)
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if dup.Title != "Orig (copy)" {
+		t.Errorf("title = %q, want %q", dup.Title, "Orig (copy)")
+	}
+	if !dup.Expires || !dup.ExpiryTime.Equal(expiry) {
+		t.Errorf("expiry = (%v, %v), want (true, %v) — duplication must not drop expiry", dup.Expires, dup.ExpiryTime, expiry)
+	}
+	if dup.Tags != "favorite" {
+		t.Errorf("tags = %q, want favorite", dup.Tags)
+	}
+	rawDup := findEntry(&db.Database.Content.Root.Groups[0], dupUUID)
+	if rawDup.IconID != 42 {
+		t.Errorf("icon = %v, want 42 — duplication must keep the icon", rawDup.IconID)
+	}
+	if len(rawDup.Histories) != 0 && len(rawDup.Histories[0].Entries) != 0 {
+		t.Error("duplicate must start with empty history")
+	}
+}
+
+func TestEntryTOTPParameters(t *testing.T) {
+	// otpauth URI parameters.
+	e := Entry{TOTP: "otpauth://totp/x?secret=ABC&digits=8&algorithm=SHA256&period=60"}
+	if got := e.TOTPDigits(); got != 8 {
+		t.Errorf("URI digits = %d, want 8", got)
+	}
+	if got := e.TOTPAlgorithm(); got != "SHA256" {
+		t.Errorf("URI algorithm = %q, want SHA256", got)
+	}
+	if got := e.TOTPPeriod(); got != 60 {
+		t.Errorf("URI period = %d, want 60", got)
+	}
+
+	// KeePass2 TimeOtp-* fields alongside a raw secret.
+	e = Entry{
+		TOTP: "JBSWY3DPEHPK3PXP",
+		CustomFields: []CustomField{
+			{Key: "TimeOtp-Length", Value: "8"},
+			{Key: "TimeOtp-Algorithm", Value: "HMAC-SHA-256"},
+			{Key: "TimeOtp-Period", Value: "60"},
+		},
+	}
+	if got := e.TOTPDigits(); got != 8 {
+		t.Errorf("TimeOtp digits = %d, want 8", got)
+	}
+	if got := e.TOTPAlgorithm(); got != "SHA256" {
+		t.Errorf("TimeOtp algorithm = %q, want SHA256", got)
+	}
+	if got := e.TOTPPeriod(); got != 60 {
+		t.Errorf("TimeOtp period = %d, want 60", got)
+	}
+
+	// Defaults.
+	e = Entry{TOTP: "JBSWY3DPEHPK3PXP"}
+	if got := e.TOTPDigits(); got != 6 {
+		t.Errorf("default digits = %d, want 6", got)
+	}
+	if got := e.TOTPAlgorithm(); got != "SHA1" {
+		t.Errorf("default algorithm = %q, want SHA1", got)
+	}
+	if got := e.TOTPPeriod(); got != 30 {
+		t.Errorf("default period = %d, want 30", got)
+	}
+}
+
+func TestKeyFileOnlyDatabase(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	keyPath := filepath.Join(dir, "test.key")
+	if err := os.WriteFile(keyPath, []byte("key material"), 0600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+
+	// Create a database protected by the key file alone (no password).
+	db, err := CreateWithKeyFile(dbPath, "", keyPath)
+	if err != nil {
+		t.Fatalf("CreateWithKeyFile: %v", err)
+	}
+	root := db.RootGroup()
+	if _, err := db.AddEntry(root.UUID, Entry{Title: "E"}); err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	if err := db.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Key file with empty password opens it.
+	db2, err := OpenWithKeyFile(dbPath, "", keyPath)
+	if err != nil {
+		t.Fatalf("OpenWithKeyFile (key-only): %v", err)
+	}
+	r := db2.RootGroup()
+	if len(r.Entries) != 1 || r.Entries[0].Title != "E" {
+		t.Errorf("entries = %+v, want one entry E", r.Entries)
+	}
+
+	// Neither an empty password alone nor a wrong password should work.
+	if _, err := Open(dbPath, ""); err == nil {
+		t.Error("expected error opening key-only database without the key file")
+	}
+	if _, err := OpenWithKeyFile(dbPath, "pw", keyPath); err == nil {
+		t.Error("expected error opening key-only database with a password")
 	}
 }
 
@@ -2413,5 +2653,292 @@ func TestConvertToKDBX4AlreadyV4(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "already KDBX 4") {
 		t.Errorf("error = %q, want message about already KDBX 4", err.Error())
+	}
+}
+
+func TestConvertToKDBX4RemapsBinaryIDs(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	password := "testmaster"
+
+	createTestDB(t, dbPath, password)
+
+	db, err := Open(dbPath, password)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	root := db.RootGroup()
+	email := root.Groups[0]
+	entry1 := email.Entries[0].UUID
+	entry2, err := db.AddEntry(email.UUID, Entry{Title: "Second Entry"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+
+	contentB := []byte("content of b")
+	contentC := []byte("content of c")
+	if err := db.AddAttachment(entry1, "b.txt", contentB); err != nil {
+		t.Fatalf("AddAttachment b.txt: %v", err)
+	}
+	if err := db.AddAttachment(entry2, "c.txt", contentC); err != nil {
+		t.Fatalf("AddAttachment c.txt: %v", err)
+	}
+
+	// Simulate a third-party KDBX 3.1 file with a non-contiguous binary
+	// pool: renumber the pool IDs 0,1 to 5,7 and point the entry references
+	// at the new IDs. Conversion re-adds binaries with fresh sequential IDs,
+	// so without remapping the references dangle.
+	meta := db.Database.Content.Meta
+	if len(meta.Binaries) != 2 {
+		t.Fatalf("meta binaries = %d, want 2", len(meta.Binaries))
+	}
+	meta.Binaries[0].ID = 5
+	meta.Binaries[1].ID = 7
+	raw1 := findEntry(&db.Database.Content.Root.Groups[0], entry1)
+	raw2 := findEntry(&db.Database.Content.Root.Groups[0], entry2)
+	if raw1 == nil || raw2 == nil || len(raw1.Binaries) != 1 || len(raw2.Binaries) != 1 {
+		t.Fatal("expected one binary reference on each entry")
+	}
+	raw1.Binaries[0].Value.ID = 5
+	raw2.Binaries[0].Value.ID = 7
+
+	if err := db.ConvertToKDBX4(); err != nil {
+		t.Fatalf("ConvertToKDBX4: %v", err)
+	}
+
+	savePath := filepath.Join(dir, "test4.kdbx")
+	if err := db.SaveAs(savePath); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	db2, err := Open(savePath, password)
+	if err != nil {
+		t.Fatalf("Open converted: %v", err)
+	}
+
+	assertAttachment := func(entryUUID gokeepasslib.UUID, name string, want []byte) {
+		t.Helper()
+		dest := filepath.Join(dir, name+".out")
+		if err := db2.ExtractAttachment(entryUUID, name, dest); err != nil {
+			t.Fatalf("ExtractAttachment %s: %v", name, err)
+		}
+		got, err := os.ReadFile(dest)
+		if err != nil {
+			t.Fatalf("read extracted %s: %v", name, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("attachment %s content = %q, want %q", name, got, want)
+		}
+	}
+	assertAttachment(entry1, "b.txt", contentB)
+	assertAttachment(entry2, "c.txt", contentC)
+}
+
+func TestUpdateEntryClearsTOTP(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Create(filepath.Join(dir, "test.kdbx"), "pw")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	root := db.RootGroup()
+	uuid, err := db.AddEntry(root.UUID, Entry{Title: "E", TOTP: "JBSWY3DPEHPK3PXP"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+
+	if err := db.UpdateEntry(uuid, Entry{Title: "E", TOTP: ""}); err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+
+	got, err := db.GetEntry(uuid)
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if got.TOTP != "" {
+		t.Errorf("TOTP = %q, want empty after clearing", got.TOTP)
+	}
+	raw := findEntry(&db.Database.Content.Root.Groups[0], uuid)
+	if raw.Get("otp") != nil || raw.Get("TimeOtp-Secret-Base32") != nil {
+		t.Error("clearing TOTP must remove both storage fields from the entry")
+	}
+}
+
+func TestUpdateEntrySwitchesTOTPFormat(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Create(filepath.Join(dir, "test.kdbx"), "pw")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	root := db.RootGroup()
+	uri := "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP"
+	uuid, err := db.AddEntry(root.UUID, Entry{Title: "E", TOTP: uri})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+
+	// Replace the otpauth URI with a raw secret: the stale 'otp' field must
+	// not survive, or it would shadow the new value.
+	if err := db.UpdateEntry(uuid, Entry{Title: "E", TOTP: "NEWSECRET234567A"}); err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+	got, _ := db.GetEntry(uuid)
+	if got.TOTP != "NEWSECRET234567A" {
+		t.Errorf("TOTP = %q, want raw secret after format switch", got.TOTP)
+	}
+
+	// And back to a URI: the raw-secret field must be removed.
+	if err := db.UpdateEntry(uuid, Entry{Title: "E", TOTP: uri}); err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+	got, _ = db.GetEntry(uuid)
+	if got.TOTP != uri {
+		t.Errorf("TOTP = %q, want otpauth URI after switching back", got.TOTP)
+	}
+	raw := findEntry(&db.Database.Content.Root.Groups[0], uuid)
+	if raw.Get("TimeOtp-Secret-Base32") != nil {
+		t.Error("stale TimeOtp-Secret-Base32 field must be removed")
+	}
+}
+
+func TestUpdateEntryHistoryUnlimited(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Create(filepath.Join(dir, "test.kdbx"), "pw")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	db.Database.Content.Meta.HistoryMaxItems = -1
+	root := db.RootGroup()
+	uuid, err := db.AddEntry(root.UUID, Entry{Title: "E"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+
+	for i := range 15 {
+		if err := db.UpdateEntry(uuid, Entry{Title: "E", Password: fmt.Sprintf("p%d", i)}); err != nil {
+			t.Fatalf("UpdateEntry %d: %v", i, err)
+		}
+	}
+	if got := len(db.EntryHistory(uuid)); got != 15 {
+		t.Errorf("history = %d, want 15 (HistoryMaxItems -1 means unlimited)", got)
+	}
+}
+
+func TestUpdateEntryHistoryDisabled(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Create(filepath.Join(dir, "test.kdbx"), "pw")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	db.Database.Content.Meta.HistoryMaxItems = 0
+	root := db.RootGroup()
+	uuid, err := db.AddEntry(root.UUID, Entry{Title: "E"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+
+	for i := range 3 {
+		if err := db.UpdateEntry(uuid, Entry{Title: "E", Password: fmt.Sprintf("p%d", i)}); err != nil {
+			t.Fatalf("UpdateEntry %d: %v", i, err)
+		}
+	}
+	if got := len(db.EntryHistory(uuid)); got != 0 {
+		t.Errorf("history = %d, want 0 (HistoryMaxItems 0 disables history)", got)
+	}
+}
+
+func TestUpdateEntryHistoryPreservesUUID(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Create(filepath.Join(dir, "test.kdbx"), "pw")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	root := db.RootGroup()
+	uuid, err := db.AddEntry(root.UUID, Entry{Title: "E"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	if err := db.UpdateEntry(uuid, Entry{Title: "E2"}); err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+
+	raw := findEntry(&db.Database.Content.Root.Groups[0], uuid)
+	if len(raw.Histories) == 0 || len(raw.Histories[0].Entries) != 1 {
+		t.Fatal("expected one history snapshot")
+	}
+	if raw.Histories[0].Entries[0].UUID != uuid {
+		t.Error("history snapshot must carry the entry's UUID, not a fresh one")
+	}
+}
+
+func TestDeleteAttachmentKeepsHistoryReferencedBinary(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	db, err := Create(dbPath, "pw")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	root := db.RootGroup()
+	uuid, err := db.AddEntry(root.UUID, Entry{Title: "E"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	contentA := []byte("attachment A data")
+	contentB := []byte("attachment B data")
+	if err := db.AddAttachment(uuid, "a.txt", contentA); err != nil {
+		t.Fatalf("AddAttachment a: %v", err)
+	}
+	if err := db.AddAttachment(uuid, "b.txt", contentB); err != nil {
+		t.Fatalf("AddAttachment b: %v", err)
+	}
+
+	// Edit the entry so a history snapshot referencing both binaries exists,
+	// then delete attachment a from the live entry.
+	if err := db.UpdateEntry(uuid, Entry{Title: "E edited"}); err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+	if err := db.DeleteAttachment(uuid, "a.txt"); err != nil {
+		t.Fatalf("DeleteAttachment: %v", err)
+	}
+
+	if err := db.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	db2, err := Open(dbPath, "pw")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	raw := findEntry(&db2.Database.Content.Root.Groups[0], uuid)
+	if raw == nil || len(raw.Histories) == 0 || len(raw.Histories[0].Entries) == 0 {
+		t.Fatal("expected history snapshot to survive save")
+	}
+	snapshot := raw.Histories[0].Entries[len(raw.Histories[0].Entries)-1]
+	found := false
+	for _, ref := range snapshot.Binaries {
+		if ref.Name != "a.txt" {
+			continue
+		}
+		found = true
+		bin := db2.Database.FindBinary(ref.Value.ID)
+		if bin == nil {
+			t.Fatal("history-referenced binary a.txt missing from pool")
+		}
+		data, err := bin.GetContentBytes()
+		if err != nil {
+			t.Fatalf("GetContentBytes: %v", err)
+		}
+		if !bytes.Equal(data, contentA) {
+			t.Errorf("history attachment a.txt = %q, want %q (must not alias another binary)", data, contentA)
+		}
+	}
+	if !found {
+		t.Fatal("history snapshot should still reference a.txt")
+	}
+
+	// The live entry keeps only b.txt with intact content.
+	atts := db2.EntryAttachments(uuid)
+	if len(atts) != 1 || atts[0].Name != "b.txt" {
+		t.Fatalf("live attachments = %+v, want only b.txt", atts)
 	}
 }

@@ -153,3 +153,25 @@ func TestStrengthLevelString(t *testing.T) {
 		}
 	}
 }
+
+func TestPassphraseEntropyIsCombinatorial(t *testing.T) {
+	pp, err := GeneratePassphrase(6, "-")
+	if err != nil {
+		t.Fatalf("GeneratePassphrase: %v", err)
+	}
+	r := EvaluatePasswordStrength(pp)
+	// Real entropy is 6 * log2(len(list)) ≈ 60 bits; the char-pool model
+	// used to report ~170.
+	if r.Entropy > 70 {
+		t.Errorf("entropy = %.1f bits, want ~60 (combinatorial), not char-pool inflated", r.Entropy)
+	}
+	if r.Entropy < 50 {
+		t.Errorf("entropy = %.1f bits, unexpectedly low for a 6-word passphrase", r.Entropy)
+	}
+
+	// Non-passphrase passwords keep the char-pool estimate.
+	r = EvaluatePasswordStrength("Xk9#mQ2$vL7@")
+	if r.Entropy < 70 {
+		t.Errorf("random password entropy = %.1f, expected char-pool estimate", r.Entropy)
+	}
+}

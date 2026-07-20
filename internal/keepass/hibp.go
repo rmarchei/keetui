@@ -33,7 +33,14 @@ func checkHIBPWithURL(password, baseURL string) HIBPResult {
 	suffix := hash[5:]
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(baseURL + prefix)
+	req, err := http.NewRequest(http.MethodGet, baseURL+prefix, nil)
+	if err != nil {
+		return HIBPResult{Err: fmt.Errorf("HIBP request failed: %w", err)}
+	}
+	// Padding equalizes response sizes so a passive observer cannot infer
+	// which hash range was queried from the TLS response length.
+	req.Header.Set("Add-Padding", "true")
+	resp, err := client.Do(req)
 	if err != nil {
 		return HIBPResult{Err: fmt.Errorf("HIBP request failed: %w", err)}
 	}
@@ -54,7 +61,11 @@ func checkHIBPWithURL(password, baseURL string) HIBPResult {
 		}
 		if strings.EqualFold(parts[0], suffix) {
 			count, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
-			return HIBPResult{Breached: true, Count: count}
+			// Padding entries carry a count of 0 and are not real breaches.
+			if count > 0 {
+				return HIBPResult{Breached: true, Count: count}
+			}
+			return HIBPResult{Breached: false, Count: 0}
 		}
 	}
 	if err := scanner.Err(); err != nil {

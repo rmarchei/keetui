@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"syscall"
 )
 
 // ExportCSV writes all entries in the database to a CSV file.
@@ -21,8 +22,10 @@ func (d *DB) ExportCSV(w io.Writer) error {
 		return fmt.Errorf("write CSV header: %w", err)
 	}
 
+	// Paths are root-relative (empty for root-level entries) so a round
+	// trip does not depend on the source root group's name.
 	root := d.RootGroup()
-	return d.writeGroupCSV(writer, &root, root.Name)
+	return d.writeGroupCSV(writer, &root, "")
 }
 
 func (d *DB) writeGroupCSV(w *csv.Writer, g *Group, path string) error {
@@ -39,7 +42,10 @@ func (d *DB) writeGroupCSV(w *csv.Writer, g *Group, path string) error {
 		}
 	}
 	for i := range g.Groups {
-		subPath := path + "/" + g.Groups[i].Name
+		subPath := g.Groups[i].Name
+		if path != "" {
+			subPath = path + "/" + g.Groups[i].Name
+		}
 		if err := d.writeGroupCSV(w, &g.Groups[i], subPath); err != nil {
 			return err
 		}
@@ -47,9 +53,28 @@ func (d *DB) writeGroupCSV(w *csv.Writer, g *Group, path string) error {
 	return nil
 }
 
+// createSecretExportFile opens path for writing a plaintext export.
+// Symlink destinations are rejected and permissions are forced to 0600
+// even when overwriting an existing (possibly world-readable) file,
+// mirroring ExtractAttachment and createBackup.
+func createSecretExportFile(path string) (*os.File, error) {
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("refusing to write export to symlink %q", path)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := f.Chmod(0600); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("set export file permissions: %w", err)
+	}
+	return f, nil
+}
+
 // ExportCSVFile is a convenience wrapper that writes CSV to a file.
 func (d *DB) ExportCSVFile(path string) (err error) {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	f, err := createSecretExportFile(path)
 	if err != nil {
 		return fmt.Errorf("create CSV file: %w", err)
 	}
@@ -184,7 +209,7 @@ func (d *DB) findBinaryByName(entryUUID [16]byte, name string) []byte {
 
 // ExportXMLFile is a convenience wrapper that writes XML to a file.
 func (d *DB) ExportXMLFile(path string) (err error) {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	f, err := createSecretExportFile(path)
 	if err != nil {
 		return fmt.Errorf("create XML file: %w", err)
 	}
@@ -283,16 +308,18 @@ func (d *DB) ImportXML(r io.Reader) (int, error) {
 	}
 
 	root := d.RootGroup()
-	return d.importXMLGroup(&xmlDB.Root.Group, root.UUID)
+	return d.importXMLGroup(&xmlDB.Root.Group, root.UUID, true)
 }
 
-func (d *DB) importXMLGroup(xg *XMLGroup, parentUUID [16]byte) (int, error) {
+func (d *DB) importXMLGroup(xg *XMLGroup, parentUUID [16]byte, isRoot bool) (int, error) {
 	imported := 0
 
-	// Ensure the group exists
+	// The source root group maps onto the target root; child groups are
+	// resolved relative to their parent so nested hierarchies (and
+	// same-named groups in different branches) round-trip intact.
 	groupUUID := parentUUID
-	if xg.Name != "" && xg.Name != "Root" {
-		groupUUID = d.ensureGroupPath(xg.Name)
+	if !isRoot && xg.Name != "" {
+		groupUUID, _ = d.findOrCreateChildGroup(parentUUID, xg.Name)
 	}
 
 	for _, xe := range xg.Entries {
@@ -341,7 +368,7 @@ func (d *DB) importXMLGroup(xg *XMLGroup, parentUUID [16]byte) (int, error) {
 	}
 
 	for i := range xg.Groups {
-		n, err := d.importXMLGroup(&xg.Groups[i], groupUUID)
+		n, err := d.importXMLGroup(&xg.Groups[i], groupUUID, false)
 		imported += n
 		if err != nil {
 			return imported, err
@@ -362,15 +389,20 @@ func (d *DB) ImportXMLFile(path string) (int, error) {
 }
 
 // ensureGroupPath creates groups along the path if they don't exist,
-// returning the UUID of the leaf group.
+// returning the UUID of the leaf group. A leading "Root" component (as
+// written by older exports) maps onto the root group; deeper components
+// named "Root" are treated as ordinary group names.
 func (d *DB) ensureGroupPath(path string) [16]byte {
 	parts := strings.Split(path, "/")
+	if len(parts) > 0 && strings.TrimSpace(parts[0]) == "Root" {
+		parts = parts[1:]
+	}
 	root := d.RootGroup()
 	currentUUID := root.UUID
 
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
-		if part == "" || part == "Root" {
+		if part == "" {
 			continue
 		}
 		// Look for existing group

@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -341,8 +343,9 @@ func TestAppSaveDatabase(t *testing.T) {
 	}
 
 	// Confirm save to same path
-	updated, _ = m.Update(SaveAsMsg{Path: m.filePath})
+	updated, cmd := m.Update(SaveAsMsg{Path: m.filePath})
 	m = updated.(AppModel)
+	m = completeSave(t, m, cmd)
 
 	if m.dirty {
 		t.Error("should not be dirty after saving")
@@ -350,6 +353,62 @@ func TestAppSaveDatabase(t *testing.T) {
 	if m.state != viewBrowser {
 		t.Fatalf("state = %d, want viewBrowser", m.state)
 	}
+}
+
+func TestAsyncUnlockFlow(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	if _, err := keepass.Create(dbPath, "pw"); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	m := NewApp(dbPath, "", config.Default())
+	updated, cmd := m.Update(DatabaseOpenedMsg{FilePath: dbPath, Password: "pw"})
+	m = updated.(AppModel)
+	if !m.unlock.unlocking {
+		t.Fatal("unlocking indicator should be set while the open runs")
+	}
+	if cmd == nil {
+		t.Fatal("expected an async open command")
+	}
+	result, ok := cmd().(databaseOpenResultMsg)
+	if !ok {
+		t.Fatalf("expected databaseOpenResultMsg, got %T", cmd())
+	}
+	updated, _ = m.Update(result)
+	m = updated.(AppModel)
+	if m.state != viewBrowser || m.db == nil {
+		t.Errorf("state = %d, db nil = %v; want browser with open db", m.state, m.db == nil)
+	}
+
+	// Wrong password: the error surfaces and the indicator clears.
+	m2 := NewApp(dbPath, "", config.Default())
+	updated, cmd = m2.Update(DatabaseOpenedMsg{FilePath: dbPath, Password: "wrong"})
+	m2 = updated.(AppModel)
+	result = cmd().(databaseOpenResultMsg)
+	updated, _ = m2.Update(result)
+	m2 = updated.(AppModel)
+	if m2.state != viewUnlock || m2.unlock.err == nil {
+		t.Error("failed unlock must stay on the unlock screen with an error")
+	}
+	if m2.unlock.unlocking {
+		t.Error("unlocking indicator must clear after a failed open")
+	}
+}
+
+// completeSave executes a pending async save command and delivers its
+// result message, as the Bubble Tea runtime would.
+func completeSave(t *testing.T, m AppModel, cmd tea.Cmd) AppModel {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected an async save command")
+	}
+	msg, ok := cmd().(saveResultMsg)
+	if !ok {
+		t.Fatalf("expected saveResultMsg, got %T", msg)
+	}
+	updated, _ := m.Update(msg)
+	return updated.(AppModel)
 }
 
 func TestAppWindowResize(t *testing.T) {
@@ -456,6 +515,218 @@ func TestAppChangePasswordDirty(t *testing.T) {
 	}
 	if m.state != viewBrowser {
 		t.Errorf("state = %d, want viewBrowser", m.state)
+	}
+}
+
+func TestSaveAsOverwriteConfirmation(t *testing.T) {
+	m := createTestApp(t)
+	dir := t.TempDir()
+
+	// Saving over a different existing file must ask first.
+	existing := filepath.Join(dir, "other.kdbx")
+	if err := os.WriteFile(existing, []byte("another vault"), 0600); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+	updated, _ := m.Update(SaveAsMsg{Path: existing})
+	m = updated.(AppModel)
+	if m.state != viewConfirm {
+		t.Fatalf("state = %d, want viewConfirm before overwriting an existing file", m.state)
+	}
+
+	// Confirming performs the save.
+	updated, cmd := m.Update(confirmSaveAsMsg{Path: existing})
+	m = updated.(AppModel)
+	m = completeSave(t, m, cmd)
+	if m.state != viewBrowser {
+		t.Errorf("state after confirm = %d, want viewBrowser", m.state)
+	}
+	if m.filePath != existing {
+		t.Errorf("filePath = %q, want %q after confirmed save", m.filePath, existing)
+	}
+
+	// A fresh path saves without any prompt.
+	fresh := filepath.Join(dir, "fresh.kdbx")
+	updated, cmd = m.Update(SaveAsMsg{Path: fresh})
+	m = updated.(AppModel)
+	if m.state != viewBrowser {
+		t.Errorf("state = %d, want viewBrowser (no prompt for a new file)", m.state)
+	}
+	m = completeSave(t, m, cmd)
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("expected database saved at %s: %v", fresh, err)
+	}
+}
+
+func TestExtractAttachmentOverwriteConfirmation(t *testing.T) {
+	m := createTestApp(t)
+	root := m.db.RootGroup()
+	uuid, err := m.db.AddEntry(root.UUID, keepass.Entry{Title: "WithAttachment"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	if err := m.db.AddAttachment(uuid, "notes.txt", []byte("attachment data")); err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(dest, []byte("unrelated existing file"), 0600); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+
+	// Extracting onto an existing file must ask first and not touch it.
+	updated, _ := m.Update(ExtractAttachmentMsg{EntryUUID: uuid, Name: "notes.txt", DestPath: dest})
+	m = updated.(AppModel)
+	if m.state != viewConfirm {
+		t.Fatalf("state = %d, want viewConfirm before overwriting", m.state)
+	}
+	data, _ := os.ReadFile(dest)
+	if string(data) != "unrelated existing file" {
+		t.Fatal("file must not be overwritten before confirmation")
+	}
+
+	// Confirming overwrites.
+	updated, _ = m.Update(confirmExtractAttachmentMsg{EntryUUID: uuid, Name: "notes.txt", DestPath: dest})
+	m = updated.(AppModel)
+	data, _ = os.ReadFile(dest)
+	if string(data) != "attachment data" {
+		t.Errorf("file content = %q, want extracted attachment after confirm", data)
+	}
+
+	// A fresh destination extracts without any prompt.
+	fresh := filepath.Join(dir, "fresh.txt")
+	updated, _ = m.Update(ExtractAttachmentMsg{EntryUUID: uuid, Name: "notes.txt", DestPath: fresh})
+	m = updated.(AppModel)
+	if m.state == viewConfirm {
+		t.Error("no prompt expected for a new destination file")
+	}
+	data, _ = os.ReadFile(fresh)
+	if string(data) != "attachment data" {
+		t.Errorf("fresh file content = %q, want extracted attachment", data)
+	}
+}
+
+func TestConfirmCtrlCRequestsQuit(t *testing.T) {
+	c := NewConfirmModel("Delete?", nil)
+	_, cmd := c.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c should produce a command")
+	}
+	if _, ok := cmd().(RequestQuitMsg); !ok {
+		t.Errorf("ctrl+c in confirm = %T, want RequestQuitMsg (unsaved-changes prompt must apply)", cmd())
+	}
+}
+
+func TestTOTPTickLifecycle(t *testing.T) {
+	m := createTestApp(t)
+	root := m.db.RootGroup()
+	uuid, err := m.db.AddEntry(root.UUID, keepass.Entry{Title: "OTP", TOTP: "JBSWY3DPEHPK3PXP"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	entry, err := m.db.GetEntry(uuid)
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+
+	// Opening the entry arms a tick chain.
+	updated, cmd := m.Update(ViewEntryMsg{Entry: entry})
+	m = updated.(AppModel)
+	if cmd == nil {
+		t.Fatal("viewing a TOTP entry must start the tick chain")
+	}
+	firstSeq := m.detail.totpSeq
+
+	// Returning from a sub-view restarts the chain under a new sequence.
+	updated, cmd = m.Update(BackToDetailMsg{})
+	m = updated.(AppModel)
+	if cmd == nil {
+		t.Fatal("returning to the detail view must restart the tick chain")
+	}
+	if m.detail.totpSeq == firstSeq {
+		t.Fatal("restart must take a fresh sequence number")
+	}
+
+	// A tick from the superseded chain is dropped without re-arming.
+	_, dcmd := m.detail.Update(totpTickMsg{seq: firstSeq})
+	if dcmd != nil {
+		t.Error("stale tick must not re-arm (would duplicate chains)")
+	}
+
+	// A tick from the live chain refreshes and re-arms.
+	_, dcmd = m.detail.Update(totpTickMsg{seq: m.detail.totpSeq})
+	if dcmd == nil {
+		t.Error("live tick must re-arm the chain")
+	}
+}
+
+func TestAutoLockStaleGenerationIgnored(t *testing.T) {
+	m := createTestApp(t)
+	m.autoLockGen = 5
+	m.lastActivity = time.Now().Add(-time.Hour)
+
+	updated, cmd := m.Update(autoLockMsg{gen: 4})
+	m = updated.(AppModel)
+
+	if m.state != viewBrowser || m.db == nil {
+		t.Error("stale-generation tick must not lock")
+	}
+	if cmd != nil {
+		t.Error("stale-generation tick must not reschedule")
+	}
+}
+
+func TestAutoLockActivityReschedules(t *testing.T) {
+	m := createTestApp(t)
+	m.lastActivity = time.Now() // activity since the timer was armed
+
+	updated, cmd := m.Update(autoLockMsg{gen: m.autoLockGen})
+	m = updated.(AppModel)
+
+	if m.state != viewBrowser || m.db == nil {
+		t.Error("must not lock while the user is active")
+	}
+	if cmd == nil {
+		t.Error("expected a reschedule command so auto-lock stays armed")
+	}
+}
+
+func TestAutoLockLocksAfterIdle(t *testing.T) {
+	m := createTestApp(t)
+	m.lastActivity = time.Now().Add(-time.Hour)
+
+	updated, _ := m.Update(autoLockMsg{gen: m.autoLockGen})
+	m = updated.(AppModel)
+
+	if m.state != viewUnlock {
+		t.Errorf("state = %d, want viewUnlock after idle expiry", m.state)
+	}
+	if m.db != nil {
+		t.Error("db should be dropped on lock")
+	}
+}
+
+func TestAutoLockSaveFailureAbortsLock(t *testing.T) {
+	m := createTestApp(t)
+	m.dirty = true
+	// Point the database at a nonexistent directory so Save() fails.
+	m.db.Path = filepath.Join(t.TempDir(), "missing", "test.kdbx")
+	m.lastActivity = time.Now().Add(-time.Hour)
+
+	updated, cmd := m.Update(autoLockMsg{gen: m.autoLockGen})
+	m = updated.(AppModel)
+
+	if m.state != viewBrowser {
+		t.Errorf("state = %d, want viewBrowser (lock must be aborted on save failure)", m.state)
+	}
+	if m.db == nil {
+		t.Error("db must be retained when the save fails")
+	}
+	if !m.dirty {
+		t.Error("dirty must be retained when the save fails")
+	}
+	if cmd == nil {
+		t.Error("expected a retry command after aborting the lock")
 	}
 }
 
@@ -817,11 +1088,31 @@ func TestAppSaveAsCompletes(t *testing.T) {
 	dir := t.TempDir()
 	newPath := filepath.Join(dir, "saved-as.kdbx")
 
-	updated, _ := m.Update(SaveAsMsg{Path: newPath})
+	updated, cmd := m.Update(SaveAsMsg{Path: newPath})
 	m = updated.(AppModel)
 
 	if m.state != viewBrowser {
 		t.Fatalf("state = %d, want viewBrowser", m.state)
+	}
+	if !m.saving {
+		t.Fatal("saving flag should be set while the save runs")
+	}
+	if cmd == nil {
+		t.Fatal("expected an async save command")
+	}
+
+	// The save runs in a goroutine; execute the command and deliver its
+	// result like the Bubble Tea runtime would.
+	result := cmd()
+	saveMsg, ok := result.(saveResultMsg)
+	if !ok {
+		t.Fatalf("expected saveResultMsg, got %T", result)
+	}
+	updated, _ = m.Update(saveMsg)
+	m = updated.(AppModel)
+
+	if m.saving {
+		t.Error("saving flag should clear after the result arrives")
 	}
 	if m.dirty {
 		t.Error("dirty should be false after save-as")

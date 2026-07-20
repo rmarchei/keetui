@@ -3,6 +3,8 @@ package keepass
 import (
 	"fmt"
 	"time"
+
+	"github.com/tobischo/gokeepasslib/v3"
 )
 
 // MergeEntryAction describes what would happen to a single entry during merge.
@@ -31,35 +33,46 @@ type MergeResult struct {
 }
 
 // Merge merges entries and groups from another database into this one.
-// New groups are created as needed. Entries are matched by UUID;
-// entries not present in the target are added, and entries present in
-// both are updated if the source has a newer modification time.
+// New groups are created as needed. Entries are matched by UUID; entries
+// not present in the target are added as full copies (preserving UUID,
+// timestamps, history, and attachments), and entries present in both are
+// overwritten if the source has a newer modification time.
 func (d *DB) Merge(other *DB) (MergeResult, error) {
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return MergeResult{}, fmt.Errorf("target database has no root group")
+	}
+	if len(other.Database.Content.Root.Groups) == 0 {
+		return MergeResult{}, fmt.Errorf("source database has no root group")
 	}
 
 	otherRoot := other.RootGroup()
 	result := MergeResult{}
 
-	d.mergeGroup(&otherRoot, d.RootGroup().UUID, &result)
+	d.mergeGroup(&otherRoot, other, d.RootGroup().UUID, &result)
 
 	return result, nil
 }
 
-func (d *DB) mergeGroup(src *Group, targetParentUUID [16]byte, result *MergeResult) {
+func (d *DB) mergeGroup(src *Group, srcDB *DB, targetParentUUID [16]byte, result *MergeResult) {
 	for _, srcEntry := range src.Entries {
+		srcRaw := findEntry(&srcDB.Database.Content.Root.Groups[0], srcEntry.UUID)
+		if srcRaw == nil {
+			continue
+		}
 		existing := findEntry(&d.Database.Content.Root.Groups[0], srcEntry.UUID)
 		if existing == nil {
-			_, _ = d.AddEntry(targetParentUUID, srcEntry)
-			result.EntriesAdded++
+			clone := cloneEntry(*srcRaw)
+			d.importEntryBinaries(&clone, srcDB)
+			if err := d.InsertRawEntry(targetParentUUID, clone); err == nil {
+				result.EntriesAdded++
+			}
 		} else {
 			var existingMod time.Time
 			if existing.Times.LastModificationTime != nil {
 				existingMod = existing.Times.LastModificationTime.Time
 			}
 			if srcEntry.ModificationTime.After(existingMod) {
-				_ = d.UpdateEntry(srcEntry.UUID, srcEntry)
+				d.overwriteEntryFromSource(existing, srcRaw, srcDB)
 				result.EntriesUpdated++
 			} else {
 				result.EntriesSkipped++
@@ -69,37 +82,87 @@ func (d *DB) mergeGroup(src *Group, targetParentUUID [16]byte, result *MergeResu
 
 	for _, srcGroup := range src.Groups {
 		targetGroupUUID := d.findOrCreateGroup(targetParentUUID, srcGroup.Name, result)
-		d.mergeGroup(&srcGroup, targetGroupUUID, result)
+		d.mergeGroup(&srcGroup, srcDB, targetGroupUUID, result)
+	}
+}
+
+// overwriteEntryFromSource records the target entry's current state in its
+// history (same policy as UpdateEntry), then replaces its content with a
+// copy of the source entry — preserving the source's values, tags, icon,
+// timestamps, and attachments while keeping the target's history chain.
+func (d *DB) overwriteEntryFromSource(target, src *gokeepasslib.Entry, srcDB *DB) {
+	maxItems := int(d.Database.Content.Meta.HistoryMaxItems)
+	if maxItems != 0 {
+		snap := cloneEntry(*target)
+		snap.Histories = nil
+		if len(target.Histories) == 0 {
+			target.Histories = []gokeepasslib.History{{}}
+		}
+		target.Histories[0].Entries = append(target.Histories[0].Entries, snap)
+		if maxItems > 0 && len(target.Histories[0].Entries) > maxItems {
+			target.Histories[0].Entries = target.Histories[0].Entries[len(target.Histories[0].Entries)-maxItems:]
+		}
+	}
+
+	clone := cloneEntry(*src)
+	clone.Histories = nil
+	d.importEntryBinaries(&clone, srcDB)
+
+	histories := target.Histories
+	*target = clone
+	target.Histories = histories
+}
+
+// importEntryBinaries rewrites the entry's binary references (including
+// those inside history snapshots) to point at binaries copied from the
+// source database into this one. References that cannot be resolved in the
+// source are dropped so they can never alias an unrelated target binary.
+func (d *DB) importEntryBinaries(e *gokeepasslib.Entry, srcDB *DB) {
+	kept := e.Binaries[:0]
+	for _, ref := range e.Binaries {
+		bin := srcDB.Database.FindBinary(ref.Value.ID)
+		if bin == nil {
+			continue
+		}
+		data, err := bin.GetContentBytes()
+		if err != nil {
+			continue
+		}
+		ref.Value.ID = d.Database.AddBinary(data).ID
+		kept = append(kept, ref)
+	}
+	e.Binaries = kept
+	for hi := range e.Histories {
+		for ei := range e.Histories[hi].Entries {
+			d.importEntryBinaries(&e.Histories[hi].Entries[ei], srcDB)
+		}
 	}
 }
 
 func (d *DB) findOrCreateGroup(parentUUID [16]byte, name string, result *MergeResult) [16]byte {
+	uuid, created := d.findOrCreateChildGroup(parentUUID, name)
+	if created {
+		result.GroupsCreated++
+	}
+	return uuid
+}
+
+// findOrCreateChildGroup returns the UUID of the direct child group of
+// parentUUID with the given name, creating it if it does not exist.
+func (d *DB) findOrCreateChildGroup(parentUUID [16]byte, name string) ([16]byte, bool) {
 	root := d.RootGroup()
-	parent := findGroupSimple(&root, parentUUID)
-	if parent != nil {
+	if parent := findGroupSimple(&root, parentUUID); parent != nil {
 		for _, g := range parent.Groups {
 			if g.Name == name {
-				return g.UUID
+				return g.UUID, false
 			}
 		}
 	}
-
-	// Create the group
-	_, _ = d.AddGroup(parentUUID, name)
-	result.GroupsCreated++
-
-	// Re-read to get the UUID
-	root = d.RootGroup()
-	parent = findGroupSimple(&root, parentUUID)
-	if parent != nil {
-		for _, g := range parent.Groups {
-			if g.Name == name {
-				return g.UUID
-			}
-		}
+	newUUID, err := d.AddGroup(parentUUID, name)
+	if err != nil {
+		return parentUUID, false
 	}
-
-	return parentUUID
+	return newUUID, true
 }
 
 // MergePreview reports what a merge would do without modifying the database.
