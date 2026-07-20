@@ -12,8 +12,12 @@ import (
 // ShowAuditMsg requests showing the password audit view.
 type ShowAuditMsg struct{}
 
+// auditLine is one physical row of the scrollable audit list. Keeping a
+// strict one-line-per-element invariant (blank separators included) is
+// what makes the offset/window math correct.
 type auditLine struct {
 	isHeader bool
+	blank    bool // spacer row before a section header
 	header   string
 	entry    keepass.AuditEntry
 }
@@ -58,6 +62,9 @@ func (m *AuditModel) buildLines() {
 		if len(s.entries) == 0 {
 			continue
 		}
+		if len(m.lines) > 0 {
+			m.lines = append(m.lines, auditLine{isHeader: true, blank: true})
+		}
 		m.lines = append(m.lines, auditLine{isHeader: true, header: fmt.Sprintf("%s (%d)", s.header, len(s.entries))})
 		for _, e := range s.entries {
 			m.lines = append(m.lines, auditLine{entry: e})
@@ -70,7 +77,9 @@ func (m AuditModel) Init() tea.Cmd {
 }
 
 func (m AuditModel) visibleHeight() int {
-	h := max(m.height-8, 5)
+	// Fixed chrome: 5 rows above the list (blank, title, blank, issue
+	// count, blank) and 4 below (blank, position counter, blank, help).
+	h := max(m.height-9, 5)
 	return h
 }
 
@@ -153,8 +162,10 @@ func (m AuditModel) View() string {
 		end := min(m.offset+vis, len(m.lines))
 		for i := m.offset; i < end; i++ {
 			line := m.lines[i]
-			if line.isHeader {
-				fmt.Fprintf(&b, "\n  %s\n", helpStyle.Render(line.header))
+			if line.blank {
+				b.WriteString("\n")
+			} else if line.isHeader {
+				fmt.Fprintf(&b, "  %s\n", helpStyle.Render(line.header))
 			} else {
 				cursor := "  "
 				if i == m.cursor {

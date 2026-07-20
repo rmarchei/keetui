@@ -44,7 +44,20 @@ type clipboardClearMsg struct {
 
 // autoLockMsg signals that the database should be locked due to inactivity.
 type autoLockMsg struct {
-	at time.Time
+	gen int // generation counter; stale ticks carry an old value and are dropped
+}
+
+// databaseOpenResultMsg carries the outcome of an asynchronous unlock.
+type databaseOpenResultMsg struct {
+	db  *keepass.DB
+	err error
+}
+
+// saveResultMsg carries the outcome of an asynchronous save.
+type saveResultMsg struct {
+	err     error
+	path    string
+	upgrade bool
 }
 
 // DuplicateEntryMsg requests duplicating an entry.
@@ -113,10 +126,13 @@ type AppModel struct {
 	width        int
 	height       int
 	lastActivity time.Time // tracks last user interaction for auto-lock
+	autoLockGen  int       // current auto-lock timer generation; see autoLockMsg
 	filePath     string    // remember file path for re-lock
 	keyFilePath  string    // remember key file path for re-lock
 	cfg          config.Config
 	dirty        bool      // true when in-memory changes haven't been saved
+	saving       bool      // true while a save runs in the background; input is gated
+	lastCopied   string    // most recent keetui-copied clipboard value not yet cleared
 	returnState  viewState // view to return to after confirm dialog
 	entryCount   int       // cached entry count for status bar
 	undoStack    undoStack // undo history
@@ -147,14 +163,21 @@ func (m AppModel) Init() tea.Cmd {
 	return m.unlock.Init()
 }
 
-func (m AppModel) scheduleAutoLock() tea.Cmd {
-	d := m.cfg.AutoLockDuration()
-	if d == 0 {
+// scheduleAutoLock arms the auto-lock timer for the full configured interval.
+// It invalidates any previously scheduled tick, so at most one timer chain is
+// ever live. The receiver is a pointer: callers must return the mutated model.
+func (m *AppModel) scheduleAutoLock() tea.Cmd {
+	return m.scheduleAutoLockIn(m.cfg.AutoLockDuration())
+}
+
+func (m *AppModel) scheduleAutoLockIn(d time.Duration) tea.Cmd {
+	m.autoLockGen++ // invalidate any pending tick, even when disabling
+	if d <= 0 {
 		return nil
 	}
-	lastActivity := m.lastActivity
+	gen := m.autoLockGen
 	return tea.Tick(d, func(t time.Time) tea.Msg {
-		return autoLockMsg{at: lastActivity}
+		return autoLockMsg{gen: gen}
 	})
 }
 
@@ -176,6 +199,25 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reduce height for sub-views to make room for the status bar
 		if m.state != viewUnlock {
 			msg = tea.WindowSizeMsg{Width: wsm.Width, Height: wsm.Height - 1}
+		}
+		// The long-lived browser model must track size even while another
+		// view is active, or returning to it renders stale dimensions.
+		if m.state != viewBrowser {
+			m.browser.width = wsm.Width
+			m.browser.height = wsm.Height - 1
+		}
+	}
+
+	// While a save is in flight, freeze user input: mutating the database
+	// tree would race with the encoding goroutine. Auto-lock ticks are
+	// deferred instead of dropped so the timer stays armed.
+	if m.saving {
+		switch msg.(type) {
+		case tea.KeyMsg, tea.MouseMsg:
+			return m, nil
+		case autoLockMsg:
+			cmd := m.scheduleAutoLock()
+			return m, cmd
 		}
 	}
 
@@ -210,7 +252,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case RequestQuitMsg:
 		if m.dirty {
-			m.returnState = m.state
+			// When already showing a confirm dialog (ctrl+c inside it),
+			// keep the original returnState so cancel goes back to the
+			// underlying view, not to the dialog itself.
+			if m.state != viewConfirm {
+				m.returnState = m.state
+			}
 			m.confirm = NewConfirmModel("You have unsaved changes. Quit anyway?", func() tea.Msg {
 				return quitMsg{}
 			})
@@ -218,20 +265,27 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.cfg.ConfirmOnQuit() {
-			m.returnState = m.state
+			if m.state != viewConfirm {
+				m.returnState = m.state
+			}
 			m.confirm = NewConfirmModel("Quit?", func() tea.Msg {
 				return quitMsg{}
 			})
 			m.state = viewConfirm
 			return m, nil
 		}
+		m.clearClipboardOnQuit()
 		return m, tea.Quit
 
 	case quitMsg:
+		m.clearClipboardOnQuit()
 		return m, tea.Quit
 
 	case DatabaseOpenedMsg:
 		return m.handleDatabaseOpened(msg)
+
+	case databaseOpenResultMsg:
+		return m.handleDatabaseOpenResult(msg)
 
 	case ViewEntryMsg:
 		m.detail = NewDetailModel(msg.Entry, m.cfg)
@@ -241,7 +295,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.detail.SetSize(m.width, m.viewHeight())
 		m.state = viewDetail
-		return m, m.detail.Init()
+		tick := m.detail.startTOTPTick()
+		return m, tick
 
 	case EditEntryMsg:
 		m.editor = NewEditorModel(&msg.Entry, gokeepasslib.UUID{}, m.cfg)
@@ -589,12 +644,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.password.Init()
 
 	case ChangePasswordMsg:
-		m.db.ChangePassword(msg.NewPassword)
+		err := m.db.ChangePassword(msg.NewPassword)
 		// Clear password inputs to reduce sensitive data in memory.
 		m.password.newInput.SetValue("")
 		m.password.confirmInput.SetValue("")
-		m.dirty = true
 		m.state = viewBrowser
+		if err != nil {
+			return m, statusCmd(fmt.Sprintf("Error changing password: %s", err), true)
+		}
+		m.dirty = true
 		return m, statusCmd("Master password changed (use 's' to save to file)", false)
 
 	case ShowAuditMsg:
@@ -645,16 +703,20 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.db != nil {
 			m.db.BackupOnSave = m.cfg.BackupEnabled()
 		}
+		// Styles captured at construction time don't see ApplyTheme's
+		// global updates; re-pull them on the long-lived browser model.
+		m.browser.searchInput.PromptStyle = focusedStyle
 		m.lastActivity = time.Now()
 		m.state = viewBrowser
+		autoLockCmd := m.scheduleAutoLock()
 		return m, tea.Batch(
 			statusCmd("Settings saved to "+config.Path(), false),
-			m.scheduleAutoLock(),
+			autoLockCmd,
 		)
 
 	case ShowHistoryMsg:
 		history := m.db.EntryHistory(msg.EntryUUID)
-		m.history = NewHistoryModel(msg.EntryTitle, history)
+		m.history = NewHistoryModel(msg.EntryTitle, history, m.cfg.Keys())
 		m.history.width = m.width
 		m.history.height = m.viewHeight()
 		m.state = viewHistory
@@ -662,12 +724,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case BackToDetailMsg:
 		m.state = viewDetail
-		return m, nil
+		// The TOTP tick chain died while a sub-view was active; restart it.
+		tick := m.detail.startTOTPTick()
+		return m, tick
 
 	case hibpResultMsg:
-		m.detail.hibpResult = &msg
 		m.detail.hibpChecking = false
-		m.detail.RefreshContent()
 		if msg.Err != nil {
 			return m, statusCmd(fmt.Sprintf("HIBP check failed: %s", msg.Err), true)
 		} else if msg.Breached {
@@ -682,12 +744,33 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			destPath = filepath.Join(filepath.Dir(m.filePath), destPath)
 		}
 		destPath = filepath.Clean(destPath)
+		if _, err := os.Stat(destPath); err == nil {
+			// Destination exists: confirm before overwriting it.
+			resolved := confirmExtractAttachmentMsg{
+				EntryUUID: msg.EntryUUID,
+				Name:      msg.Name,
+				DestPath:  destPath,
+			}
+			m.confirm = NewConfirmModel(fmt.Sprintf("Overwrite existing file %q?", destPath), func() tea.Msg {
+				return resolved
+			})
+			m.returnState = viewDetail
+			m.state = viewConfirm
+			return m, nil
+		}
 		if err := m.db.ExtractAttachment(msg.EntryUUID, msg.Name, destPath); err != nil {
 			return m, statusCmd(fmt.Sprintf("Error extracting attachment: %s", err), true)
 		}
-		m.detail.copied = ""
-		m.detail.RefreshContent()
 		return m, statusCmd(fmt.Sprintf("Attachment saved to %s", destPath), false)
+
+	case confirmExtractAttachmentMsg:
+		m.returnState = 0
+		m.state = viewDetail
+		tick := m.detail.startTOTPTick()
+		if err := m.db.ExtractAttachment(msg.EntryUUID, msg.Name, msg.DestPath); err != nil {
+			return m, tea.Batch(statusCmd(fmt.Sprintf("Error extracting attachment: %s", err), true), tick)
+		}
+		return m, tea.Batch(statusCmd(fmt.Sprintf("Attachment saved to %s", msg.DestPath), false), tick)
 
 	case DeleteAttachmentMsg:
 		m.confirm = NewConfirmModel(fmt.Sprintf("Delete attachment %q?", msg.Name), func() tea.Msg {
@@ -698,13 +781,16 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case confirmDeleteAttachmentMsg:
+		m.returnState = 0
 		if m.readOnly {
 			m.state = viewDetail
-			return m, statusCmd("Read-only mode", true)
+			tick := m.detail.startTOTPTick()
+			return m, tea.Batch(statusCmd("Read-only mode", true), tick)
 		}
 		if err := m.db.DeleteAttachment(msg.EntryUUID, msg.Name); err != nil {
 			m.state = viewDetail
-			return m, statusCmd(fmt.Sprintf("Error deleting attachment: %s", err), true)
+			tick := m.detail.startTOTPTick()
+			return m, tea.Batch(statusCmd(fmt.Sprintf("Error deleting attachment: %s", err), true), tick)
 		}
 		m.dirty = true
 		// Refresh attachments in detail view
@@ -718,7 +804,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.detail.RefreshContent()
 		m.state = viewDetail
-		return m, statusCmd("Attachment deleted (use 's' to save to file)", false)
+		tick := m.detail.startTOTPTick()
+		return m, tea.Batch(statusCmd("Attachment deleted (use 's' to save to file)", false), tick)
 
 	case AddAttachmentMsg:
 		if m.readOnly {
@@ -762,7 +849,27 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = viewBrowser
 			return m, statusCmd("Read-only mode", true)
 		}
+		if target := filepath.Clean(msg.Path); target != filepath.Clean(m.filePath) {
+			if _, err := os.Stat(target); err == nil {
+				// The target is a different existing file: confirm before
+				// clobbering it (it could be another vault).
+				resolved := confirmSaveAsMsg{Path: msg.Path, Upgrade: msg.Upgrade}
+				m.confirm = NewConfirmModel(fmt.Sprintf("Overwrite existing file %q?", target), func() tea.Msg {
+					return resolved
+				})
+				m.returnState = viewBrowser
+				m.state = viewConfirm
+				return m, nil
+			}
+		}
 		return m.handleSaveAs(msg.Path, msg.Upgrade)
+
+	case confirmSaveAsMsg:
+		m.returnState = 0
+		return m.handleSaveAs(msg.Path, msg.Upgrade)
+
+	case saveResultMsg:
+		return m.handleSaveResult(msg)
 
 	case BackToBrowserMsg:
 		m.state = viewBrowser
@@ -775,16 +882,17 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.state = viewBrowser
 		}
+		if m.state == viewDetail {
+			tick := m.detail.startTOTPTick()
+			return m, tick
+		}
 		return m, nil
 
 	case CopyToClipboardMsg:
 		if err := copyToClipboard(msg.Value); err != nil {
-			m.detail.copied = ""
-			m.detail.RefreshContent()
 			return m, statusCmd(fmt.Sprintf("Clipboard error: %s", err), true)
 		}
-		m.detail.copied = msg.Field
-		m.detail.RefreshContent()
+		m.lastCopied = msg.Value
 		return m, tea.Batch(
 			statusCmd(fmt.Sprintf("Copied %s!", msg.Field), false),
 			m.scheduleClearClipboard(msg.Value),
@@ -798,8 +906,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if current == msg.expected {
 			clearClipboard()
 		}
-		m.detail.copied = ""
-		m.detail.RefreshContent()
+		if m.lastCopied == msg.expected {
+			m.lastCopied = ""
+		}
 		return m, nil
 
 	case OpenURLMsg:
@@ -809,21 +918,35 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case autoLockMsg:
-		// Only lock if no activity since the timer was set
-		if m.state != viewUnlock && msg.at.Equal(m.lastActivity) {
-			if m.dirty && m.db != nil && !m.readOnly {
-				_ = m.db.Save()
-				m.dirty = false
-			}
-			clearClipboard()
-			m.db = nil
-			m.undoStack.clear()
-			m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
-			m.unlock.err = fmt.Errorf("locked due to inactivity")
-			m.state = viewUnlock
-			return m, m.unlock.Init()
+		if msg.gen != m.autoLockGen || m.state == viewUnlock || m.db == nil {
+			return m, nil
 		}
-		return m, nil
+		d := m.cfg.AutoLockDuration()
+		if idle := time.Since(m.lastActivity); idle < d {
+			// Activity happened since the timer was armed; wait out the rest.
+			cmd := m.scheduleAutoLockIn(d - idle)
+			return m, cmd
+		}
+		if m.dirty && !m.readOnly {
+			if err := m.db.Save(); err != nil {
+				// Abort the lock rather than discard unsaved changes; keep the
+				// database open, surface the error, and retry next interval.
+				cmd := m.scheduleAutoLock()
+				return m, tea.Batch(
+					statusCmd(fmt.Sprintf("Auto-lock aborted: save failed: %s", err), true),
+					cmd,
+				)
+			}
+			m.dirty = false
+		}
+		clearClipboard()
+		m.lastCopied = ""
+		m.db = nil
+		m.undoStack.clear()
+		m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
+		m.unlock.err = fmt.Errorf("locked due to inactivity")
+		m.state = viewUnlock
+		return m, m.unlock.Init()
 	}
 
 	// Delegate to active view
@@ -1005,18 +1128,31 @@ func (m AppModel) handleUndo() (tea.Model, tea.Cmd) {
 	)
 }
 
+// handleDatabaseOpened kicks off the actual open in a goroutine: KDBX key
+// derivation (Argon2) deliberately takes on the order of a second, and
+// running it inside Update would freeze the whole UI with no feedback.
 func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cmd) {
-	var db *keepass.DB
-	var err error
-	if msg.KeyFilePath != "" {
-		db, err = keepass.OpenWithKeyFile(msg.FilePath, msg.Password, msg.KeyFilePath)
-	} else {
-		db, err = keepass.Open(msg.FilePath, msg.Password)
+	m.unlock.unlocking = true
+	m.unlock.err = nil
+	return m, func() tea.Msg {
+		var db *keepass.DB
+		var err error
+		if msg.KeyFilePath != "" {
+			db, err = keepass.OpenWithKeyFile(msg.FilePath, msg.Password, msg.KeyFilePath)
+		} else {
+			db, err = keepass.Open(msg.FilePath, msg.Password)
+		}
+		return databaseOpenResultMsg{db: db, err: err}
 	}
-	if err != nil {
-		m.unlock.err = fmt.Errorf("failed to unlock: %w", err)
+}
+
+func (m AppModel) handleDatabaseOpenResult(msg databaseOpenResultMsg) (tea.Model, tea.Cmd) {
+	m.unlock.unlocking = false
+	if msg.err != nil {
+		m.unlock.err = fmt.Errorf("failed to unlock: %w", msg.err)
 		return m, nil
 	}
+	db := msg.db
 	db.BackupOnSave = m.cfg.BackupEnabled()
 	m.db = db
 	m.unlock.input.SetValue("")
@@ -1029,7 +1165,8 @@ func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cm
 	m.lastActivity = time.Now()
 	m.refreshEntryCount()
 	m.undoStack.clear()
-	return m, m.scheduleAutoLock()
+	autoLockCmd := m.scheduleAutoLock()
+	return m, autoLockCmd
 }
 
 func (m AppModel) handleSaveEntry(msg SaveEntryMsg) (tea.Model, tea.Cmd) {
@@ -1112,6 +1249,10 @@ func (m AppModel) handleSaveGroup(msg SaveGroupMsg) (tea.Model, tea.Cmd) {
 	)
 }
 
+// handleSaveAs converts (when upgrading) synchronously — it is a fast
+// in-memory operation — then encrypts and writes in a goroutine so the
+// Argon2 KDF does not freeze the UI. User input is gated on m.saving
+// until the result arrives, so the tree cannot mutate mid-encode.
 func (m AppModel) handleSaveAs(path string, upgrade bool) (tea.Model, tea.Cmd) {
 	if upgrade {
 		if err := m.db.ConvertToKDBX4(); err != nil {
@@ -1119,19 +1260,42 @@ func (m AppModel) handleSaveAs(path string, upgrade bool) (tea.Model, tea.Cmd) {
 			return m, statusCmd(fmt.Sprintf("Error upgrading: %s", err), true)
 		}
 	}
-	if err := m.db.SaveAs(path); err != nil {
-		m.state = viewBrowser
-		return m, statusCmd(fmt.Sprintf("Error saving: %s", err), true)
-	}
-	m.db.Path = path
-	m.filePath = path
-	m.dirty = false
 	m.state = viewBrowser
-	msg := fmt.Sprintf("Database saved as %s", filepath.Base(path))
-	if upgrade {
-		msg = fmt.Sprintf("Upgraded to KDBX 4 and saved as %s", filepath.Base(path))
+	m.saving = true
+	m.statusText = "Saving…"
+	m.statusError = false
+	db := m.db
+	return m, func() tea.Msg {
+		return saveResultMsg{err: db.SaveAs(path), path: path, upgrade: upgrade}
 	}
-	return m, statusCmd(msg, false)
+}
+
+func (m AppModel) handleSaveResult(msg saveResultMsg) (tea.Model, tea.Cmd) {
+	m.saving = false
+	if msg.err != nil {
+		return m, statusCmd(fmt.Sprintf("Error saving: %s", msg.err), true)
+	}
+	m.db.Path = msg.path
+	m.filePath = msg.path
+	m.dirty = false
+	text := fmt.Sprintf("Database saved as %s", filepath.Base(msg.path))
+	if msg.upgrade {
+		text = fmt.Sprintf("Upgraded to KDBX 4 and saved as %s", filepath.Base(msg.path))
+	}
+	return m, statusCmd(text, false)
+}
+
+// clearClipboardOnQuit clears the clipboard if a keetui copy is still
+// outstanding, so a copied secret does not outlive the process. The
+// clipboard is left alone when the user has since copied something else.
+func (m AppModel) clearClipboardOnQuit() {
+	if m.lastCopied == "" {
+		return
+	}
+	if current, err := readClipboard(); err == nil && current != m.lastCopied {
+		return
+	}
+	clearClipboard()
 }
 
 func statusCmd(text string, isError bool) tea.Cmd {
@@ -1152,6 +1316,17 @@ type confirmDeleteGroupMsg struct {
 type confirmDeleteAttachmentMsg struct {
 	EntryUUID gokeepasslib.UUID
 	Name      string
+}
+
+type confirmExtractAttachmentMsg struct {
+	EntryUUID gokeepasslib.UUID
+	Name      string
+	DestPath  string
+}
+
+type confirmSaveAsMsg struct {
+	Path    string
+	Upgrade bool
 }
 
 type confirmPermanentDeleteEntryMsg struct {

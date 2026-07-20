@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"github.com/tobischo/gokeepasslib/v3"
 
@@ -21,8 +22,17 @@ import (
 // maxNoteLines is the number of note body lines shown before truncation.
 const maxNoteLines = 5
 
-// totpTickMsg is sent every second to refresh the TOTP code.
-type totpTickMsg time.Time
+// maskedValue is the constant-width placeholder for hidden secrets. A
+// length-proportional mask would reveal the secret's exact length to
+// anyone viewing the screen.
+const maskedValue = "********"
+
+// totpTickMsg is sent every second to refresh the TOTP code. The sequence
+// number identifies the tick chain; ticks from a superseded chain are
+// dropped instead of re-armed.
+type totpTickMsg struct {
+	seq int
+}
 
 // hibpResultMsg carries the result of a HIBP breach check.
 type hibpResultMsg struct {
@@ -58,12 +68,11 @@ type DetailModel struct {
 	qrLabel        string // label of the field currently shown as QR
 	totpCode       string
 	totpRemain     int // seconds remaining in current TOTP period
+	totpSeq        int // current TOTP tick-chain sequence; see totpTickMsg
 	width          int
 	height         int
-	copied         string
 	strength       keepass.StrengthResult
 	hibpChecking   bool
-	hibpResult     *hibpResultMsg
 	attachments    []keepass.Attachment
 	viewport       viewport.Model
 	ready          bool // true after first size is set
@@ -91,26 +100,29 @@ type selectableField struct {
 	value     string // used for copy
 	qrValue   string // used for QR; if empty, falls back to value
 	protected bool   // true for password-type fields that can be revealed
+	revealKey string // namespaced revealedFields key; "" for non-protected fields
 }
 
 // selectableFields returns the ordered list of fields the cursor can move through.
 func (m DetailModel) selectableFields() []selectableField {
 	var f []selectableField
 	f = append(f, selectableField{label: "username", value: m.entry.UserName})
-	f = append(f, selectableField{label: "password", value: m.entry.Password, protected: true})
+	// revealKey is namespaced so a custom field literally named "password"
+	// or "TOTP" can never share reveal state with the built-in fields.
+	f = append(f, selectableField{label: "password", value: m.entry.Password, protected: true, revealKey: "builtin:password"})
 	f = append(f, selectableField{label: "URL", value: m.entry.URL})
 	if m.entry.TOTP != "" {
 		val := m.totpCode
 		if val == "" {
 			val = m.entry.TOTP // fallback to raw secret when code generation fails
 		}
-		f = append(f, selectableField{label: "TOTP", value: val, qrValue: m.entry.TOTP, protected: true})
+		f = append(f, selectableField{label: "TOTP", value: val, qrValue: m.entry.TOTP, protected: true, revealKey: "builtin:totp"})
 	}
 	if m.entry.Notes != "" {
 		f = append(f, selectableField{label: "Notes", value: m.entry.Notes})
 	}
 	for _, cf := range m.entry.CustomFields {
-		f = append(f, selectableField{label: cf.Key, value: cf.Value, protected: cf.Protected})
+		f = append(f, selectableField{label: cf.Key, value: cf.Value, protected: cf.Protected, revealKey: "custom:" + cf.Key})
 	}
 	return f
 }
@@ -340,15 +352,30 @@ func (m *DetailModel) refreshContentAndFollow() {
 }
 
 func (m DetailModel) Init() tea.Cmd {
-	if m.entry.TOTP != "" {
-		return tickTOTP()
-	}
 	return nil
 }
 
-func tickTOTP() tea.Cmd {
+// totpTickSeq issues a unique sequence number per tick-chain start. The UI
+// runs on a single goroutine, so a plain counter is safe.
+var totpTickSeq int
+
+// startTOTPTick starts (or restarts) the once-per-second TOTP refresh
+// chain. Each start takes a fresh sequence number, so any tick still
+// pending from an earlier chain — including one belonging to a previous
+// DetailModel instance — is recognized as stale and dropped instead of
+// spawning a duplicate chain.
+func (m *DetailModel) startTOTPTick() tea.Cmd {
+	if m.entry.TOTP == "" {
+		return nil
+	}
+	totpTickSeq++
+	m.totpSeq = totpTickSeq
+	return tickTOTP(m.totpSeq)
+}
+
+func tickTOTP(seq int) tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
-		return totpTickMsg(t)
+		return totpTickMsg{seq: seq}
 	})
 }
 
@@ -357,11 +384,12 @@ func (m *DetailModel) refreshTOTP() {
 	if secret == "" {
 		return
 	}
-	period := keepass.TOTPPeriod(m.entry.TOTP)
+	period := m.entry.TOTPPeriod()
 	now := time.Now()
 	code, err := totp.GenerateCodeCustom(secret, now, totp.ValidateOpts{
-		Period: period,
-		Digits: 6,
+		Period:    period,
+		Digits:    otp.Digits(m.entry.TOTPDigits()),
+		Algorithm: totpAlgorithm(m.entry.TOTPAlgorithm()),
 	})
 	if err != nil {
 		m.totpCode = ""
@@ -370,6 +398,19 @@ func (m *DetailModel) refreshTOTP() {
 	}
 	m.totpCode = code
 	m.totpRemain = int(period) - int(now.Unix()%int64(period))
+}
+
+// totpAlgorithm maps a normalized algorithm name from the keepass layer to
+// the otp library's constant.
+func totpAlgorithm(name string) otp.Algorithm {
+	switch name {
+	case "SHA256":
+		return otp.AlgorithmSHA256
+	case "SHA512":
+		return otp.AlgorithmSHA512
+	default:
+		return otp.AlgorithmSHA1
+	}
 }
 
 func (m *DetailModel) syncViewportSize() {
@@ -482,8 +523,8 @@ func (m DetailModel) buildContent() string {
 		labelStyle.Render("Username:"),
 		valueStyle.Render(m.entry.UserName))
 
-	pw := strings.Repeat("*", len(m.entry.Password))
-	if m.revealedFields["password"] {
+	pw := maskedValue
+	if m.revealedFields["builtin:password"] {
 		pw = m.entry.Password
 	}
 	if m.cfg.ShowPasswordStrength {
@@ -506,13 +547,13 @@ func (m DetailModel) buildContent() string {
 		valueStyle.Render(m.entry.URL))
 
 	if m.entry.TOTP != "" {
-		if m.revealedFields["TOTP"] {
+		if m.revealedFields["builtin:totp"] {
 			fmt.Fprintf(&b, "%s%s %s\n",
 				cursor(),
 				labelStyle.Render("TOTP:"),
 				valueStyle.Render(m.entry.TOTP))
 		} else if m.totpCode != "" {
-			bar := totpCountdownBar(m.totpRemain, int(keepass.TOTPPeriod(m.entry.TOTP)))
+			bar := totpCountdownBar(m.totpRemain, int(m.entry.TOTPPeriod()))
 			fmt.Fprintf(&b, "%s%s %s  %s\n",
 				cursor(),
 				labelStyle.Render("TOTP:"),
@@ -523,7 +564,7 @@ func (m DetailModel) buildContent() string {
 			fmt.Fprintf(&b, "%s%s %s\n",
 				cursor(),
 				labelStyle.Render("TOTP:"),
-				hiddenStyle.Render(strings.Repeat("*", len(m.entry.TOTP))))
+				hiddenStyle.Render(maskedValue))
 		}
 	}
 
@@ -542,7 +583,7 @@ func (m DetailModel) buildContent() string {
 		}
 		if len(noteLines) > maxNoteLines && !m.notesExpanded {
 			fmt.Fprintf(&b, "  %s%s\n", indent,
-				helpStyle.Render(fmt.Sprintf("(%d more lines — p to expand)", len(noteLines)-maxNoteLines)))
+				helpStyle.Render(fmt.Sprintf("(%d more lines — %s to expand)", len(noteLines)-maxNoteLines, m.keys.TogglePassword)))
 		}
 	}
 
@@ -571,8 +612,8 @@ func (m DetailModel) buildContent() string {
 
 	for _, cf := range m.entry.CustomFields {
 		val := cf.Value
-		if cf.Protected && !m.revealedFields[cf.Key] {
-			val = strings.Repeat("*", len(cf.Value))
+		if cf.Protected && !m.revealedFields["custom:"+cf.Key] {
+			val = maskedValue
 		}
 		label := truncateLabel(cf.Key + ":")
 		fmt.Fprintf(&b, "%s%s %s\n",
@@ -620,11 +661,14 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case totpTickMsg:
+		if msg.seq != m.totpSeq {
+			return m, nil
+		}
 		m.refreshTOTP()
 		if m.ready && !m.showQR {
 			m.viewport.SetContent(m.buildContent())
 		}
-		return m, tickTOTP()
+		return m, tickTOTP(m.totpSeq)
 
 	case tea.MouseMsg:
 		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && !m.showQR && !m.attachMode && !m.addingAttachment {
@@ -785,7 +829,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// QR code display mode
 		if m.showQR {
 			switch msg.String() {
-			case "esc", "Q":
+			case "esc", m.keys.ShowQR:
 				m.showQR = false
 				m.viewport.SetContent(m.buildContent())
 			}
@@ -800,9 +844,6 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		}
-
-		// Dismiss HIBP result on any interaction
-		m.hibpResult = nil
 
 		fields := m.selectableFields()
 
@@ -846,7 +887,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selectedField < len(fields) {
 				f := fields[m.selectedField]
 				val := f.value
-				if f.qrValue != "" && m.revealedFields[f.label] {
+				if f.qrValue != "" && m.revealedFields[f.revealKey] {
 					val = f.qrValue
 				}
 				if val != "" {
@@ -867,7 +908,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.notesExpanded = !m.notesExpanded
 					m.refreshContentAndFollow()
 				} else if f.protected {
-					m.revealedFields[f.label] = !m.revealedFields[f.label]
+					m.revealedFields[f.revealKey] = !m.revealedFields[f.revealKey]
 					m.refreshContentAndFollow()
 				}
 			}
@@ -931,10 +972,6 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// HIBP breach check
 			if !m.hibpChecking && m.entry.Password != "" {
 				m.hibpChecking = true
-				m.hibpResult = nil
-				if m.ready {
-					m.viewport.SetContent(m.buildContent())
-				}
 				pw := m.entry.Password
 				return m, func() tea.Msg {
 					result := keepass.CheckHIBP(pw)

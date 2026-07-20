@@ -7,8 +7,10 @@ import (
 	"strings"
 )
 
-// dicewareWordList is the EFF short word list for generating passphrases.
-// Using a curated subset of the EFF short word list (1296 words = 6^4).
+// dicewareWordList is a curated list of 1050 four-letter words for
+// generating passphrases (~10.0 bits of entropy per word, so the default
+// 6-word passphrase carries ~60 bits). It is inspired by, but not
+// identical to, the EFF short word list.
 var dicewareWordList = []string{
 	"acid", "acme", "acre", "aged", "also", "arch", "area", "army",
 	"atom", "aunt", "away", "axis", "back", "bail", "bake", "ball",
@@ -136,7 +138,7 @@ var dicewareWordList = []string{
 	"warp", "wary", "wash", "wave", "wavy", "waxy", "ways", "weak",
 	"wean", "wear", "weed", "week", "weep", "weld", "well", "went",
 	"were", "west", "what", "when", "whim", "whom", "wick", "wide",
-	"wife", "wild", "will", "wilt", "wily", "wince", "wind", "wine",
+	"wife", "wild", "will", "wilt", "wily", "wind", "wine",
 	"wing", "wink", "wipe", "wire", "wise", "wish", "wisp", "with",
 	"wits", "woke", "wolf", "wood", "wool", "word", "wore", "work",
 	"worm", "worn", "wove", "wrap", "wren", "writ", "yank", "yard",

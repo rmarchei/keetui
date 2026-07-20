@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tobischo/gokeepasslib/v3"
 
+	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
 )
 
@@ -25,12 +26,18 @@ type HistoryModel struct {
 	showPw     bool
 	width      int
 	height     int
+	keys       config.KeyBindings
 }
 
-func NewHistoryModel(entryTitle string, history []keepass.HistoryEntry) HistoryModel {
+func NewHistoryModel(entryTitle string, history []keepass.HistoryEntry, keys ...config.KeyBindings) HistoryModel {
+	kb := config.DefaultKeyBindings()
+	if len(keys) > 0 {
+		kb = keys[0]
+	}
 	return HistoryModel{
 		entryTitle: entryTitle,
 		history:    history,
+		keys:       kb,
 	}
 }
 
@@ -52,7 +59,7 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q":
+		case m.keys.Quit:
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
@@ -76,10 +83,10 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "p":
+		case m.keys.TogglePassword:
 			m.showPw = !m.showPw
 
-		case "1":
+		case m.keys.CopyPassword:
 			if len(m.history) > 0 {
 				pw := m.history[m.cursor].Password
 				return m, func() tea.Msg {
@@ -117,7 +124,7 @@ func (m HistoryModel) View() string {
 				dateStr = h.ModificationTime.Local().Format("2006-01-02 15:04:05")
 			}
 
-			pw := strings.Repeat("*", len(h.Password))
+			pw := maskedValue
 			if m.showPw {
 				pw = h.Password
 			}
@@ -143,7 +150,8 @@ func (m HistoryModel) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  j/k: navigate  p: toggle passwords  1: copy selected password  esc: back  q: quit"))
+	b.WriteString(helpStyle.Render(fmt.Sprintf("  j/k: navigate  %s: toggle passwords  %s: copy selected password  esc: back  %s: quit",
+		m.keys.TogglePassword, m.keys.CopyPassword, m.keys.Quit)))
 	b.WriteString("\n")
 
 	return b.String()

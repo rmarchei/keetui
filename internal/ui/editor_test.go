@@ -2,6 +2,7 @@ package ui
 
 import (
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -158,6 +159,7 @@ func TestEditorEditExisting(t *testing.T) {
 		URL:      "https://example.com",
 		Notes:    "notes",
 		TOTP:     "JBSWY3DPEHPK3PXP",
+		Tags:     "favorite;work",
 		CustomFields: []keepass.CustomField{
 			{Key: "recovery", Value: "key123", Protected: true},
 		},
@@ -168,6 +170,9 @@ func TestEditorEditExisting(t *testing.T) {
 
 	if m.isNew {
 		t.Error("should not be new when editing existing entry")
+	}
+	if m.tags != "favorite;work" {
+		t.Errorf("tags = %q, want %q", m.tags, "favorite;work")
 	}
 	if m.inputs[fieldTitle].Value() != "Existing" {
 		t.Errorf("title = %q, want %q", m.inputs[fieldTitle].Value(), "Existing")
@@ -180,6 +185,104 @@ func TestEditorEditExisting(t *testing.T) {
 	}
 	if m.customInputs[0].value.EchoMode != textinput.EchoPassword {
 		t.Error("loaded protected custom field should have EchoPassword mode")
+	}
+}
+
+func TestEditorSavePreservesTags(t *testing.T) {
+	entry := keepass.Entry{
+		Title: "Existing",
+		Tags:  "favorite;work",
+	}
+
+	m := NewEditorModel(&entry, gokeepasslib.UUID{}, config.Default())
+	m.width, m.height = 80, 24
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("ctrl+s should produce a save command")
+	}
+	saveMsg, ok := cmd().(SaveEntryMsg)
+	if !ok {
+		t.Fatalf("expected SaveEntryMsg, got %T", cmd())
+	}
+	if saveMsg.Entry.Tags != "favorite;work" {
+		t.Errorf("tags = %q, want %q (tags must round-trip through an edit)", saveMsg.Entry.Tags, "favorite;work")
+	}
+}
+
+func TestEditorExpiryRoundTripsInLocalTime(t *testing.T) {
+	entry := keepass.Entry{
+		Title:      "Existing",
+		Expires:    true,
+		ExpiryTime: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC),
+	}
+
+	m := NewEditorModel(&entry, gokeepasslib.UUID{}, config.Default())
+	m.width, m.height = 80, 24
+	displayed := m.inputs[fieldExpiry].Value()
+
+	// Saving without touching the field must keep the displayed date.
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	if cmd == nil {
+		t.Fatal("ctrl+s should produce a save command")
+	}
+	saveMsg, ok := cmd().(SaveEntryMsg)
+	if !ok {
+		t.Fatalf("expected SaveEntryMsg, got %T", cmd())
+	}
+	got := saveMsg.Entry.ExpiryTime.Local().Format("2006-01-02")
+	if got != displayed {
+		t.Errorf("expiry after save = %s, displayed %s (date must not drift across an edit)", got, displayed)
+	}
+}
+
+func TestEditorNotesArrowNavigation(t *testing.T) {
+	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
+	m.width, m.height = 80, 24
+	m.notesInput.SetValue("line1\nline2\nline3")
+	m.focused = fieldNotes
+	m.updateFocus()
+
+	// Cursor starts on the last line; "up" must move within the textarea,
+	// not jump to another field.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(EditorModel)
+	if m.focused != fieldNotes {
+		t.Fatalf("focus = %d, want fieldNotes (up must move the cursor inside notes)", m.focused)
+	}
+	if m.notesInput.Line() != 1 {
+		t.Errorf("cursor line = %d, want 1", m.notesInput.Line())
+	}
+
+	// From the first line, "up" leaves the field.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(EditorModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	m = updated.(EditorModel)
+	if m.focused == fieldNotes {
+		t.Error("up on the first notes line should move focus to the previous field")
+	}
+}
+
+func TestEditorPresetPickerRemasksPassword(t *testing.T) {
+	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
+	m.width, m.height = 80, 24
+	m.focused = fieldPassword
+	m.updateFocus()
+
+	// Typing auto-reveals the password field.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(EditorModel)
+	if m.inputs[fieldPassword].EchoMode != textinput.EchoNormal {
+		t.Fatal("typing should auto-reveal the password field")
+	}
+
+	// Opening the preset picker before the 1s re-mask tick fires must not
+	// leave the password revealed.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	m = updated.(EditorModel)
+	if m.inputs[fieldPassword].EchoMode != textinput.EchoPassword {
+		t.Error("password must be re-masked when leaving for the preset picker")
 	}
 }
 

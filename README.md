@@ -85,8 +85,9 @@ CONTAINER_RUNTIME= make       # skip container, use local go
 
 ```sh
 keetui database.kdbx                    # open existing database
-keetui -keyfile key.key database.kdbx   # open with key file
+keetui -keyfile key.key database.kdbx   # open with key file (leave password empty for keyfile-only databases)
 keetui -new database.kdbx              # create a new database
+keetui -new -keyfile key.key database.kdbx  # create a database protected by a key file
 keetui -read-only database.kdbx        # open in read-only mode
 ```
 
@@ -106,11 +107,12 @@ keetui --import-xml entries.xml database.kdbx
 # Merge from another .kdbx file
 keetui --merge other.kdbx database.kdbx
 keetui --merge other.kdbx --dry-run database.kdbx  # preview without modifying
+keetui --merge other.kdbx --merge-keyfile other.key database.kdbx  # keyfile-protected source
 ```
 
 - **CSV** format includes columns: Group, Title, Username, Password, URL, Notes, TOTP, Attachments
 - **XML** format preserves group hierarchy, custom fields, and attachments
-- **Merge** matches entries by UUID; newer entries overwrite older ones; new groups are created as needed. Use `--dry-run` to preview changes without modifying the database
+- **Merge** matches entries by UUID; newer entries overwrite older ones; new groups are created as needed. Merged entries keep their UUID, timestamps, history, and attachments. Use `--dry-run` to preview changes without modifying the database
 
 ### Format Upgrade
 

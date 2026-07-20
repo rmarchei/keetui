@@ -532,3 +532,118 @@ func searchString(s, substr string) bool {
 	}
 	return false
 }
+
+func TestBrowserSearchCancelClearsState(t *testing.T) {
+	db := createTestUIDB(t)
+	m := NewBrowserModel(db)
+	m.width, m.height = 80, 24
+	baseline := len(m.items)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = updated.(BrowserModel)
+	for _, r := range "gmail" {
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = updated.(BrowserModel)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(BrowserModel)
+
+	if m.searchQuery != "" {
+		t.Errorf("searchQuery = %q after esc, want empty", m.searchQuery)
+	}
+
+	// A refresh after canceling must not resurrect the search.
+	updated, _ = m.Update(RefreshMsg{})
+	m = updated.(BrowserModel)
+	if m.searchQuery != "" {
+		t.Error("refresh resurrected the canceled search")
+	}
+	if len(m.items) != baseline {
+		t.Errorf("items = %d after refresh, want group view of %d", len(m.items), baseline)
+	}
+}
+
+func TestBrowserEmptySearchEnterCancels(t *testing.T) {
+	db := createTestUIDB(t)
+	m := NewBrowserModel(db)
+	m.width, m.height = 80, 24
+	baseline := len(m.items)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = updated.(BrowserModel)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(BrowserModel)
+
+	if m.searching {
+		t.Error("still in search mode after enter")
+	}
+	if m.searchQuery != "" {
+		t.Errorf("searchQuery = %q, want empty", m.searchQuery)
+	}
+	if len(m.items) != baseline {
+		t.Errorf("items = %d, want the normal group view of %d (not the flattened all-entries list)", len(m.items), baseline)
+	}
+}
+
+func TestBrowserSearchRecycleBinDispatch(t *testing.T) {
+	db := createTestUIDB(t)
+	root := db.RootGroup()
+	db.Database.Content.Meta.RecycleBinEnabled.Bool = true
+	binnedUUID, err := db.AddEntry(root.UUID, keepass.Entry{Title: "Trashed"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	if err := db.DeleteEntry(binnedUUID); err != nil {
+		t.Fatalf("DeleteEntry: %v", err)
+	}
+
+	search := func(query string) BrowserModel {
+		m := NewBrowserModel(db)
+		m.width, m.height = 80, 24
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+		m = updated.(BrowserModel)
+		for _, r := range query {
+			updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m = updated.(BrowserModel)
+		}
+		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		m = updated.(BrowserModel)
+		if len(m.items) != 1 {
+			t.Fatalf("search %q results = %d, want 1", query, len(m.items))
+		}
+		return m
+	}
+	pressDelete := func(m BrowserModel) tea.Msg {
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(m.keys.Delete)})
+		if cmd == nil {
+			t.Fatal("delete key produced no command")
+		}
+		return cmd()
+	}
+
+	// Deleting a recycle-bin entry found via search must be dispatched as a
+	// permanent delete (the UI otherwise claims a soft delete that the data
+	// layer silently turns into permanent removal).
+	if msg := pressDelete(search("Trashed")); msg != nil {
+		if _, ok := msg.(PermanentlyDeleteEntryMsg); !ok {
+			t.Errorf("binned search result delete = %T, want PermanentlyDeleteEntryMsg", msg)
+		}
+	}
+
+	// Deleting a live entry found via search stays a soft delete.
+	if msg := pressDelete(search("Gmail")); msg != nil {
+		if _, ok := msg.(DeleteEntryMsg); !ok {
+			t.Errorf("live search result delete = %T, want DeleteEntryMsg", msg)
+		}
+	}
+
+	// Restore now works on binned entries reached via search.
+	m := search("Trashed")
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(m.keys.Restore)})
+	if cmd == nil {
+		t.Fatal("restore key produced no command for a binned search result")
+	}
+	if _, ok := cmd().(RestoreEntryMsg); !ok {
+		t.Errorf("restore = %T, want RestoreEntryMsg", cmd())
+	}
+}

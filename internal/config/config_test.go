@@ -305,3 +305,119 @@ func TestPresetCustom(t *testing.T) {
 		t.Errorf("Preset() = %q, want %q", got, "PIN")
 	}
 }
+
+func isolateConfig(t *testing.T) string {
+	t.Helper()
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	p := filepath.Join(tmp, "keetui", "config.json")
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	return p
+}
+
+func TestLoadTypeErrorReturnsCleanDefaults(t *testing.T) {
+	p := isolateConfig(t)
+	// clipboard_clear_seconds decodes before the type error on theme; the
+	// partial value (below the 15s minimum) must not leak through.
+	if err := os.WriteFile(p, []byte(`{"clipboard_clear_seconds": 3, "theme": 5}`), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load()
+	if err == nil {
+		t.Fatal("expected error for type-invalid config")
+	}
+	if cfg.ClipboardClearSeconds != Default().ClipboardClearSeconds {
+		t.Errorf("clipboard seconds = %d, want default %d (no partial decode)",
+			cfg.ClipboardClearSeconds, Default().ClipboardClearSeconds)
+	}
+}
+
+func TestLoadReadErrorReported(t *testing.T) {
+	p := isolateConfig(t)
+	// A directory at the config path makes ReadFile fail with a non-
+	// not-exist error, which must be surfaced instead of swallowed.
+	if err := os.Mkdir(p, 0700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if _, err := Load(); err == nil {
+		t.Error("expected error when the config file is unreadable")
+	}
+}
+
+func TestLoadConflictingKeybindingsFallBack(t *testing.T) {
+	p := isolateConfig(t)
+	if err := os.WriteFile(p, []byte(`{"keybindings": {"restore": "d"}}`), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := Load()
+	if err == nil {
+		t.Fatal("expected validation error: restore bound to the delete key")
+	}
+	if cfg.KeyBindingsPtr != nil {
+		t.Error("conflicting keybindings must fall back to defaults")
+	}
+}
+
+func TestConfigPathHonorsXDG(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+
+	want := filepath.Join(tmp, "keetui", "config.json")
+	if got := configPath(); got != want {
+		t.Errorf("configPath() = %q, want %q (XDG_CONFIG_HOME must be honored)", got, want)
+	}
+}
+
+func TestConfigPathDefaultsToDotConfig(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", tmp)
+
+	want := filepath.Join(tmp, ".config", "keetui", "config.json")
+	if got := configPath(); got != want {
+		t.Errorf("configPath() = %q, want %q", got, want)
+	}
+}
+
+func TestConfigPathLegacyFallback(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", tmp)
+
+	legacyDir, err := os.UserConfigDir()
+	if err != nil {
+		t.Skipf("UserConfigDir: %v", err)
+	}
+	legacy := filepath.Join(legacyDir, "keetui", "config.json")
+	documented := filepath.Join(tmp, ".config", "keetui", "config.json")
+	if legacy == documented {
+		t.Skip("platform has no distinct legacy config location")
+	}
+
+	// A config written by an older version at the platform-native location
+	// keeps being used...
+	if err := os.MkdirAll(filepath.Dir(legacy), 0700); err != nil {
+		t.Fatalf("mkdir legacy: %v", err)
+	}
+	if err := os.WriteFile(legacy, []byte("{}"), 0600); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	if got := configPath(); got != legacy {
+		t.Errorf("configPath() = %q, want legacy %q when only it exists", got, legacy)
+	}
+
+	// ...but the documented path wins once a file exists there.
+	if err := os.MkdirAll(filepath.Dir(documented), 0700); err != nil {
+		t.Fatalf("mkdir documented: %v", err)
+	}
+	if err := os.WriteFile(documented, []byte("{}"), 0600); err != nil {
+		t.Fatalf("write documented: %v", err)
+	}
+	if got := configPath(); got != documented {
+		t.Errorf("configPath() = %q, want documented %q when both exist", got, documented)
+	}
+}

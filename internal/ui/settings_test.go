@@ -1,12 +1,49 @@
 package ui
 
 import (
+	"path/filepath"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/rmarchei/keetui/internal/config"
 )
+
+func TestSettingsSavePreservesKeyBindings(t *testing.T) {
+	// Isolate the config path so the test cannot touch the real config.
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+
+	cfg := config.Default()
+	kb := config.KeyBindings{Delete: "#"}
+	cfg.KeyBindingsPtr = &kb
+
+	m := NewSettingsModel(cfg)
+	updated, cmd := m.save()
+	sm := updated.(SettingsModel)
+	if sm.isError {
+		t.Fatalf("save failed: %s", sm.status)
+	}
+	if cmd == nil {
+		t.Fatal("expected a ConfigSavedMsg command")
+	}
+	msg, ok := cmd().(ConfigSavedMsg)
+	if !ok {
+		t.Fatalf("expected ConfigSavedMsg, got %T", cmd())
+	}
+	if msg.Cfg.KeyBindingsPtr == nil || msg.Cfg.KeyBindingsPtr.Delete != "#" {
+		t.Error("keybindings must survive saving settings in-session")
+	}
+
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.KeyBindingsPtr == nil || loaded.KeyBindingsPtr.Delete != "#" {
+		t.Error("keybindings were erased from the config file by saving settings")
+	}
+}
 
 func TestSettingsNavigation(t *testing.T) {
 	m := NewSettingsModel(config.Default())

@@ -25,7 +25,7 @@ func TestDetailPasswordToggle(t *testing.T) {
 	m := NewDetailModel(entry, config.Default())
 	m.SetSize(80, 24)
 
-	if m.revealedFields["password"] {
+	if m.revealedFields["builtin:password"] {
 		t.Error("password should be hidden initially")
 	}
 
@@ -39,14 +39,14 @@ func TestDetailPasswordToggle(t *testing.T) {
 	// Toggle password on selected field
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 	m = updated.(DetailModel)
-	if !m.revealedFields["password"] {
+	if !m.revealedFields["builtin:password"] {
 		t.Error("password should be visible after toggle")
 	}
 
 	// Toggle back
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 	m = updated.(DetailModel)
-	if m.revealedFields["password"] {
+	if m.revealedFields["builtin:password"] {
 		t.Error("password should be hidden after second toggle")
 	}
 
@@ -618,5 +618,17 @@ func TestFieldAtLineBigNotes(t *testing.T) {
 	// Line 10 = hint line (inside notes total)
 	if idx, ok := m.fieldAtLine(10); !ok || idx != 4 {
 		t.Errorf("fieldAtLine(10) = (%d, %v), want (4, true) for Notes hint", idx, ok)
+	}
+}
+
+func TestDetailTOTPHonorsDigits(t *testing.T) {
+	entry := keepass.Entry{
+		Title: "E",
+		TOTP:  "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&digits=8",
+	}
+	m := NewDetailModel(entry, config.Default())
+	m.refreshTOTP()
+	if len(m.totpCode) != 8 {
+		t.Errorf("TOTP code = %q (%d digits), want 8 digits per the otpauth URI", m.totpCode, len(m.totpCode))
 	}
 }

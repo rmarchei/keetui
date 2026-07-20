@@ -351,8 +351,11 @@ func TestPresetPickerViewPreviewMasked(t *testing.T) {
 	if strings.Contains(view, "secret123") {
 		t.Error("masked view should not contain the actual password")
 	}
-	if !strings.Contains(view, "*********") {
-		t.Error("masked view should contain asterisks")
+	if !strings.Contains(view, maskedValue) {
+		t.Error("masked view should contain the mask")
+	}
+	if strings.Contains(view, strings.Repeat("*", len("secret123"))) {
+		t.Error("mask must be constant-width, not length-proportional")
 	}
 }
 

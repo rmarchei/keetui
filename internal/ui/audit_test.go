@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -115,5 +116,32 @@ func TestAuditView(t *testing.T) {
 	}
 	if !strings.Contains(view, "1 issues found") {
 		t.Error("View() should contain issue count")
+	}
+}
+
+func TestAuditViewFitsTerminalHeight(t *testing.T) {
+	// Many issues across multiple sections used to overflow the terminal:
+	// headers rendered two physical rows but the window math counted one.
+	var result keepass.AuditResult
+	for i := range 20 {
+		e := keepass.AuditEntry{
+			Entry:     keepass.Entry{Title: fmt.Sprintf("weak-%d", i), Password: "abc"},
+			GroupPath: "Root",
+			Category:  "Weak",
+		}
+		result.WeakEntries = append(result.WeakEntries, e)
+		e.Category = "Empty"
+		result.EmptyEntries = append(result.EmptyEntries, e)
+	}
+
+	m := NewAuditModel(result)
+	m.width, m.height = 80, 23 // app hands the view height-1 for the status bar
+
+	// Scroll to the bottom to exercise every window position.
+	for range 45 {
+		m.moveDown()
+		if rows := strings.Count(m.View(), "\n"); rows > m.height {
+			t.Fatalf("view renders %d rows into a %d-row budget", rows, m.height)
+		}
 	}
 }

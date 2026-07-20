@@ -3,7 +3,9 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -178,13 +180,34 @@ func (c Config) Save() error {
 	return nil
 }
 
-// configPath returns ~/.config/keetui/config.json.
+// configPath returns the config file path: $XDG_CONFIG_HOME/keetui/config.json,
+// or ~/.config/keetui/config.json when XDG_CONFIG_HOME is unset — on all
+// platforms, as documented in the README. If no file exists there but one
+// does at the platform-native os.UserConfigDir location (used by older
+// keetui versions on macOS: ~/Library/Application Support), the legacy path
+// is used so existing configs keep working.
 func configPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		dir = filepath.Join(os.Getenv("HOME"), ".config")
+	p := filepath.Join(configDir(), "keetui", "config.json")
+	if _, err := os.Stat(p); err == nil {
+		return p
 	}
-	return filepath.Join(dir, "keetui", "config.json")
+	if legacyDir, err := os.UserConfigDir(); err == nil {
+		legacy := filepath.Join(legacyDir, "keetui", "config.json")
+		if legacy != p {
+			if _, err := os.Stat(legacy); err == nil {
+				return legacy
+			}
+		}
+	}
+	return p
+}
+
+// configDir returns $XDG_CONFIG_HOME, or ~/.config when unset.
+func configDir() string {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return xdg
+	}
+	return filepath.Join(os.Getenv("HOME"), ".config")
 }
 
 // Sanitize clamps config values to safe ranges, matching the validation
@@ -209,16 +232,31 @@ func (c *Config) Sanitize() {
 }
 
 // Load reads config from ~/.config/keetui/config.json, falling back to defaults.
-// Returns a non-nil error when the file exists but contains invalid JSON.
+// Returns a non-nil error when the file cannot be read (other than not
+// existing), contains invalid JSON, or has conflicting keybindings; in all
+// error cases the returned config is safe to use.
 func Load() (Config, error) {
 	cfg := Default()
 	data, err := os.ReadFile(configPath())
-	if err != nil || len(data) == 0 {
+	if errors.Is(err, fs.ErrNotExist) || (err == nil && len(data) == 0) {
 		return cfg, nil
 	}
+	if err != nil {
+		return cfg, fmt.Errorf("read config %s: %w", configPath(), err)
+	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return cfg, fmt.Errorf("invalid config %s: %w", configPath(), err)
+		// json.Unmarshal may have partially populated cfg before failing
+		// (type errors); return clean defaults so behavior matches the
+		// caller's "using defaults" warning.
+		return Default(), fmt.Errorf("invalid config %s: %w", configPath(), err)
 	}
 	cfg.Sanitize()
+	if err := cfg.Keys().Validate(); err != nil {
+		// Conflicting bindings can silently shadow destructive actions
+		// (e.g. "restore" bound to the delete key); fall back to default
+		// keybindings and surface the problem.
+		cfg.KeyBindingsPtr = nil
+		return cfg, fmt.Errorf("config %s: %w (using default keybindings)", configPath(), err)
+	}
 	return cfg, nil
 }

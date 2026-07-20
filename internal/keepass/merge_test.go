@@ -1,8 +1,11 @@
 package keepass
 
 import (
+	"bytes"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestMerge(t *testing.T) {
@@ -272,5 +275,189 @@ func TestMergePreviewDoesNotModify(t *testing.T) {
 	}
 	if result.EntriesAdded == 0 && result.EntriesUpdated == 0 && result.EntriesSkipped == 0 {
 		t.Error("should have some entry action counts")
+	}
+}
+
+func TestMergePreservesUUIDsAcrossRepeatMerges(t *testing.T) {
+	dir := t.TempDir()
+	password := "testmaster"
+
+	target, err := Create(filepath.Join(dir, "target.kdbx"), password)
+	if err != nil {
+		t.Fatalf("Create target: %v", err)
+	}
+
+	srcPath := filepath.Join(dir, "source.kdbx")
+	source, err := Create(srcPath, password)
+	if err != nil {
+		t.Fatalf("Create source: %v", err)
+	}
+	srcRoot := source.RootGroup()
+	srcUUID, err := source.AddEntry(srcRoot.UUID, Entry{Title: "Synced", UserName: "u"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+
+	// First merge adds the entry under its original UUID.
+	result, err := target.Merge(source)
+	if err != nil {
+		t.Fatalf("Merge 1: %v", err)
+	}
+	if result.EntriesAdded != 1 {
+		t.Fatalf("merge 1 added = %d, want 1", result.EntriesAdded)
+	}
+	if _, err := target.GetEntry(srcUUID); err != nil {
+		t.Fatalf("merged entry must keep the source UUID: %v", err)
+	}
+
+	// Repeat merge (the periodic-sync workflow) must not duplicate.
+	result, err = target.Merge(source)
+	if err != nil {
+		t.Fatalf("Merge 2: %v", err)
+	}
+	if result.EntriesAdded != 0 {
+		t.Errorf("merge 2 added = %d, want 0 (no duplication)", result.EntriesAdded)
+	}
+	if result.EntriesSkipped != 1 {
+		t.Errorf("merge 2 skipped = %d, want 1", result.EntriesSkipped)
+	}
+	tRoot := target.RootGroup()
+	if got := countEntries(&tRoot); got != 1 {
+		t.Errorf("target entries after two merges = %d, want 1", got)
+	}
+}
+
+func TestMergeCopiesAttachmentsHistoryAndTimestamps(t *testing.T) {
+	dir := t.TempDir()
+	password := "testmaster"
+
+	target, err := Create(filepath.Join(dir, "target.kdbx"), password)
+	if err != nil {
+		t.Fatalf("Create target: %v", err)
+	}
+
+	source, err := Create(filepath.Join(dir, "source.kdbx"), password)
+	if err != nil {
+		t.Fatalf("Create source: %v", err)
+	}
+	srcRoot := source.RootGroup()
+	srcUUID, err := source.AddEntry(srcRoot.UUID, Entry{Title: "Rich", Password: "old"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	if err := source.UpdateEntry(srcUUID, Entry{Title: "Rich", Password: "new"}); err != nil {
+		t.Fatalf("UpdateEntry: %v", err)
+	}
+	attachment := []byte("recovery codes")
+	if err := source.AddAttachment(srcUUID, "codes.pdf", attachment); err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+	srcRaw := findEntry(&source.Database.Content.Root.Groups[0], srcUUID)
+	srcMod := srcRaw.Times.LastModificationTime.Time
+
+	if _, err := target.Merge(source); err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+
+	// Save and reopen so binary pool handling is exercised end to end.
+	mergedPath := filepath.Join(dir, "merged.kdbx")
+	if err := target.SaveAs(mergedPath); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+	merged, err := Open(mergedPath, password)
+	if err != nil {
+		t.Fatalf("Open merged: %v", err)
+	}
+
+	atts := merged.EntryAttachments(srcUUID)
+	if len(atts) != 1 || atts[0].Name != "codes.pdf" {
+		t.Fatalf("attachments = %+v, want codes.pdf", atts)
+	}
+	dest := filepath.Join(dir, "extracted.pdf")
+	if err := merged.ExtractAttachment(srcUUID, "codes.pdf", dest); err != nil {
+		t.Fatalf("ExtractAttachment: %v", err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("read extracted: %v", err)
+	}
+	if !bytes.Equal(data, attachment) {
+		t.Errorf("attachment content = %q, want %q", data, attachment)
+	}
+
+	history := merged.EntryHistory(srcUUID)
+	if len(history) != 1 || history[0].Password != "old" {
+		t.Errorf("history = %+v, want one snapshot with the old password", history)
+	}
+
+	// KDBX serialization stores times with second precision.
+	srcMod = srcMod.Truncate(time.Second)
+	mergedRaw := findEntry(&merged.Database.Content.Root.Groups[0], srcUUID)
+	if !mergedRaw.Times.LastModificationTime.Time.Equal(srcMod) {
+		t.Errorf("modification time = %v, want source's %v (timestamps must be preserved)",
+			mergedRaw.Times.LastModificationTime.Time, srcMod)
+	}
+}
+
+func TestMergeUpdateCopiesAttachments(t *testing.T) {
+	dir := t.TempDir()
+	password := "testmaster"
+
+	// Both databases contain the same entry; the source copy is newer and
+	// carries an attachment.
+	basePath := filepath.Join(dir, "base.kdbx")
+	base, err := Create(basePath, password)
+	if err != nil {
+		t.Fatalf("Create base: %v", err)
+	}
+	root := base.RootGroup()
+	uuid, err := base.AddEntry(root.UUID, Entry{Title: "Shared", Password: "v1"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	if err := base.SaveAs(basePath); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	target, err := Open(basePath, password)
+	if err != nil {
+		t.Fatalf("Open target: %v", err)
+	}
+	source, err := Open(basePath, password)
+	if err != nil {
+		t.Fatalf("Open source: %v", err)
+	}
+	if err := source.UpdateEntry(uuid, Entry{Title: "Shared", Password: "v2"}); err != nil {
+		t.Fatalf("UpdateEntry source: %v", err)
+	}
+	attachment := []byte("new attachment")
+	if err := source.AddAttachment(uuid, "new.txt", attachment); err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+
+	result, err := target.Merge(source)
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if result.EntriesUpdated != 1 {
+		t.Fatalf("updated = %d, want 1", result.EntriesUpdated)
+	}
+
+	got, err := target.GetEntry(uuid)
+	if err != nil {
+		t.Fatalf("GetEntry: %v", err)
+	}
+	if got.Password != "v2" {
+		t.Errorf("password = %q, want v2 (newer source wins)", got.Password)
+	}
+	atts := target.EntryAttachments(uuid)
+	if len(atts) != 1 || atts[0].Name != "new.txt" {
+		t.Fatalf("attachments = %+v, want new.txt copied from source", atts)
+	}
+
+	// The overwritten target state must be recorded in history.
+	history := target.EntryHistory(uuid)
+	if len(history) == 0 || history[0].Password != "v1" {
+		t.Errorf("history = %+v, want the pre-merge state (v1) preserved", history)
 	}
 }

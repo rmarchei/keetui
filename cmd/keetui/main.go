@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
 	"syscall"
 
@@ -30,6 +31,7 @@ func main() {
 	importCSV := flag.String("import-csv", "", "import entries from CSV file")
 	importXML := flag.String("import-xml", "", "import entries from XML file")
 	mergeDB := flag.String("merge", "", "merge entries from another .kdbx file")
+	mergeKeyFile := flag.String("merge-keyfile", "", "path to key file for the merge source database (use with -merge)")
 	dryRun := flag.Bool("dry-run", false, "preview changes without modifying (use with --merge)")
 	readOnly := flag.Bool("read-only", false, "open database in read-only mode")
 	upgradeKDBX4 := flag.Bool("upgrade-kdbx4", false, "upgrade database from KDBX 3.1 to KDBX 4 format")
@@ -80,9 +82,25 @@ func main() {
 
 	dbPath := flag.Arg(0)
 
+	// The flag package stops parsing at the first positional argument, so
+	// options placed after the path would be silently ignored (e.g. a
+	// -read-only that never takes effect).
+	if flag.NArg() > 1 {
+		fmt.Fprintf(os.Stderr, "Error: unexpected arguments after database path: %v\n", flag.Args()[1:])
+		fmt.Fprintln(os.Stderr, "Options must come before the database path, e.g.: keetui -export-csv out.csv db.kdbx")
+		os.Exit(1)
+	}
+
 	if strings.HasSuffix(strings.ToLower(dbPath), ".kdb") {
 		fmt.Fprintln(os.Stderr, "Error: KeePass 1.x .kdb files are not supported. Please convert to .kdbx format using KeePass 2 or KeePassXC.")
 		os.Exit(1)
+	}
+
+	if *keyFile != "" {
+		if _, err := os.Stat(*keyFile); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error: key file %q does not exist\n", *keyFile)
+			os.Exit(1)
+		}
 	}
 
 	if *newDB {
@@ -92,33 +110,28 @@ func main() {
 		}
 		// Prompt for password
 		fmt.Printf("Creating new database: %s\n", dbPath)
-		fmt.Print("Enter master password: ")
-		pwBytes, err := term.ReadPassword(int(syscall.Stdin))
-		fmt.Println()
+		password, err := readPassword("Enter master password: ")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
 			os.Exit(1)
 		}
-		password := string(pwBytes)
-		zeroBytes(pwBytes)
-		if password == "" {
+		// A keyfile-only database has no master password.
+		if password == "" && *keyFile == "" {
 			fmt.Fprintln(os.Stderr, "Error: password cannot be empty")
 			os.Exit(1)
 		}
-		fmt.Print("Confirm master password: ")
-		confirmBytes, err := term.ReadPassword(int(syscall.Stdin))
-		fmt.Println()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
-			os.Exit(1)
+		if password != "" {
+			confirm, err := readPassword("Confirm master password: ")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
+				os.Exit(1)
+			}
+			if password != confirm {
+				fmt.Fprintln(os.Stderr, "Error: passwords do not match")
+				os.Exit(1)
+			}
 		}
-		confirm := string(confirmBytes)
-		zeroBytes(confirmBytes)
-		if password != confirm {
-			fmt.Fprintln(os.Stderr, "Error: passwords do not match")
-			os.Exit(1)
-		}
-		if _, err := keepass.Create(dbPath, password); err != nil {
+		if _, err := keepass.CreateWithKeyFile(dbPath, password, *keyFile); err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating database: %v\n", err)
 			os.Exit(1)
 		}
@@ -130,16 +143,20 @@ func main() {
 		}
 	}
 
-	if *keyFile != "" {
-		if _, err := os.Stat(*keyFile); os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Error: key file %q does not exist\n", *keyFile)
-			os.Exit(1)
-		}
-	}
-
 	if *dryRun && *mergeDB == "" {
 		fmt.Fprintln(os.Stderr, "Error: --dry-run requires --merge")
 		os.Exit(1)
+	}
+
+	if *mergeKeyFile != "" {
+		if *mergeDB == "" {
+			fmt.Fprintln(os.Stderr, "Error: --merge-keyfile requires --merge")
+			os.Exit(1)
+		}
+		if _, err := os.Stat(*mergeKeyFile); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Error: key file %q does not exist\n", *mergeKeyFile)
+			os.Exit(1)
+		}
 	}
 
 	// Block mutating batch operations in read-only mode
@@ -148,10 +165,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %s (using defaults)\n", err)
+	}
+
 	// Handle non-interactive commands (export, import, merge, upgrade)
 	isBatchOp := *exportCSV != "" || *exportXML != "" || *importCSV != "" || *importXML != "" || *mergeDB != "" || *upgradeKDBX4
 	if isBatchOp {
 		db := openDBForBatch(dbPath, *keyFile)
+		db.BackupOnSave = cfg.BackupEnabled()
 
 		if *exportCSV != "" {
 			if err := db.ExportCSVFile(*exportCSV); err != nil {
@@ -196,7 +219,7 @@ func main() {
 		}
 
 		if *mergeDB != "" {
-			other := openDBForBatch(*mergeDB, "")
+			other := openDBForBatch(*mergeDB, *mergeKeyFile)
 			if *dryRun {
 				result, err := db.MergePreview(other)
 				if err != nil {
@@ -238,10 +261,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %s (using defaults)\n", err)
-	}
 	app := ui.NewApp(dbPath, *keyFile, cfg, *readOnly)
 	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
@@ -252,15 +271,11 @@ func main() {
 
 // openDBForBatch opens the database for batch operations, prompting for password.
 func openDBForBatch(dbPath, keyFilePath string) *keepass.DB {
-	fmt.Print("Enter master password: ")
-	pwBytes, err := term.ReadPassword(int(syscall.Stdin))
-	fmt.Println()
+	password, err := readPassword(fmt.Sprintf("Enter master password for %s: ", dbPath))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
 		os.Exit(1)
 	}
-	password := string(pwBytes)
-	zeroBytes(pwBytes)
 
 	var db *keepass.DB
 	if keyFilePath != "" {
@@ -273,6 +288,41 @@ func openDBForBatch(dbPath, keyFilePath string) *keepass.DB {
 		os.Exit(1)
 	}
 	return db
+}
+
+// readPassword prompts on stderr (visible even with stdout redirected) and
+// reads a password without echo. If the process is interrupted mid-read,
+// the terminal state is restored before exiting — otherwise Ctrl+C would
+// leave the shell with echo disabled.
+func readPassword(prompt string) (string, error) {
+	fmt.Fprint(os.Stderr, prompt)
+	fd := int(syscall.Stdin)
+	if state, err := term.GetState(fd); err == nil {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-sig:
+				_ = term.Restore(fd, state)
+				fmt.Fprintln(os.Stderr)
+				os.Exit(130)
+			case <-done:
+			}
+		}()
+		defer func() {
+			signal.Stop(sig)
+			close(done)
+		}()
+	}
+	pwBytes, err := term.ReadPassword(fd)
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", err
+	}
+	password := string(pwBytes)
+	zeroBytes(pwBytes)
+	return password, nil
 }
 
 // zeroBytes overwrites a byte slice with zeros to reduce sensitive data exposure in memory.

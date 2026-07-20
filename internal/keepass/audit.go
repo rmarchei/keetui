@@ -29,13 +29,16 @@ func (d *DB) Audit() AuditResult {
 	root := d.RootGroup()
 	rbUUID := d.RecycleBinUUID()
 
-	// Collect all passwords for reuse detection
+	// Collect all passwords for reuse detection. passwordOrder records
+	// first-seen tree order so the report is deterministic across runs
+	// (map iteration order is randomized).
 	passwordEntries := make(map[string][]AuditEntry)
-	auditGroup(&root, root.Name, rbUUID, d.RecycleBinEnabled(), &result, passwordEntries)
+	var passwordOrder []string
+	auditGroup(&root, root.Name, rbUUID, d.RecycleBinEnabled(), &result, passwordEntries, &passwordOrder)
 
 	// Process reused passwords
-	for _, entries := range passwordEntries {
-		if len(entries) > 1 {
+	for _, pw := range passwordOrder {
+		if entries := passwordEntries[pw]; len(entries) > 1 {
 			result.ReusedEntries = append(result.ReusedEntries, entries...)
 		}
 	}
@@ -43,7 +46,7 @@ func (d *DB) Audit() AuditResult {
 	return result
 }
 
-func auditGroup(g *Group, path string, rbUUID gokeepasslib.UUID, rbEnabled bool, result *AuditResult, passwordEntries map[string][]AuditEntry) {
+func auditGroup(g *Group, path string, rbUUID gokeepasslib.UUID, rbEnabled bool, result *AuditResult, passwordEntries map[string][]AuditEntry, passwordOrder *[]string) {
 	for _, e := range g.Entries {
 		ae := AuditEntry{Entry: e, GroupPath: path}
 
@@ -55,6 +58,9 @@ func auditGroup(g *Group, path string, rbUUID gokeepasslib.UUID, rbEnabled bool,
 			if strength.Score <= StrengthWeak {
 				ae.Category = "Weak"
 				result.WeakEntries = append(result.WeakEntries, ae)
+			}
+			if len(passwordEntries[e.Password]) == 0 {
+				*passwordOrder = append(*passwordOrder, e.Password)
 			}
 			passwordEntries[e.Password] = append(passwordEntries[e.Password], AuditEntry{
 				Entry:     e,
@@ -76,6 +82,6 @@ func auditGroup(g *Group, path string, rbUUID gokeepasslib.UUID, rbEnabled bool,
 			continue
 		}
 		subPath := path + " > " + sg.Name
-		auditGroup(sg, subPath, rbUUID, rbEnabled, result, passwordEntries)
+		auditGroup(sg, subPath, rbUUID, rbEnabled, result, passwordEntries, passwordOrder)
 	}
 }

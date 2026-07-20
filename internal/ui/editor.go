@@ -55,6 +55,7 @@ type EditorModel struct {
 	height        int
 	err           error
 	generated     bool // true after password was auto-generated
+	tags          string
 	cfg           config.Config
 	revealSeq     int  // incremented on each keystroke that triggers auto-reveal
 	persistReveal bool // true when ctrl+r was used to persistently show password
@@ -116,6 +117,7 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 
 	if entry != nil {
 		m.entryUUID = entry.UUID
+		m.tags = entry.Tags
 		inputs[fieldTitle].SetValue(entry.Title)
 		inputs[fieldUserName].SetValue(entry.UserName)
 		inputs[fieldPassword].SetValue(entry.Password)
@@ -216,10 +218,20 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return CancelEditMsg{} }
 
 		case "tab", "down":
+			// Inside the multi-line Notes field, up/down move the cursor
+			// between lines; focus only leaves at the boundary lines.
+			if msg.String() == "down" && m.focused == fieldNotes &&
+				m.notesInput.Line() < m.notesInput.LineCount()-1 {
+				break
+			}
 			m.focused = (m.focused + 1) % m.totalFields()
 			return m, m.updateFocus()
 
 		case "shift+tab", "up":
+			if msg.String() == "up" && m.focused == fieldNotes &&
+				m.notesInput.Line() > 0 {
+				break
+			}
 			m.focused = (m.focused - 1 + m.totalFields()) % m.totalFields()
 			return m, m.updateFocus()
 
@@ -228,6 +240,13 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return updated, cmd
 
 		case "ctrl+g":
+			// Re-mask any auto-revealed field before leaving for the
+			// picker: the pending re-mask tick is dropped while the
+			// picker view is active, which would leave the secret
+			// visible indefinitely.
+			if !m.persistReveal {
+				m.remaskAll()
+			}
 			pw := m.inputs[fieldPassword].Value()
 			return m, func() tea.Msg {
 				return ShowPresetPickerMsg{CurrentPassword: pw}
@@ -434,7 +453,10 @@ func (m EditorModel) save() (tea.Model, tea.Cmd) {
 	var expiryTime time.Time
 	var hasExpiry bool
 	if expiryStr != "" {
-		t, err := time.Parse("2006-01-02", expiryStr)
+		// Parse in local time: the field is displayed via Local() in
+		// NewEditorModel, so parsing as UTC would shift the stored date
+		// one day per edit for users west of UTC.
+		t, err := time.ParseInLocation("2006-01-02", expiryStr, time.Local)
 		if err != nil {
 			m.err = fmt.Errorf("invalid expiry date (expected YYYY-MM-DD)")
 			return m, nil
@@ -452,6 +474,7 @@ func (m EditorModel) save() (tea.Model, tea.Cmd) {
 			TOTP:       m.inputs[fieldTOTP].Value(),
 			Expires:    hasExpiry,
 			ExpiryTime: expiryTime,
+			Tags:       m.tags,
 		}
 		for _, cf := range m.customInputs {
 			key := cf.key.Value()

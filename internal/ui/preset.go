@@ -441,7 +441,7 @@ func (m PresetPickerModel) viewPreview() string {
 
 	pw := m.generatedPassword
 	if !m.passwordVisible {
-		pw = strings.Repeat("*", len([]rune(pw)))
+		pw = maskedValue
 	}
 	fmt.Fprintf(&b, "  %s %s\n", labelStyle.Render("Password:"), valueStyle.Render(pw))
 

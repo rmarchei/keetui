@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,7 +20,8 @@ import (
 type DB struct {
 	Path         string
 	Database     *gokeepasslib.Database
-	BackupOnSave bool // when true, create a .bak copy before saving
+	BackupOnSave bool   // when true, create a .bak copy before saving
+	keyFilePath  string // key file used to open the database, if any
 	unlocked     bool
 }
 
@@ -63,6 +65,76 @@ func (e Entry) IsFavorite() bool {
 	return false
 }
 
+// customField returns the value of the named custom field, or "".
+func (e Entry) customField(key string) string {
+	for _, cf := range e.CustomFields {
+		if cf.Key == key {
+			return cf.Value
+		}
+	}
+	return ""
+}
+
+// totpURIParam returns a query parameter from the entry's otpauth:// URI,
+// or "" when the TOTP value is not a valid URI.
+func (e Entry) totpURIParam(name string) string {
+	if !strings.HasPrefix(e.TOTP, "otpauth://") {
+		return ""
+	}
+	u, err := url.Parse(e.TOTP)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get(name)
+}
+
+// TOTPDigits returns the number of digits for the entry's TOTP codes,
+// honoring the otpauth URI digits= parameter and the KeePass2
+// TimeOtp-Length field. Defaults to 6 when unspecified or out of range.
+func (e Entry) TOTPDigits() int {
+	v := e.totpURIParam("digits")
+	if v == "" {
+		v = e.customField("TimeOtp-Length")
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 4 && n <= 10 {
+		return n
+	}
+	return 6
+}
+
+// TOTPAlgorithm returns the normalized TOTP hash algorithm ("SHA1",
+// "SHA256", or "SHA512"), honoring the otpauth URI algorithm= parameter
+// and the KeePass2 TimeOtp-Algorithm field (e.g. "HMAC-SHA-256").
+// Defaults to SHA1.
+func (e Entry) TOTPAlgorithm() string {
+	raw := e.totpURIParam("algorithm")
+	if raw == "" {
+		raw = e.customField("TimeOtp-Algorithm")
+	}
+	s := strings.ToUpper(strings.TrimSpace(raw))
+	s = strings.TrimPrefix(s, "HMAC-")
+	s = strings.ReplaceAll(s, "-", "")
+	switch s {
+	case "SHA256", "SHA512":
+		return s
+	default:
+		return "SHA1"
+	}
+}
+
+// TOTPPeriod returns the code period in seconds for the entry's TOTP,
+// honoring the otpauth URI period= parameter and the KeePass2
+// TimeOtp-Period field. Defaults to 30.
+func (e Entry) TOTPPeriod() uint {
+	if strings.HasPrefix(e.TOTP, "otpauth://") {
+		return TOTPPeriod(e.TOTP)
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(e.customField("TimeOtp-Period"))); err == nil && n > 0 {
+		return uint(n)
+	}
+	return 30
+}
+
 // HistoryEntry represents a single password history record.
 type HistoryEntry struct {
 	Password         string
@@ -79,13 +151,39 @@ type Group struct {
 	Entries []Entry
 }
 
+// buildCredentials assembles database credentials from a master password
+// and an optional key file. An empty password combined with a key file
+// yields key-only credentials (keyfile-only databases, as supported by
+// KeePass2/KeePassXC).
+func buildCredentials(password, keyFilePath string) (*gokeepasslib.DBCredentials, error) {
+	switch {
+	case keyFilePath == "":
+		return gokeepasslib.NewPasswordCredentials(password), nil
+	case password == "":
+		return gokeepasslib.NewKeyCredentials(keyFilePath)
+	default:
+		return gokeepasslib.NewPasswordAndKeyCredentials(password, keyFilePath)
+	}
+}
+
 // Create creates a new .kdbx database file with the given password.
 func Create(path, password string) (*DB, error) {
+	return CreateWithKeyFile(path, password, "")
+}
+
+// CreateWithKeyFile creates a new .kdbx database file protected by the
+// given password and/or key file.
+func CreateWithKeyFile(path, password, keyFilePath string) (*DB, error) {
+	creds, err := buildCredentials(password, keyFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("create credentials: %w", err)
+	}
+
 	rootGroup := gokeepasslib.NewGroup()
 	rootGroup.Name = "Root"
 
 	db := gokeepasslib.NewDatabase()
-	db.Credentials = gokeepasslib.NewPasswordCredentials(password)
+	db.Credentials = creds
 	db.Content.Root = &gokeepasslib.RootData{
 		Groups: []gokeepasslib.Group{rootGroup},
 	}
@@ -102,12 +200,15 @@ func Create(path, password string) (*DB, error) {
 		return nil, fmt.Errorf("encode database: %w", err)
 	}
 
-	_ = db.UnlockProtectedEntries()
+	if err := db.UnlockProtectedEntries(); err != nil {
+		return nil, fmt.Errorf("unlock protected values: %w", err)
+	}
 
 	return &DB{
-		Path:     path,
-		Database: db,
-		unlocked: true,
+		Path:        path,
+		Database:    db,
+		keyFilePath: keyFilePath,
+		unlocked:    true,
 	}, nil
 }
 
@@ -129,7 +230,11 @@ func Open(path, password string) (*DB, error) {
 		return nil, fmt.Errorf("decode database: %w", err)
 	}
 
-	_ = db.UnlockProtectedEntries()
+	// Propagate unlock failures (e.g. unsupported inner stream ciphers):
+	// otherwise every protected value would display as ciphertext garbage.
+	if err := db.UnlockProtectedEntries(); err != nil {
+		return nil, fmt.Errorf("unlock protected values: %w", err)
+	}
 
 	return &DB{
 		Path:     path,
@@ -149,7 +254,7 @@ func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	creds, err := gokeepasslib.NewPasswordAndKeyCredentials(password, keyFilePath)
+	creds, err := buildCredentials(password, keyFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("create credentials: %w", err)
 	}
@@ -161,12 +266,15 @@ func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 		return nil, fmt.Errorf("decode database: %w", err)
 	}
 
-	_ = db.UnlockProtectedEntries()
+	if err := db.UnlockProtectedEntries(); err != nil {
+		return nil, fmt.Errorf("unlock protected values: %w", err)
+	}
 
 	return &DB{
-		Path:     path,
-		Database: db,
-		unlocked: true,
+		Path:        path,
+		Database:    db,
+		keyFilePath: keyFilePath,
+		unlocked:    true,
 	}, nil
 }
 
@@ -225,6 +333,13 @@ func (d *DB) Save() error {
 // It writes to a temporary file first, then renames it to the target path
 // to avoid data loss if the process is interrupted during save.
 func (d *DB) SaveAs(path string) error {
+	// Follow a symlinked database path so the final rename lands on the
+	// link's target instead of replacing the link with a regular file
+	// (which would silently fork the database from its real location).
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+
 	// For KDBX 4, binaries live in the InnerHeader (raw bytes).
 	// Some tools also write them into the XML <Meta><Binaries> section.
 	// gokeepasslib's cleanupBinaries only cleans the "active" location,
@@ -349,25 +464,39 @@ func (d *DB) ConvertToKDBX4() error {
 		return fmt.Errorf("database is already KDBX 4 format")
 	}
 
-	// Extract raw binary contents before changing format.
+	// Extract raw binary contents before changing format, keeping the old
+	// pool IDs so entry references can be remapped afterward.
 	// KDBX 3.1 stores binaries as base64+gzip in Meta.Binaries;
 	// KDBX 4 stores them as raw bytes in InnerHeader.Binaries.
-	var binaryContents [][]byte
+	type oldBinary struct {
+		id      int
+		content []byte
+	}
+	var oldBinaries []oldBinary
 	for _, b := range d.Database.Content.Meta.Binaries {
 		content, err := b.GetContentBytes()
 		if err != nil {
 			return fmt.Errorf("read binary %d: %w", b.ID, err)
 		}
-		binaryContents = append(binaryContents, content)
+		oldBinaries = append(oldBinaries, oldBinary{id: b.ID, content: content})
 	}
 
 	// Switch to KDBX 4: replaces header (Argon2, ChaCha20) and
 	// creates InnerHeader with ChaCha20 random stream key.
 	gokeepasslib.WithDatabaseKDBXVersion4()(d.Database)
 
-	// Re-add binaries — AddBinary now routes to InnerHeader for KDBX 4.
-	for _, content := range binaryContents {
-		d.Database.AddBinary(content)
+	// Re-add binaries — AddBinary now routes to InnerHeader for KDBX 4 and
+	// assigns fresh sequential IDs (deduplicating identical contents).
+	idMap := make(map[int]int, len(oldBinaries))
+	for _, ob := range oldBinaries {
+		nb := d.Database.AddBinary(ob.content)
+		idMap[ob.id] = nb.ID
+	}
+
+	// Rewrite entry attachment references (including history snapshots) from
+	// old pool IDs to the freshly assigned ones.
+	if root := d.Database.Content.Root; root != nil && len(root.Groups) > 0 {
+		remapGroupBinaryIDs(&root.Groups[0], idMap)
 	}
 
 	// Clear stale Meta.Binaries to avoid duplication on save.
@@ -376,9 +505,40 @@ func (d *DB) ConvertToKDBX4() error {
 	return nil
 }
 
-// ChangePassword updates the master password of the database.
-func (d *DB) ChangePassword(newPassword string) {
-	d.Database.Credentials = gokeepasslib.NewPasswordCredentials(newPassword)
+// remapGroupBinaryIDs rewrites every BinaryReference ID in the group subtree
+// through idMap. IDs not present in idMap (already-dangling references) are
+// left unchanged.
+func remapGroupBinaryIDs(g *gokeepasslib.Group, idMap map[int]int) {
+	for i := range g.Entries {
+		remapEntryBinaryIDs(&g.Entries[i], idMap)
+	}
+	for i := range g.Groups {
+		remapGroupBinaryIDs(&g.Groups[i], idMap)
+	}
+}
+
+func remapEntryBinaryIDs(e *gokeepasslib.Entry, idMap map[int]int) {
+	for i := range e.Binaries {
+		if newID, ok := idMap[e.Binaries[i].Value.ID]; ok {
+			e.Binaries[i].Value.ID = newID
+		}
+	}
+	for hi := range e.Histories {
+		for ei := range e.Histories[hi].Entries {
+			remapEntryBinaryIDs(&e.Histories[hi].Entries[ei], idMap)
+		}
+	}
+}
+
+// ChangePassword updates the master password of the database, preserving
+// the key file factor when the database was opened with one.
+func (d *DB) ChangePassword(newPassword string) error {
+	creds, err := buildCredentials(newPassword, d.keyFilePath)
+	if err != nil {
+		return fmt.Errorf("create credentials: %w", err)
+	}
+	d.Database.Credentials = creds
+	return nil
 }
 
 // AddEntry adds a new entry to the group identified by groupUUID.
@@ -463,22 +623,23 @@ func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 		return fmt.Errorf("entry not found")
 	}
 
-	// Save current state to history before applying changes
-	historyClone := entry.Clone()
-	if len(entry.Histories) == 0 {
-		entry.Histories = []gokeepasslib.History{{}}
-	}
-	// Clear the clone's history to avoid nesting
-	historyClone.Histories = nil
-	entry.Histories[0].Entries = append(entry.Histories[0].Entries, historyClone)
-
-	// Trim history to max items
+	// Save current state to history before applying changes.
+	// Meta.HistoryMaxItems follows KeePass semantics: negative = unlimited,
+	// 0 = keep no history. cloneEntry (not Clone) keeps the entry's UUID,
+	// as the KDBX format requires for history records.
 	maxItems := int(d.Database.Content.Meta.HistoryMaxItems)
-	if maxItems <= 0 {
-		maxItems = 10
-	}
-	if len(entry.Histories[0].Entries) > maxItems {
-		entry.Histories[0].Entries = entry.Histories[0].Entries[len(entry.Histories[0].Entries)-maxItems:]
+	if maxItems != 0 {
+		historyClone := cloneEntry(*entry)
+		if len(entry.Histories) == 0 {
+			entry.Histories = []gokeepasslib.History{{}}
+		}
+		// Clear the clone's history to avoid nesting
+		historyClone.Histories = nil
+		entry.Histories[0].Entries = append(entry.Histories[0].Entries, historyClone)
+
+		if maxItems > 0 && len(entry.Histories[0].Entries) > maxItems {
+			entry.Histories[0].Entries = entry.Histories[0].Entries[len(entry.Histories[0].Entries)-maxItems:]
+		}
 	}
 
 	setEntryValue(entry, "Title", e.Title, false)
@@ -486,12 +647,19 @@ func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 	setEntryValue(entry, "Password", e.Password, true)
 	setEntryValue(entry, "URL", e.URL, false)
 	setEntryValue(entry, "Notes", e.Notes, false)
-	if e.TOTP != "" {
-		if strings.HasPrefix(e.TOTP, "otpauth://") {
-			setEntryValue(entry, "otp", e.TOTP, true)
-		} else {
-			setEntryValue(entry, "TimeOtp-Secret-Base32", e.TOTP, true)
-		}
+	// TOTP lives in one of two fields ("otp" for otpauth:// URIs,
+	// "TimeOtp-Secret-Base32" for raw secrets). Remove whichever
+	// representation is not being written so a stale value can never
+	// shadow the new one, and remove both when the TOTP is cleared.
+	switch {
+	case e.TOTP == "":
+		entry.Values = removeValues(entry.Values, "otp", "TimeOtp-Secret-Base32")
+	case strings.HasPrefix(e.TOTP, "otpauth://"):
+		entry.Values = removeValues(entry.Values, "TimeOtp-Secret-Base32")
+		setEntryValue(entry, "otp", e.TOTP, true)
+	default:
+		entry.Values = removeValues(entry.Values, "otp")
+		setEntryValue(entry, "TimeOtp-Secret-Base32", e.TOTP, true)
 	}
 	// Sync custom fields: remove old custom fields, add new ones
 	var cleaned []gokeepasslib.ValueData
@@ -736,27 +904,16 @@ func (d *DB) DuplicateEntry(entryUUID gokeepasslib.UUID) (gokeepasslib.UUID, err
 
 	original := parentGroup.Entries[entryIdx]
 
-	// Create a new entry with a new UUID but same values
-	dup := gokeepasslib.NewEntry()
-	for _, v := range original.Values {
-		if v.Key == "Title" {
-			dup.Values = append(dup.Values, gokeepasslib.ValueData{
-				Key:   v.Key,
-				Value: gokeepasslib.V{Content: v.Value.Content + " (copy)", Protected: v.Value.Protected},
-			})
-		} else {
-			dup.Values = append(dup.Values, gokeepasslib.ValueData{
-				Key:   v.Key,
-				Value: gokeepasslib.V{Content: v.Value.Content, Protected: v.Value.Protected},
-			})
-		}
-	}
-	dup.Tags = original.Tags
-	dup.Times.CreationTime = &w.TimeWrapper{Time: time.Now()}
-	dup.Times.LastModificationTime = &w.TimeWrapper{Time: time.Now()}
-
-	// Copy binary attachment references
-	dup.Binaries = append(dup.Binaries, original.Binaries...)
+	// Deep-copy the whole entry (values, tags, expiry, icon, colors,
+	// auto-type, custom data, attachment references), then give the copy
+	// its own identity: fresh UUID, no history, retitled, new timestamps.
+	dup := cloneEntry(original)
+	dup.UUID = gokeepasslib.NewUUID()
+	dup.Histories = nil
+	setEntryValue(&dup, "Title", original.GetTitle()+" (copy)", false)
+	now := time.Now()
+	dup.Times.CreationTime = &w.TimeWrapper{Time: now}
+	dup.Times.LastModificationTime = &w.TimeWrapper{Time: now}
 
 	parentGroup.Entries = append(parentGroup.Entries, dup)
 	return dup.UUID, nil
@@ -945,6 +1102,21 @@ func removeGroup(g *gokeepasslib.Group, uuid gokeepasslib.UUID) bool {
 		}
 	}
 	return false
+}
+
+// removeValues returns values with all entries matching the given keys removed.
+func removeValues(values []gokeepasslib.ValueData, keys ...string) []gokeepasslib.ValueData {
+	remove := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		remove[k] = true
+	}
+	kept := values[:0]
+	for _, v := range values {
+		if !remove[v.Key] {
+			kept = append(kept, v)
+		}
+	}
+	return kept
 }
 
 func setEntryValue(entry *gokeepasslib.Entry, key, value string, protected bool) {
