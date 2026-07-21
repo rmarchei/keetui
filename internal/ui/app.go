@@ -853,7 +853,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if _, err := os.Stat(target); err == nil {
 				// The target is a different existing file: confirm before
 				// clobbering it (it could be another vault).
-				resolved := confirmSaveAsMsg{Path: msg.Path, Upgrade: msg.Upgrade}
+				resolved := confirmSaveAsMsg(msg)
 				m.confirm = NewConfirmModel(fmt.Sprintf("Overwrite existing file %q?", target), func() tea.Msg {
 					return resolved
 				})
