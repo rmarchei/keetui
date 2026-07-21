@@ -39,7 +39,7 @@ jobs:
             -o keetui-${{ matrix.goos }}-${{ matrix.goarch }} \
             ./cmd/keetui
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: keetui-${{ matrix.goos }}-${{ matrix.goarch }}
           path: keetui-${{ matrix.goos }}-${{ matrix.goarch }}
