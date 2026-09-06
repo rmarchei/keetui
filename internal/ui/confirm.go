@@ -79,7 +79,7 @@ func (m ConfirmModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Confirm "))
 	b.WriteString("\n\n")
-	fmt.Fprintf(&b, "  %s\n\n", m.message)
+	fmt.Fprintf(&b, "  %s\n\n", sanitizeDisplay(m.message))
 
 	var no, yes string
 	if m.selected {

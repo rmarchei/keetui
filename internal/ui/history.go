@@ -126,7 +126,7 @@ func (m HistoryModel) View() string {
 
 			pw := maskedValue
 			if m.showPw {
-				pw = h.Password
+				pw = sanitizeDisplay(h.Password)
 			}
 
 			style := entryStyle

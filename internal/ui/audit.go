@@ -171,11 +171,11 @@ func (m AuditModel) View() string {
 				if i == m.cursor {
 					cursor = "> "
 				}
-				title := line.entry.Entry.Title
+				title := sanitizeDisplay(line.entry.Entry.Title)
 				if title == "" {
 					title = "(untitled)"
 				}
-				path := hiddenStyle.Render(fmt.Sprintf("  (%s)", line.entry.GroupPath))
+				path := hiddenStyle.Render(fmt.Sprintf("  (%s)", sanitizeDisplay(line.entry.GroupPath)))
 				if i == m.cursor {
 					fmt.Fprintf(&b, "  %s%s%s\n", cursor, selectedItemStyle.Render(title), path)
 				} else {

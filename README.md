@@ -287,6 +287,24 @@ git config core.hooksPath .githooks
 - **Backup on save**: When enabled, the original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback (disabled by default; enable via `backup_on_save` setting)
 - **Read-only mode**: Open with `--read-only` to browse a database without risk of accidental modification
 - **Input validation**: Attachment extraction rejects path traversal attempts; config values are sanitized on load; URL opening restricted to http/https schemes
+- **Display sanitization**: Values containing control characters or invalid UTF-8 are rendered with `�` placeholders so they cannot corrupt the terminal; clipboard copies always use the raw value
+
+## Compatibility
+
+### KeeWeb / kdbxweb compatibility
+
+KeeWeb (via its kdbxweb library) can store file attachments in **KDBX 3.1** files as *protected binaries* in the Meta section, encrypted with the same inner stream cipher as passwords. Before `gokeepasslib` v3.7.0, these binaries were skipped during decryption, making subsequent protected values appear as random garbage. Upstream v3.7.0 includes the protected-binary decoding fix and now reports XML parsing errors instead of silently dropping entries.
+
+keetui still needs the [rmarchei/gokeepasslib](https://github.com/rmarchei/gokeepasslib) fork (see `replace` in `go.mod`) for two compatibility fixes on top of v3.7.0:
+
+- Accept empty timestamps written by some KeeWeb files, including metadata and entry history.
+- Decrypt protected values **before** removing unused attachments during save. Removing a protected binary too early shifts the stream and corrupts the remaining passwords.
+
+Regression tests use synthetic kdbxweb databases to check passwords, history, protected custom fields and attachments across saving, deleting entries and converting to KDBX 4. The fork should only be removed once both remaining fixes are available upstream and these tests pass. These fixes prevent corruption; they cannot recover passwords that have already been saved incorrectly.
+
+### Corruption guard
+
+If decoded protected values look like binary garbage (e.g. the database was written by a tool with an incompatible inner-stream implementation and opened with an unpatched build), keetui shows a `[corrupted?]` indicator in the status bar and **forces read-only mode** so the corrupted values can never be written back to disk. Headless `-import` / `-merge` / `--upgrade-kdbx4` operations refuse to run in that state. If you see this indicator: do not save the file with any tool that displays garbled passwords — open it with a compatible tool (e.g. KeePassXC or an up-to-date keetui) instead.
 
 ## Clipboard
 

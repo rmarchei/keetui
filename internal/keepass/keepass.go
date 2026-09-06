@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tobischo/gokeepasslib/v3"
 	w "github.com/tobischo/gokeepasslib/v3/wrappers"
@@ -23,6 +24,72 @@ type DB struct {
 	BackupOnSave bool   // when true, create a .bak copy before saving
 	keyFilePath  string // key file used to open the database, if any
 	unlocked     bool
+	// suspectCorruption is set when decoded protected values look like
+	// binary garbage, i.e. the inner stream cipher was misaligned while
+	// decoding (e.g. a format feature the KeePass library does not handle).
+	suspectCorruption bool
+}
+
+// SuspectCorruption reports whether the database's protected values looked
+// corrupted after unlocking. Callers should treat the database as read-only
+// in that case: displayed/copied secrets are likely wrong, and saving would
+// persist the garbage.
+func (d *DB) SuspectCorruption() bool {
+	return d.suspectCorruption
+}
+
+// corruptionThreshold is the number of non-empty protected values with
+// invalid UTF-8 required before a database is flagged as suspect. KeePass
+// tools treat protected values as text, so several binary-looking values
+// indicate a misaligned stream cipher rather than genuine data.
+const corruptionThreshold = 2
+
+// detectCorruptedProtectedValues scans all protected values (including
+// history entries) of an unlocked database and reports whether at least
+// corruptionThreshold non-empty values are not valid UTF-8.
+func detectCorruptedProtectedValues(db *gokeepasslib.Database) bool {
+	if db.Content == nil || db.Content.Root == nil {
+		return false
+	}
+
+	count := 0
+
+	var scanEntries func(entries []gokeepasslib.Entry) bool
+	scanEntries = func(entries []gokeepasslib.Entry) bool {
+		for i := range entries {
+			e := &entries[i]
+			for j := range e.Values {
+				v := &e.Values[j]
+				if v.Value.Protected.Bool && v.Value.Content != "" && !utf8.ValidString(v.Value.Content) {
+					count++
+					if count >= corruptionThreshold {
+						return true
+					}
+				}
+			}
+			for k := range e.Histories {
+				if scanEntries(e.Histories[k].Entries) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	var scanGroups func(groups []gokeepasslib.Group) bool
+	scanGroups = func(groups []gokeepasslib.Group) bool {
+		for i := range groups {
+			if scanEntries(groups[i].Entries) {
+				return true
+			}
+			if scanGroups(groups[i].Groups) {
+				return true
+			}
+		}
+		return false
+	}
+
+	return scanGroups(db.Content.Root.Groups)
 }
 
 // CustomField represents an extra key-value pair stored on an entry.
@@ -205,10 +272,11 @@ func CreateWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 	}
 
 	return &DB{
-		Path:        path,
-		Database:    db,
-		keyFilePath: keyFilePath,
-		unlocked:    true,
+		Path:              path,
+		Database:          db,
+		keyFilePath:       keyFilePath,
+		unlocked:          true,
+		suspectCorruption: detectCorruptedProtectedValues(db),
 	}, nil
 }
 
@@ -237,9 +305,10 @@ func Open(path, password string) (*DB, error) {
 	}
 
 	return &DB{
-		Path:     path,
-		Database: db,
-		unlocked: true,
+		Path:              path,
+		Database:          db,
+		unlocked:          true,
+		suspectCorruption: detectCorruptedProtectedValues(db),
 	}, nil
 }
 
@@ -271,10 +340,11 @@ func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 	}
 
 	return &DB{
-		Path:        path,
-		Database:    db,
-		keyFilePath: keyFilePath,
-		unlocked:    true,
+		Path:              path,
+		Database:          db,
+		keyFilePath:       keyFilePath,
+		unlocked:          true,
+		suspectCorruption: detectCorruptedProtectedValues(db),
 	}, nil
 }
 
@@ -483,7 +553,7 @@ func (d *DB) ConvertToKDBX4() error {
 
 	// Switch to KDBX 4: replaces header (Argon2, ChaCha20) and
 	// creates InnerHeader with ChaCha20 random stream key.
-	gokeepasslib.WithDatabaseKDBXVersion4()(d.Database)
+	gokeepasslib.WithDatabaseKDBXVersion40()(d.Database)
 
 	// Re-add binaries — AddBinary now routes to InnerHeader for KDBX 4 and
 	// assigns fresh sequential IDs (deduplicating identical contents).

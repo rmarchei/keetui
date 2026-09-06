@@ -432,7 +432,7 @@ func (m *DetailModel) syncViewportSize() {
 }
 
 func (m DetailModel) headerView() string {
-	title := m.entry.Title
+	title := sanitizeDisplay(m.entry.Title)
 	if title == "" {
 		title = "(untitled)"
 	}
@@ -441,7 +441,7 @@ func (m DetailModel) headerView() string {
 
 func (m DetailModel) footerView() string {
 	if m.showQR {
-		return helpStyle.Render(fmt.Sprintf("  QR: %s  esc: close  %s: close", m.qrLabel, m.keys.ShowQR))
+		return helpStyle.Render(fmt.Sprintf("  QR: %s  esc: close  %s: close", sanitizeDisplay(m.qrLabel), m.keys.ShowQR))
 	}
 	if m.addingAttachment {
 		return helpStyle.Render("  enter: add file  esc: cancel")
@@ -455,7 +455,7 @@ func (m DetailModel) footerView() string {
 	fields := m.selectableFields()
 	if m.selectedField < len(fields) {
 		f := fields[m.selectedField]
-		fieldPrefix = fmt.Sprintf("  [%s]", f.label)
+		fieldPrefix = fmt.Sprintf("  [%s]", sanitizeDisplay(f.label))
 	}
 
 	var help string
@@ -521,11 +521,11 @@ func (m DetailModel) buildContent() string {
 	fmt.Fprintf(&b, "%s%s %s\n",
 		cursor(),
 		labelStyle.Render("Username:"),
-		valueStyle.Render(m.entry.UserName))
+		valueStyle.Render(sanitizeDisplay(m.entry.UserName)))
 
 	pw := maskedValue
 	if m.revealedFields["builtin:password"] {
-		pw = m.entry.Password
+		pw = sanitizeDisplay(m.entry.Password)
 	}
 	if m.cfg.ShowPasswordStrength {
 		strengthStr := renderStrength(m.strength)
@@ -544,14 +544,14 @@ func (m DetailModel) buildContent() string {
 	fmt.Fprintf(&b, "%s%s %s\n",
 		cursor(),
 		labelStyle.Render("URL:"),
-		valueStyle.Render(m.entry.URL))
+		valueStyle.Render(sanitizeDisplay(m.entry.URL)))
 
 	if m.entry.TOTP != "" {
 		if m.revealedFields["builtin:totp"] {
 			fmt.Fprintf(&b, "%s%s %s\n",
 				cursor(),
 				labelStyle.Render("TOTP:"),
-				valueStyle.Render(m.entry.TOTP))
+				valueStyle.Render(sanitizeDisplay(m.entry.TOTP)))
 		} else if m.totpCode != "" {
 			bar := totpCountdownBar(m.totpRemain, int(m.entry.TOTPPeriod()))
 			fmt.Fprintf(&b, "%s%s %s  %s\n",
@@ -572,7 +572,7 @@ func (m DetailModel) buildContent() string {
 		fmt.Fprintf(&b, "%s%s\n",
 			cursor(),
 			labelStyle.Render("Notes:"))
-		noteLines := strings.Split(m.entry.Notes, "\n")
+		noteLines := sanitizeNoteLines(m.entry.Notes)
 		show := noteLines
 		if len(noteLines) > maxNoteLines && !m.notesExpanded {
 			show = noteLines[:maxNoteLines]
@@ -611,11 +611,11 @@ func (m DetailModel) buildContent() string {
 	}
 
 	for _, cf := range m.entry.CustomFields {
-		val := cf.Value
+		val := sanitizeDisplay(cf.Value)
 		if cf.Protected && !m.revealedFields["custom:"+cf.Key] {
 			val = maskedValue
 		}
-		label := truncateLabel(cf.Key + ":")
+		label := truncateLabel(sanitizeDisplay(cf.Key) + ":")
 		fmt.Fprintf(&b, "%s%s %s\n",
 			cursor(),
 			labelStyle.Render(label),
@@ -638,7 +638,7 @@ func (m DetailModel) buildContent() string {
 			}
 			fmt.Fprintf(&b, "  %s%s (%s)\n",
 				cursor,
-				nameStyle.Render(a.Name),
+				nameStyle.Render(sanitizeDisplay(a.Name)),
 				hiddenStyle.Render(formatAttachmentSize(a.Size)))
 		}
 	}

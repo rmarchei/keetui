@@ -1060,6 +1060,9 @@ func (m AppModel) statusBar() string {
 	if m.readOnly {
 		parts = append(parts, statusBarModifiedStyle.Render("[read-only]"))
 	}
+	if m.db != nil && m.db.SuspectCorruption() {
+		parts = append(parts, errorMsgStyle.Render("[corrupted?]"))
+	}
 	if m.dirty {
 		parts = append(parts, statusBarModifiedStyle.Render("[modified]"))
 	}
@@ -1068,9 +1071,9 @@ func (m AppModel) statusBar() string {
 	}
 	if m.statusText != "" {
 		if m.statusError {
-			parts = append(parts, errorMsgStyle.Render(m.statusText))
+			parts = append(parts, errorMsgStyle.Render(sanitizeDisplay(m.statusText)))
 		} else {
-			parts = append(parts, successStyle.Render(m.statusText))
+			parts = append(parts, successStyle.Render(sanitizeDisplay(m.statusText)))
 		}
 	}
 	content := strings.Join(parts, "  ")
@@ -1155,6 +1158,12 @@ func (m AppModel) handleDatabaseOpenResult(msg databaseOpenResultMsg) (tea.Model
 	db := msg.db
 	db.BackupOnSave = m.cfg.BackupEnabled()
 	m.db = db
+	if db.SuspectCorruption() {
+		// Decoded protected values look like binary garbage (stream cipher
+		// misalignment, e.g. an incompatible writer). Force read-only so the
+		// corrupted values can never be written back to disk.
+		m.readOnly = true
+	}
 	m.unlock.input.SetValue("")
 	m.unlock.input.Reset()
 	m.browser = NewBrowserModel(db, m.cfg.Keys())
@@ -1166,6 +1175,10 @@ func (m AppModel) handleDatabaseOpenResult(msg databaseOpenResultMsg) (tea.Model
 	m.refreshEntryCount()
 	m.undoStack.clear()
 	autoLockCmd := m.scheduleAutoLock()
+	if m.db.SuspectCorruption() {
+		return m, tea.Batch(autoLockCmd,
+			statusCmd("Protected values look corrupted (incompatible writer?) - forced read-only, see README", true))
+	}
 	return m, autoLockCmd
 }
 

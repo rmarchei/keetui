@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -9,11 +10,23 @@ import (
 	"github.com/rmarchei/keetui/internal/config"
 )
 
-func TestSettingsSavePreservesKeyBindings(t *testing.T) {
-	// Isolate the config path so the test cannot touch the real config.
+func isolateSettingsConfig(t *testing.T) {
+	t.Helper()
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
-	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	// An existing XDG config prevents the legacy macOS fallback from selecting
+	// the user's real config, without changing their HOME environment variable.
+	dir := filepath.Join(tmp, "keetui")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSettingsSavePreservesKeyBindings(t *testing.T) {
+	isolateSettingsConfig(t)
 
 	cfg := config.Default()
 	kb := config.KeyBindings{Delete: "#"}
@@ -105,6 +118,7 @@ func TestSettingsInitialValues(t *testing.T) {
 }
 
 func TestSettingsValidationClipboard(t *testing.T) {
+	isolateSettingsConfig(t)
 	tests := []struct {
 		name    string
 		value   string
@@ -141,6 +155,7 @@ func TestSettingsValidationClipboard(t *testing.T) {
 }
 
 func TestSettingsValidationAutoLock(t *testing.T) {
+	isolateSettingsConfig(t)
 	tests := []struct {
 		name    string
 		value   string
@@ -176,6 +191,7 @@ func TestSettingsValidationAutoLock(t *testing.T) {
 }
 
 func TestSettingsValidationPasswordLength(t *testing.T) {
+	isolateSettingsConfig(t)
 	tests := []struct {
 		name    string
 		value   string
@@ -238,6 +254,7 @@ func TestSettingsValidationBoolFields(t *testing.T) {
 }
 
 func TestSettingsValidationTheme(t *testing.T) {
+	isolateSettingsConfig(t)
 	tests := []struct {
 		name    string
 		value   string

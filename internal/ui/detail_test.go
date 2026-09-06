@@ -97,6 +97,38 @@ func TestDetailCopyCommands(t *testing.T) {
 	}
 }
 
+func TestDetailRevealKeepsLayoutAndRawClipboardValue(t *testing.T) {
+	entry := testEntry()
+	entry.UserName = ""
+	entry.Password = "p\r\n\x1b[2J\x85\xff"
+	m := NewDetailModel(entry, config.Default())
+	m.SetSize(80, 24)
+	m.selectedField = 1
+	wantLines := strings.Count(m.buildContent(), "\n")
+	for i := range 4 {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+		m = updated.(DetailModel)
+		content := m.buildContent()
+		if got := strings.Count(content, "\n"); got != wantLines {
+			t.Fatalf("toggle %d: got %d content lines, want %d", i, got, wantLines)
+		}
+		if strings.Contains(content, entry.Password) || strings.Contains(content, "\x1b[2J") {
+			t.Fatal("raw password control bytes reached the rendered content")
+		}
+		if i%2 == 0 && !strings.Contains(content, sanitizeDisplay(entry.Password)) {
+			t.Error("revealed password should contain display-safe placeholders")
+		}
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd == nil {
+			t.Fatal("enter on password should produce a copy command even with an empty username")
+		}
+		msg, ok := cmd().(CopyToClipboardMsg)
+		if !ok || msg.Value != entry.Password {
+			t.Fatal("display sanitization must not change the clipboard value")
+		}
+	}
+}
+
 func TestDetailEditMsg(t *testing.T) {
 	entry := testEntry()
 	m := NewDetailModel(entry, config.Default())

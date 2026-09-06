@@ -176,6 +176,14 @@ func main() {
 		db := openDBForBatch(dbPath, *keyFile)
 		db.BackupOnSave = cfg.BackupEnabled()
 
+		// Refuse to modify a database whose protected values decoded as
+		// garbage (stream cipher misalignment, e.g. an incompatible writer):
+		// saving would persist the corruption.
+		if db.SuspectCorruption() && (*importCSV != "" || *importXML != "" || (*mergeDB != "" && !*dryRun) || *upgradeKDBX4) {
+			fmt.Fprintln(os.Stderr, "Error: protected values in this database look corrupted (incompatible writer?); refusing to modify it. See README.")
+			os.Exit(1)
+		}
+
 		if *exportCSV != "" {
 			if err := db.ExportCSVFile(*exportCSV); err != nil {
 				fmt.Fprintf(os.Stderr, "Error exporting CSV: %v\n", err)
@@ -220,6 +228,10 @@ func main() {
 
 		if *mergeDB != "" {
 			other := openDBForBatch(*mergeDB, *mergeKeyFile)
+			if other.SuspectCorruption() && !*dryRun {
+				fmt.Fprintln(os.Stderr, "Error: protected values in the merge source look corrupted (incompatible writer?); refusing to merge from it. See README.")
+				os.Exit(1)
+			}
 			if *dryRun {
 				result, err := db.MergePreview(other)
 				if err != nil {

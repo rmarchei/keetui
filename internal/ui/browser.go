@@ -321,7 +321,7 @@ func (m BrowserModel) inRecycleBin() bool {
 func (m BrowserModel) breadcrumb() string {
 	var parts []string
 	for _, f := range m.stack {
-		parts = append(parts, f.group.Name)
+		parts = append(parts, sanitizeDisplay(f.group.Name))
 	}
 	return strings.Join(parts, " > ")
 }
@@ -996,12 +996,12 @@ func (m BrowserModel) View() string {
 				} else if item.entry.IsFavorite() {
 					icon = warnStyle.Render("[*] ")
 				}
-				name := item.name()
+				name := sanitizeDisplay(item.name())
 				if name == "" {
 					name = "(untitled)"
 				}
 				if item.groupPath != "" {
-					suffix := hiddenStyle.Render(fmt.Sprintf("  (%s)", item.groupPath))
+					suffix := hiddenStyle.Render(fmt.Sprintf("  (%s)", sanitizeDisplay(item.groupPath)))
 					if i == m.cursor {
 						line = fmt.Sprintf("%s%s%s%s", cursor, icon, selectedItemStyle.Render(name), suffix)
 					} else {
