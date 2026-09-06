@@ -3,8 +3,8 @@ package ui
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/tobischo/gokeepasslib/v3"
 )
 
@@ -25,12 +25,12 @@ type SaveGroupMsg struct {
 }
 
 func NewGroupInputModel(parentUUID gokeepasslib.UUID, currentName string) GroupInputModel {
-	ti := textinput.New()
+	ti := newTextInput()
 	ti.Placeholder = "Group name"
 	ti.Focus()
-	ti.Width = 40
+	ti.SetWidth(40)
 	ti.Prompt = "  Name: "
-	ti.PromptStyle = labelStyle
+	setInputPromptStyle(&ti, labelStyle)
 	if currentName != "" {
 		ti.SetValue(currentName)
 	}
@@ -52,13 +52,13 @@ func (m GroupInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC:
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
-		case tea.KeyEsc:
+		case "esc":
 			return m, func() tea.Msg { return CancelEditMsg{} }
-		case tea.KeyEnter:
+		case "enter":
 			name := m.input.Value()
 			if name == "" {
 				return m, nil
@@ -78,7 +78,7 @@ func (m GroupInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m GroupInputModel) View() string {
+func (m GroupInputModel) View() tea.View {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -93,5 +93,5 @@ func (m GroupInputModel) View() string {
 	b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.NewView(b.String())
 }

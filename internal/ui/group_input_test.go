@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/tobischo/gokeepasslib/v3"
 )
 
@@ -14,7 +14,7 @@ func TestGroupInputNew(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	m.input.SetValue("My Group")
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("enter with name should produce a command")
 	}
@@ -41,7 +41,7 @@ func TestGroupInputRename(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	m.input.SetValue("New Name")
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("enter with name should produce a command")
 	}
@@ -62,7 +62,7 @@ func TestGroupInputRejectsEmpty(t *testing.T) {
 	m := NewGroupInputModel(gokeepasslib.UUID{}, "")
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Error("enter with empty name should not produce a command")
 	}
@@ -72,7 +72,7 @@ func TestGroupInputCancel(t *testing.T) {
 	m := NewGroupInputModel(gokeepasslib.UUID{}, "")
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc should produce a command")
 	}
@@ -86,7 +86,7 @@ func TestGroupInputViewNew(t *testing.T) {
 	m := NewGroupInputModel(gokeepasslib.UUID{}, "")
 	m.width, m.height = 80, 24
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "New Group") {
 		t.Error("View() should contain 'New Group' for new group")
 	}
@@ -97,7 +97,7 @@ func TestGroupInputViewRename(t *testing.T) {
 	m.renaming = true
 	m.width, m.height = 80, 24
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "Rename Group") {
 		t.Error("View() should contain 'Rename Group' for rename")
 	}

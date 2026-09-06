@@ -114,8 +114,9 @@ func (c Config) PasswordCharset() string {
 }
 
 // ConfirmOnQuit returns whether the user should always be prompted before quitting.
+// Confirmation is enabled unless explicitly disabled.
 func (c Config) ConfirmOnQuit() bool {
-	return c.ConfirmQuit != nil && *c.ConfirmQuit
+	return c.ConfirmQuit == nil || *c.ConfirmQuit
 }
 
 // BackupEnabled returns whether a .bak copy should be created before saving.

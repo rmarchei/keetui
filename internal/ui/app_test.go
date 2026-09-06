@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
@@ -263,25 +263,77 @@ func TestAppDirtyFlagOnDuplicate(t *testing.T) {
 	}
 }
 
-func TestAppQuitWithoutDirty(t *testing.T) {
+func TestAppQuitWithoutDirtyWhenConfirmationDisabled(t *testing.T) {
 	m := createTestApp(t)
+	disabled := false
+	m.cfg.ConfirmQuit = &disabled
 
 	_, cmd := m.Update(RequestQuitMsg{})
 	if cmd == nil {
 		t.Fatal("RequestQuitMsg should produce a command")
 	}
-	// Should quit directly since not dirty
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("should quit directly when clean and confirmation is disabled")
+	}
 }
 
 func TestAppQuitWithDirty(t *testing.T) {
 	m := createTestApp(t)
 	m.dirty = true
+	disabled := false
+	m.cfg.ConfirmQuit = &disabled
 
 	updated, _ := m.Update(RequestQuitMsg{})
 	m = updated.(AppModel)
 
 	if m.state != viewConfirm {
 		t.Errorf("state = %d, want %d (viewConfirm) when dirty", m.state, viewConfirm)
+	}
+	if !strings.Contains(m.confirm.message, "unsaved changes") {
+		t.Error("disabling quit confirmation must not disable the unsaved-changes warning")
+	}
+}
+
+func TestAppQuitKeyConfirmsByDefault(t *testing.T) {
+	for _, response := range []string{"n", "esc", "enter", "y"} {
+		t.Run(response, func(t *testing.T) {
+			m := createTestApp(t)
+			m.browser.cursor = 1
+			updated, cmd := m.Update(textKey("q"))
+			m = updated.(AppModel)
+			if cmd == nil {
+				t.Fatal("q should request quitting")
+			}
+			updated, cmd = m.Update(cmd())
+			m = updated.(AppModel)
+			if m.state != viewConfirm || cmd != nil || m.confirm.selected {
+				t.Fatal("q should show confirmation with No selected, without quitting")
+			}
+			key := textKey(response)
+			switch response {
+			case "esc":
+				key = tea.KeyPressMsg{Code: tea.KeyEsc}
+			case "enter":
+				key = tea.KeyPressMsg{Code: tea.KeyEnter}
+			}
+			updated, cmd = m.Update(key)
+			m = updated.(AppModel)
+			if cmd == nil {
+				t.Fatal("confirmation response should produce an action")
+			}
+			updated, cmd = m.Update(cmd())
+			m = updated.(AppModel)
+			if response == "y" {
+				if cmd == nil {
+					t.Fatal("confirming should quit")
+				}
+				if _, ok := cmd().(tea.QuitMsg); !ok {
+					t.Fatal("confirmation did not produce the quit command")
+				}
+			} else if m.state != viewBrowser || m.browser.cursor != 1 || cmd != nil {
+				t.Fatal("canceling should restore the browser and its selection")
+			}
+		})
 	}
 }
 
@@ -485,7 +537,7 @@ func TestAppViewDelegation(t *testing.T) {
 	m := createTestApp(t)
 
 	// Ensure the app delegates key messages to the active browser view
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: string('j')})
 	m = updated.(AppModel)
 
 	if m.browser.cursor != 1 {
@@ -608,7 +660,7 @@ func TestExtractAttachmentOverwriteConfirmation(t *testing.T) {
 
 func TestConfirmCtrlCRequestsQuit(t *testing.T) {
 	c := NewConfirmModel("Delete?", nil)
-	_, cmd := c.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := c.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("ctrl+c should produce a command")
 	}
@@ -757,7 +809,7 @@ func TestStatusBarNotOnUnlock(t *testing.T) {
 	m.width = 80
 	m.height = 24
 
-	view := m.View()
+	view := m.View().Content
 	if strings.Contains(view, "entries") {
 		t.Error("unlock view should not contain status bar")
 	}
@@ -767,7 +819,7 @@ func TestStatusBarOnBrowser(t *testing.T) {
 	m := createTestApp(t)
 	m.refreshEntryCount()
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "test.kdbx") {
 		t.Error("browser view should contain status bar with filename")
 	}

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/rmarchei/keetui/internal/config"
 )
@@ -12,7 +12,7 @@ import (
 func TestHelpClose(t *testing.T) {
 	m := NewHelpModel(config.DefaultKeyBindings(), 80, 24)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc should produce a command")
 	}
@@ -25,7 +25,7 @@ func TestHelpClose(t *testing.T) {
 func TestHelpCloseQuestion(t *testing.T) {
 	m := NewHelpModel(config.DefaultKeyBindings(), 80, 24)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: '?', Text: string('?')})
 	if cmd == nil {
 		t.Fatal("? should produce a command")
 	}
@@ -38,7 +38,7 @@ func TestHelpCloseQuestion(t *testing.T) {
 func TestHelpQuit(t *testing.T) {
 	m := NewHelpModel(config.DefaultKeyBindings(), 80, 24)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: string('q')})
 	if cmd == nil {
 		t.Fatal("q should produce a command")
 	}
@@ -51,7 +51,7 @@ func TestHelpQuit(t *testing.T) {
 func TestHelpView(t *testing.T) {
 	m := NewHelpModel(config.DefaultKeyBindings(), 80, 24)
 
-	view := m.View()
+	view := m.View().Content
 	if view == "" {
 		t.Error("View() should return non-empty string")
 	}

@@ -232,7 +232,7 @@ Settings are stored in `~/.config/keetui/config.json`:
   "password_symbols": true,
   "default_preset": "Strong",
   "theme": "dark",
-  "confirm_quit": false,
+  "confirm_quit": true,
   "backup_on_save": false
 }
 ```
@@ -249,8 +249,14 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `password_symbols` | true | Include symbols (!@#$%^&*()-_=+) in generated passwords |
 | `default_preset` | `"Strong"` | Default password preset: `PIN`, `Alphanumeric`, `Strong`, `Passphrase`, `Custom` |
 | `theme` | `"dark"` | Color theme: `dark`, `light`, or `high-contrast` |
-| `confirm_quit` | false | Always confirm before quitting (even without unsaved changes) |
+| `confirm_quit` | true | Confirm before quitting, even without unsaved changes (`false`: disable) |
 | `backup_on_save` | false | Create a `.kdbx.bak` backup copy before each save |
+
+Pressing `q` opens a confirmation with **No** selected. Press `y` to quit,
+or `n`/`Esc` to return. To disable it, press `c` in the browser and set
+**Confirm on quit** to `0`, or set `"confirm_quit": false` in the config.
+Existing explicit `false` settings remain respected; unsaved changes always
+require confirmation regardless of this setting.
 
 Use `keetui -config` to view current settings as JSON (including all keybindings). The output is valid JSON that can be used as a config file:
 

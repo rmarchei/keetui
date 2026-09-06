@@ -6,9 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/rmarchei/keetui/internal/config"
 )
@@ -82,10 +82,10 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 	var inputs [settingCount]textinput.Model
 	promptStyle := lipgloss.NewStyle().Foreground(secondaryColor).Bold(true)
 	for i := range inputs {
-		t := textinput.New()
+		t := newTextInput()
 		t.Prompt = fmt.Sprintf("  %-24s", settingLabels[i]+":")
-		t.PromptStyle = promptStyle
-		t.Width = 10
+		setInputPromptStyle(&t, promptStyle)
+		t.SetWidth(10)
 		t.CharLimit = 5
 		inputs[i] = t
 	}
@@ -147,7 +147,7 @@ func (m SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
@@ -311,7 +311,7 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg { return ConfigSavedMsg{Cfg: newCfg} }
 }
 
-func (m SettingsModel) View() string {
+func (m SettingsModel) View() tea.View {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -343,5 +343,5 @@ func (m SettingsModel) View() string {
 	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  enter/ctrl+s: save  esc: back"))
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.NewView(b.String())
 }

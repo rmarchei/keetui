@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/boombuler/barcode/qr"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"github.com/tobischo/gokeepasslib/v3"
@@ -215,10 +215,10 @@ type CopyToClipboardMsg struct {
 }
 
 func NewDetailModel(entry keepass.Entry, cfg config.Config) DetailModel {
-	pi := textinput.New()
+	pi := newTextInput()
 	pi.Prompt = "  File path: "
-	pi.PromptStyle = labelStyle
-	pi.Width = 50
+	setInputPromptStyle(&pi, labelStyle)
+	pi.SetWidth(50)
 	pi.Placeholder = "/path/to/file"
 
 	m := DetailModel{
@@ -343,10 +343,10 @@ func (m *DetailModel) refreshContentAndFollow() {
 	}
 	m.viewport.SetContent(m.buildContent())
 	line := m.lineForField(m.selectedField)
-	vpHeight := m.viewport.Height
-	if line < m.viewport.YOffset {
+	vpHeight := m.viewport.Height()
+	if line < m.viewport.YOffset() {
 		m.viewport.SetYOffset(line)
-	} else if line >= m.viewport.YOffset+vpHeight {
+	} else if line >= m.viewport.YOffset()+vpHeight {
 		m.viewport.SetYOffset(line - vpHeight + 1)
 	}
 }
@@ -422,12 +422,13 @@ func (m *DetailModel) syncViewportSize() {
 	// We need total lines = m.height
 	vpHeight := max(m.height-headerNewlines-footerNewlines-1, 1)
 	if !m.ready {
-		m.viewport = viewport.New(m.width, vpHeight)
+		m.viewport = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpHeight))
+		m.viewport.FillHeight = true
 		m.viewport.SetContent(m.buildContent())
 		m.ready = true
 	} else {
-		m.viewport.Width = m.width
-		m.viewport.Height = vpHeight
+		m.viewport.SetWidth(m.width)
+		m.viewport.SetHeight(vpHeight)
 	}
 }
 
@@ -671,13 +672,13 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickTOTP(m.totpSeq)
 
 	case tea.MouseMsg:
-		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && !m.showQR && !m.attachMode && !m.addingAttachment {
+		if click, ok := msg.(tea.MouseClickMsg); ok && click.Button == tea.MouseLeft && !m.showQR && !m.attachMode && !m.addingAttachment {
 			// Map click Y to selectable field index.
 			// The viewport content starts at the row after the header's last
 			// visible line. strings.Count gives the number of newlines, which
 			// equals the Y offset where viewport content begins.
 			vpStartY := strings.Count(m.headerView(), "\n")
-			vpRow := msg.Y - vpStartY + m.viewport.YOffset
+			vpRow := click.Y - vpStartY + m.viewport.YOffset()
 			if idx, ok := m.fieldAtLine(vpRow); ok {
 				m.selectedField = idx
 				m.refreshContentAndFollow()
@@ -689,7 +690,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// File path input mode for adding attachments
 		if m.addingAttachment {
 			switch msg.String() {
@@ -854,7 +855,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.notesExpanded && m.selectedField < len(fields) && fields[m.selectedField].label == "Notes" {
 				notesStart := m.lineForField(m.selectedField)
 				notesEnd := notesStart + 1 + m.notesBodyLines()
-				if m.viewport.YOffset+m.viewport.Height < notesEnd {
+				if m.viewport.YOffset()+m.viewport.Height() < notesEnd {
 					m.viewport.ScrollDown(1)
 					return m, nil
 				}
@@ -870,7 +871,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// moving to the previous field.
 			if m.notesExpanded && m.selectedField < len(fields) && fields[m.selectedField].label == "Notes" {
 				notesStart := m.lineForField(m.selectedField)
-				if m.viewport.YOffset > notesStart {
+				if m.viewport.YOffset() > notesStart {
 					m.viewport.ScrollUp(1)
 					return m, nil
 				}
@@ -997,7 +998,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.qrLabel = f.label
 				if m.ready {
 					m.viewport.GotoTop()
-					m.viewport.SetContent(m.renderQR(val, m.width, m.viewport.Height))
+					m.viewport.SetContent(m.renderQR(val, m.width, m.viewport.Height()))
 				}
 			}
 			return m, nil
@@ -1023,17 +1024,26 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Paste results and cursor ticks must reach the active path input too.
+	if m.addingAttachment || m.extractingAttachment {
+		var cmd tea.Cmd
+		m.attachPathInput, cmd = m.attachPathInput.Update(msg)
+		if m.ready {
+			m.viewport.SetContent(m.buildContent())
+		}
+		return m, cmd
+	}
 	// Delegate remaining messages to viewport (pgup/pgdn, mouse, etc.)
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	return m, cmd
 }
 
-func (m DetailModel) View() string {
+func (m DetailModel) View() tea.View {
 	if !m.ready {
-		return ""
+		return tea.NewView("")
 	}
-	return m.headerView() + m.viewport.View() + "\n" + m.footerView()
+	return tea.NewView(m.headerView() + m.viewport.View() + "\n" + m.footerView())
 }
 
 // renderStrength returns a styled strength label.

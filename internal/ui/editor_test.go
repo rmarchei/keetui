@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -21,14 +21,14 @@ func TestEditorFieldNavigation(t *testing.T) {
 	}
 
 	// Tab moves to next field
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m = updated.(EditorModel)
 	if m.focused != 1 {
 		t.Errorf("focus after tab = %d, want 1", m.focused)
 	}
 
 	// Shift+tab moves back
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 	m = updated.(EditorModel)
 	if m.focused != 0 {
 		t.Errorf("focus after shift+tab = %d, want 0", m.focused)
@@ -45,7 +45,7 @@ func TestEditorSave(t *testing.T) {
 	m.inputs[fieldPassword].SetValue("mypass")
 
 	// Save
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("ctrl+s should produce a save command")
 	}
@@ -70,7 +70,7 @@ func TestEditorPasswordGenerationShowsPicker(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	m.inputs[fieldPassword].SetValue("existing")
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("ctrl+g should produce a command")
 	}
@@ -106,7 +106,7 @@ func TestEditorCustomFields(t *testing.T) {
 	}
 
 	// Add custom field
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	m = updated.(EditorModel)
 	if len(m.customInputs) != 1 {
 		t.Errorf("custom fields after ctrl+a = %d, want 1", len(m.customInputs))
@@ -116,21 +116,21 @@ func TestEditorCustomFields(t *testing.T) {
 	if m.customInputs[0].protected {
 		t.Error("new custom field should not be protected initially")
 	}
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	m = updated.(EditorModel)
 	if !m.customInputs[0].protected {
 		t.Error("custom field should be protected after ctrl+t")
 	}
 
 	// Toggle back
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	m = updated.(EditorModel)
 	if m.customInputs[0].protected {
 		t.Error("custom field should not be protected after second ctrl+t")
 	}
 
 	// Delete custom field (focus should be on the new field)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 	m = updated.(EditorModel)
 	if len(m.customInputs) != 0 {
 		t.Errorf("custom fields after ctrl+d = %d, want 0", len(m.customInputs))
@@ -141,7 +141,7 @@ func TestEditorCancel(t *testing.T) {
 	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc should produce a command")
 	}
@@ -197,7 +197,7 @@ func TestEditorSavePreservesTags(t *testing.T) {
 	m := NewEditorModel(&entry, gokeepasslib.UUID{}, config.Default())
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("ctrl+s should produce a save command")
 	}
@@ -222,7 +222,7 @@ func TestEditorExpiryRoundTripsInLocalTime(t *testing.T) {
 	displayed := m.inputs[fieldExpiry].Value()
 
 	// Saving without touching the field must keep the displayed date.
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("ctrl+s should produce a save command")
 	}
@@ -245,7 +245,7 @@ func TestEditorNotesArrowNavigation(t *testing.T) {
 
 	// Cursor starts on the last line; "up" must move within the textarea,
 	// not jump to another field.
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = updated.(EditorModel)
 	if m.focused != fieldNotes {
 		t.Fatalf("focus = %d, want fieldNotes (up must move the cursor inside notes)", m.focused)
@@ -255,9 +255,9 @@ func TestEditorNotesArrowNavigation(t *testing.T) {
 	}
 
 	// From the first line, "up" leaves the field.
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = updated.(EditorModel)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	m = updated.(EditorModel)
 	if m.focused == fieldNotes {
 		t.Error("up on the first notes line should move focus to the previous field")
@@ -271,7 +271,7 @@ func TestEditorPresetPickerRemasksPassword(t *testing.T) {
 	m.updateFocus()
 
 	// Typing auto-reveals the password field.
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'x', Text: string('x')})
 	m = updated.(EditorModel)
 	if m.inputs[fieldPassword].EchoMode != textinput.EchoNormal {
 		t.Fatal("typing should auto-reveal the password field")
@@ -279,7 +279,7 @@ func TestEditorPresetPickerRemasksPassword(t *testing.T) {
 
 	// Opening the preset picker before the 1s re-mask tick fires must not
 	// leave the password revealed.
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	m = updated.(EditorModel)
 	if m.inputs[fieldPassword].EchoMode != textinput.EchoPassword {
 		t.Error("password must be re-masked when leaving for the preset picker")
@@ -291,7 +291,7 @@ func TestEditorToggleProtectedOnFixedField(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	// Focus is on Title (a fixed field); ctrl+t should be a no-op
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	m = updated.(EditorModel)
 	// No crash, no custom fields created
 	if len(m.customInputs) != 0 {
@@ -304,7 +304,7 @@ func TestEditorToggleProtectedSetsEchoMode(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	// Add a custom field
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	m = updated.(EditorModel)
 
 	if m.customInputs[0].value.EchoMode != textinput.EchoNormal {
@@ -312,14 +312,14 @@ func TestEditorToggleProtectedSetsEchoMode(t *testing.T) {
 	}
 
 	// Toggle protected on
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	m = updated.(EditorModel)
 	if m.customInputs[0].value.EchoMode != textinput.EchoPassword {
 		t.Error("protected custom field value should have EchoPassword")
 	}
 
 	// Toggle protected off
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlT})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 't', Mod: tea.ModCtrl})
 	m = updated.(EditorModel)
 	if m.customInputs[0].value.EchoMode != textinput.EchoNormal {
 		t.Error("unprotected custom field value should have EchoNormal")
@@ -331,7 +331,7 @@ func TestEditorRejectsEmptyTitle(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	// Leave title empty, try to save
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	m = updated.(EditorModel)
 	if cmd != nil {
 		t.Error("save with empty title should not produce a command")
@@ -349,7 +349,7 @@ func TestEditorRejectsWhitespaceTitle(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	m.inputs[fieldTitle].SetValue("   ")
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	m = updated.(EditorModel)
 	if cmd != nil {
 		t.Error("save with whitespace title should not produce a command")
@@ -364,7 +364,7 @@ func TestEditorAcceptsNonEmptyTitle(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	m.inputs[fieldTitle].SetValue("Valid Title")
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("save with valid title should produce a command")
 	}
@@ -382,7 +382,7 @@ func TestEditorView(t *testing.T) {
 	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
 	m.width, m.height = 80, 24
 
-	view := m.View()
+	view := m.View().Content
 	if view == "" {
 		t.Error("View() should return non-empty string")
 	}

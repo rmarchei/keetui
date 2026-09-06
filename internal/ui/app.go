@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -213,7 +213,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// deferred instead of dropped so the timer stays armed.
 	if m.saving {
 		switch msg.(type) {
-		case tea.KeyMsg, tea.MouseMsg:
+		case tea.KeyPressMsg, tea.MouseMsg, tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
 			return m, nil
 		case autoLockMsg:
 			cmd := m.scheduleAutoLock()
@@ -221,10 +221,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Track user activity for auto-lock (any key press or mouse event)
+	// Track user activity for auto-lock (key presses, mouse events, and pastes).
 	if m.state != viewUnlock {
 		switch msg.(type) {
-		case tea.KeyMsg, tea.MouseMsg:
+		case tea.KeyPressMsg, tea.MouseMsg, tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
 			m.lastActivity = time.Now()
 			m.statusText = "" // clear transient status on interaction
 		}
@@ -238,7 +238,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle undo (ctrl+z) in non-text-input views
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.String() == "ctrl+z" {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "ctrl+z" {
 		if m.readOnly {
 			return m, statusCmd("Read-only mode", true)
 		}
@@ -705,7 +705,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Styles captured at construction time don't see ApplyTheme's
 		// global updates; re-pull them on the long-lived browser model.
-		m.browser.searchInput.PromptStyle = focusedStyle
+		setInputPromptStyle(&m.browser.searchInput, focusedStyle)
 		m.lastActivity = time.Now()
 		m.state = viewBrowser
 		autoLockCmd := m.scheduleAutoLock()
@@ -1013,37 +1013,44 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m AppModel) View() string {
+func (m AppModel) View() tea.View {
+	view := tea.NewView(m.viewContent())
+	view.AltScreen = true
+	view.MouseMode = tea.MouseModeCellMotion
+	return view
+}
+
+func (m AppModel) viewContent() string {
 	var view string
 	switch m.state {
 	case viewUnlock:
-		return m.unlock.View()
+		return m.unlock.View().Content
 	case viewBrowser:
-		view = m.browser.View()
+		view = m.browser.View().Content
 	case viewDetail:
-		view = m.detail.View()
+		view = m.detail.View().Content
 	case viewEditor:
-		view = m.editor.View()
+		view = m.editor.View().Content
 	case viewGroupInput:
-		view = m.groupInput.View()
+		view = m.groupInput.View().Content
 	case viewConfirm:
-		view = m.confirm.View()
+		view = m.confirm.View().Content
 	case viewPassword:
-		view = m.password.View()
+		view = m.password.View().Content
 	case viewStats:
-		view = m.stats.View()
+		view = m.stats.View().Content
 	case viewSettings:
-		view = m.settings.View()
+		view = m.settings.View().Content
 	case viewHistory:
-		view = m.history.View()
+		view = m.history.View().Content
 	case viewAudit:
-		view = m.audit.View()
+		view = m.audit.View().Content
 	case viewHelp:
-		view = m.help.View()
+		view = m.help.View().Content
 	case viewPathInput:
-		view = m.pathInput.View()
+		view = m.pathInput.View().Content
 	case viewPresetPicker:
-		view = m.presetPicker.View()
+		view = m.presetPicker.View().Content
 	}
 	return view + "\n" + m.statusBar()
 }

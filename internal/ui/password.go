@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 )
 
 // ChangePasswordMsg signals that the master password should be changed.
@@ -24,23 +24,23 @@ type PasswordModel struct {
 }
 
 func NewPasswordModel() PasswordModel {
-	ni := textinput.New()
+	ni := newTextInput()
 	ni.Placeholder = "New master password"
 	ni.EchoMode = textinput.EchoPassword
 	ni.EchoCharacter = '*'
 	ni.Prompt = "  New password:     "
-	ni.PromptStyle = labelStyle
-	ni.Width = 40
+	setInputPromptStyle(&ni, labelStyle)
+	ni.SetWidth(40)
 	ni.Focus()
-	ni.TextStyle = focusedStyle
+	setInputTextStyle(&ni, focusedStyle)
 
-	ci := textinput.New()
+	ci := newTextInput()
 	ci.Placeholder = "Confirm password"
 	ci.EchoMode = textinput.EchoPassword
 	ci.EchoCharacter = '*'
 	ci.Prompt = "  Confirm password: "
-	ci.PromptStyle = labelStyle
-	ci.Width = 40
+	setInputPromptStyle(&ci, labelStyle)
+	ci.SetWidth(40)
 
 	return PasswordModel{
 		newInput:     ni,
@@ -59,7 +59,7 @@ func (m PasswordModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
@@ -69,15 +69,15 @@ func (m PasswordModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focused == 0 {
 				m.focused = 1
 				m.newInput.Blur()
-				m.newInput.TextStyle = blurredStyle
+				setInputTextStyle(&m.newInput, blurredStyle)
 				m.confirmInput.Focus()
-				m.confirmInput.TextStyle = focusedStyle
+				setInputTextStyle(&m.confirmInput, focusedStyle)
 			} else {
 				m.focused = 0
 				m.confirmInput.Blur()
-				m.confirmInput.TextStyle = blurredStyle
+				setInputTextStyle(&m.confirmInput, blurredStyle)
 				m.newInput.Focus()
-				m.newInput.TextStyle = focusedStyle
+				setInputTextStyle(&m.newInput, focusedStyle)
 			}
 			return m, textinput.Blink
 		case "enter":
@@ -106,7 +106,7 @@ func (m PasswordModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m PasswordModel) View() string {
+func (m PasswordModel) View() tea.View {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -128,5 +128,5 @@ func (m PasswordModel) View() string {
 	b.WriteString(helpStyle.Render("  tab: switch field  enter: confirm  esc: cancel"))
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.NewView(b.String())
 }

@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -147,10 +147,10 @@ type StatusMsg struct {
 
 func NewBrowserModel(db *keepass.DB, keys ...config.KeyBindings) BrowserModel {
 	root := db.RootGroup()
-	si := textinput.New()
+	si := newTextInput()
 	si.Prompt = "  / "
-	si.PromptStyle = focusedStyle
-	si.Width = 40
+	setInputPromptStyle(&si, focusedStyle)
+	si.SetWidth(40)
 	si.Placeholder = "search..."
 
 	var kb config.KeyBindings
@@ -517,14 +517,15 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseMsg:
 		if !m.searching {
-			switch msg.Button {
-			case tea.MouseButtonLeft:
-				if msg.Action != tea.MouseActionPress {
+			mouse := msg.Mouse()
+			switch mouse.Button {
+			case tea.MouseLeft:
+				if _, click := msg.(tea.MouseClickMsg); !click {
 					break
 				}
 				// Calculate header lines: 1 newline + 1 title + 1 breadcrumb + 1 blank = 4
 				headerLines := 4
-				idx := msg.Y - headerLines + m.offset
+				idx := mouse.Y - headerLines + m.offset
 				if idx >= 0 && idx < len(m.items) {
 					if idx == m.cursor {
 						// Click on already-selected item: open it
@@ -545,14 +546,14 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.cursor = idx
 					}
 				}
-			case tea.MouseButtonWheelUp:
+			case tea.MouseWheelUp:
 				if m.cursor > 0 {
 					m.cursor--
 					if m.cursor < m.offset {
 						m.offset = m.cursor
 					}
 				}
-			case tea.MouseButtonWheelDown:
+			case tea.MouseWheelDown:
 				if m.cursor < len(m.items)-1 {
 					m.cursor++
 					vis := m.visibleHeight()
@@ -564,7 +565,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Search mode key handling
 		if m.searching {
 			switch msg.String() {
@@ -600,9 +601,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c":
 				return m, func() tea.Msg { return RequestQuitMsg{} }
 			default:
-				var cmd tea.Cmd
-				m.searchInput, cmd = m.searchInput.Update(msg)
-				m.applySearch()
+				cmd := m.updateSearchInput(msg)
 				return m, cmd
 			}
 		}
@@ -926,10 +925,26 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// Forward paste results and cursor ticks as well as key presses.
+	if m.searching {
+		cmd := m.updateSearchInput(msg)
+		return m, cmd
+	}
 	return m, nil
 }
 
-func (m BrowserModel) View() string {
+func (m *BrowserModel) updateSearchInput(msg tea.Msg) tea.Cmd {
+	previous := m.searchInput.Value()
+	var cmd tea.Cmd
+	m.searchInput, cmd = m.searchInput.Update(msg)
+	// Cursor blinking should not rescan the entire database.
+	if m.searchInput.Value() != previous {
+		m.applySearch()
+	}
+	return cmd
+}
+
+func (m BrowserModel) View() tea.View {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -1051,5 +1066,5 @@ func (m BrowserModel) View() string {
 	}
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.NewView(b.String())
 }

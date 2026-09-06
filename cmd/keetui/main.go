@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"golang.org/x/term"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -274,7 +274,7 @@ func main() {
 	}
 
 	app := ui.NewApp(dbPath, *keyFile, cfg, *readOnly)
-	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(app)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

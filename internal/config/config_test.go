@@ -264,8 +264,8 @@ func TestThemeCustom(t *testing.T) {
 
 func TestConfirmOnQuitDefault(t *testing.T) {
 	cfg := Default()
-	if cfg.ConfirmOnQuit() {
-		t.Error("ConfirmOnQuit() should be false by default")
+	if !cfg.ConfirmOnQuit() {
+		t.Error("ConfirmOnQuit() should be true by default")
 	}
 }
 
@@ -274,6 +274,29 @@ func TestConfirmOnQuitEnabled(t *testing.T) {
 	cfg := Config{ConfirmQuit: &tr}
 	if !cfg.ConfirmOnQuit() {
 		t.Error("ConfirmOnQuit() should be true when set")
+	}
+}
+
+func TestConfirmOnQuitJSON(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		json string
+		want bool
+	}{
+		{"omitted", `{}`, true},
+		{"null", `{"confirm_quit":null}`, true},
+		{"enabled", `{"confirm_quit":true}`, true},
+		{"disabled", `{"confirm_quit":false}`, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Default()
+			if err := json.Unmarshal([]byte(tt.json), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.ConfirmOnQuit(); got != tt.want {
+				t.Errorf("ConfirmOnQuit() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

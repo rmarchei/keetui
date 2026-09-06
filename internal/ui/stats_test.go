@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/rmarchei/keetui/internal/keepass"
 )
@@ -13,7 +13,7 @@ func TestStatsBack(t *testing.T) {
 	m := NewStatsModel(keepass.DBStats{})
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc should produce a command")
 	}
@@ -27,7 +27,7 @@ func TestStatsQuit(t *testing.T) {
 	m := NewStatsModel(keepass.DBStats{})
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: string('q')})
 	if cmd == nil {
 		t.Fatal("q should produce a command")
 	}
@@ -47,7 +47,7 @@ func TestStatsView(t *testing.T) {
 	m := NewStatsModel(stats)
 	m.width, m.height = 80, 24
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "Database Info") {
 		t.Error("View() should contain 'Database Info'")
 	}

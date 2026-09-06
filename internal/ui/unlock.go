@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 )
 
 // UnlockModel handles the password entry screen.
@@ -27,12 +27,12 @@ type DatabaseOpenedMsg struct {
 }
 
 func NewUnlockModel(filePath, keyFilePath string) UnlockModel {
-	ti := textinput.New()
+	ti := newTextInput()
 	ti.Placeholder = "Master password"
 	ti.EchoMode = textinput.EchoPassword
 	ti.EchoCharacter = '*'
 	ti.Focus()
-	ti.Width = 40
+	ti.SetWidth(40)
 
 	return UnlockModel{
 		filePath:    filePath,
@@ -52,19 +52,19 @@ func (m UnlockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Ignore input while unlocking (except quit): a second enter
 		// would start a duplicate key-derivation run.
 		if m.unlocking {
-			if msg.Type == tea.KeyCtrlC {
+			if msg.String() == "ctrl+c" {
 				return m, tea.Quit
 			}
 			return m, nil
 		}
-		switch msg.Type {
-		case tea.KeyCtrlC:
+		switch msg.String() {
+		case "ctrl+c":
 			return m, tea.Quit
-		case tea.KeyEnter:
+		case "enter":
 			// Keyfile-only databases have no password: allow an empty
 			// password when a key file was supplied.
 			if m.input.Value() == "" && m.keyFilePath == "" {
@@ -82,12 +82,15 @@ func (m UnlockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.unlocking {
+		return m, nil
+	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
 }
 
-func (m UnlockModel) View() string {
+func (m UnlockModel) View() tea.View {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -114,5 +117,5 @@ func (m UnlockModel) View() string {
 	b.WriteString(helpStyle.Render("  enter: unlock  ctrl+c: quit"))
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.NewView(b.String())
 }

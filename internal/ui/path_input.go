@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 )
 
 // SaveAsMsg requests saving the database to a new path.
@@ -36,12 +36,12 @@ type PathInputModel struct {
 
 // NewPathInputModel creates a path input pre-filled with the current path.
 func NewPathInputModel(currentPath, format string, canUpgrade bool) PathInputModel {
-	ti := textinput.New()
+	ti := newTextInput()
 	ti.Placeholder = "/path/to/database.kdbx"
 	ti.Focus()
-	ti.Width = 60
+	ti.SetWidth(60)
 	ti.Prompt = "  Path:    "
-	ti.PromptStyle = labelStyle
+	setInputPromptStyle(&ti, labelStyle)
 	ti.SetValue(currentPath)
 	ti.CursorEnd()
 
@@ -64,13 +64,13 @@ func (m PathInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC:
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
-		case tea.KeyEsc:
+		case "esc":
 			return m, func() tea.Msg { return CancelEditMsg{} }
-		case tea.KeyEnter:
+		case "enter":
 			path := strings.TrimSpace(m.input.Value())
 			if path == "" {
 				return m, nil
@@ -86,11 +86,11 @@ func (m PathInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg {
 				return SaveAsMsg{Path: path, Upgrade: upgrade}
 			}
-		case tea.KeyTab, tea.KeyDown:
+		case "tab", "down":
 			if m.canUpgrade {
 				return m.toggleFocus(), nil
 			}
-		case tea.KeyShiftTab, tea.KeyUp:
+		case "shift+tab", "up":
 			if m.canUpgrade {
 				return m.toggleFocus(), nil
 			}
@@ -99,7 +99,7 @@ func (m PathInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// When focused on format, left/right/space toggle the selection
 		if m.focused == focusFormat && m.canUpgrade {
 			switch msg.String() {
-			case "left", "right", " ", "h", "l":
+			case "left", "right", "space", "h", "l":
 				m.upgrade = !m.upgrade
 				return m, nil
 			}
@@ -127,7 +127,7 @@ func (m PathInputModel) toggleFocus() PathInputModel {
 	return m
 }
 
-func (m PathInputModel) View() string {
+func (m PathInputModel) View() tea.View {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -157,7 +157,7 @@ func (m PathInputModel) View() string {
 	b.WriteString(helpStyle.Render(help))
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.NewView(b.String())
 }
 
 // formatOption renders a format choice, highlighted when selected.

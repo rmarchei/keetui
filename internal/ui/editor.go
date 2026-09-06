@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -81,10 +81,10 @@ type CancelEditMsg struct{}
 func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg config.Config) EditorModel {
 	var inputs [fixedFieldCount]textinput.Model
 	for i := range inputs {
-		t := textinput.New()
+		t := newTextInput()
 		t.Prompt = fmt.Sprintf("  %s: ", fieldLabels[i])
-		t.PromptStyle = labelStyle
-		t.Width = 50
+		setInputPromptStyle(&t, labelStyle)
+		t.SetWidth(50)
 		inputs[i] = t
 	}
 
@@ -134,22 +134,22 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 	}
 
 	m.inputs[0].Focus()
-	m.inputs[0].TextStyle = focusedStyle
+	setInputTextStyle(&m.inputs[0], focusedStyle)
 
 	return m
 }
 
 func newCustomFieldInput(key, value string, protected bool) customFieldInput {
-	k := textinput.New()
+	k := newTextInput()
 	k.Prompt = "  Key: "
-	k.PromptStyle = labelStyle
-	k.Width = 20
+	setInputPromptStyle(&k, labelStyle)
+	k.SetWidth(20)
 	k.SetValue(key)
 
-	v := textinput.New()
+	v := newTextInput()
 	v.Prompt = "  Value: "
-	v.PromptStyle = labelStyle
-	v.Width = 40
+	setInputPromptStyle(&v, labelStyle)
+	v.SetWidth(40)
 	v.SetValue(value)
 	if protected {
 		v.EchoMode = textinput.EchoPassword
@@ -180,8 +180,8 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.MouseMsg:
-		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
 			// Header: 1 blank + 1 title + 1 blank = 3 lines
 			row := msg.Y - 3
 			// Notes field has a label line + textarea height, so fields after
@@ -206,7 +206,7 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// Clear stale errors on any keypress
 		m.err = nil
 
@@ -373,10 +373,10 @@ func (m *EditorModel) updateFocus() tea.Cmd {
 		}
 		if i == m.focused {
 			cmds = append(cmds, m.inputs[i].Focus())
-			m.inputs[i].TextStyle = focusedStyle
+			setInputTextStyle(&m.inputs[i], focusedStyle)
 		} else {
 			m.inputs[i].Blur()
-			m.inputs[i].TextStyle = blurredStyle
+			setInputTextStyle(&m.inputs[i], blurredStyle)
 		}
 	}
 	// Notes textarea focus
@@ -384,26 +384,26 @@ func (m *EditorModel) updateFocus() tea.Cmd {
 		m.notesInput.Focus()
 	} else {
 		m.notesInput.Blur()
-		m.notesInput.SetCursor(0)
+		m.notesInput.SetCursorColumn(0)
 	}
 	for ci := range m.customInputs {
 		keyIdx := fixedFieldCount + ci*2
 		valIdx := keyIdx + 1
 		if keyIdx == m.focused {
 			cmds = append(cmds, m.customInputs[ci].key.Focus())
-			m.customInputs[ci].key.TextStyle = focusedStyle
+			setInputTextStyle(&m.customInputs[ci].key, focusedStyle)
 			m.customInputs[ci].value.Blur()
-			m.customInputs[ci].value.TextStyle = blurredStyle
+			setInputTextStyle(&m.customInputs[ci].value, blurredStyle)
 		} else if valIdx == m.focused {
 			m.customInputs[ci].key.Blur()
-			m.customInputs[ci].key.TextStyle = blurredStyle
+			setInputTextStyle(&m.customInputs[ci].key, blurredStyle)
 			cmds = append(cmds, m.customInputs[ci].value.Focus())
-			m.customInputs[ci].value.TextStyle = focusedStyle
+			setInputTextStyle(&m.customInputs[ci].value, focusedStyle)
 		} else {
 			m.customInputs[ci].key.Blur()
-			m.customInputs[ci].key.TextStyle = blurredStyle
+			setInputTextStyle(&m.customInputs[ci].key, blurredStyle)
 			m.customInputs[ci].value.Blur()
-			m.customInputs[ci].value.TextStyle = blurredStyle
+			setInputTextStyle(&m.customInputs[ci].value, blurredStyle)
 		}
 	}
 	return tea.Batch(cmds...)
@@ -505,7 +505,7 @@ func (m *EditorModel) SetGeneratedPassword(pw string) tea.Cmd {
 	return m.scheduleAutoMask(fieldPassword, 2*time.Second)
 }
 
-func (m EditorModel) View() string {
+func (m EditorModel) View() tea.View {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -568,7 +568,7 @@ func (m EditorModel) View() string {
 	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+r: reveal  ctrl+g: gen password  ctrl+a: add field  ctrl+t: protect  ctrl+d: del field  ctrl+s: save  esc: cancel"))
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.NewView(b.String())
 }
 
 func generatePassword(length int, charset string) (string, error) {

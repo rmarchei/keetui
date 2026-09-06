@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/rmarchei/keetui/internal/config"
 )
@@ -31,7 +31,8 @@ func NewHelpModel(keys config.KeyBindings, width, height int) HelpModel {
 	}
 	footerHeight := 1
 	vpHeight := max(height-footerHeight, 1)
-	m.viewport = viewport.New(width, vpHeight)
+	m.viewport = viewport.New(viewport.WithWidth(width), viewport.WithHeight(vpHeight))
+	m.viewport.FillHeight = true
 	m.viewport.SetContent(m.buildContent())
 	m.ready = true
 	return m
@@ -130,11 +131,11 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		footerHeight := 1
 		vpHeight := max(m.height-footerHeight, 1)
-		m.viewport.Width = m.width
-		m.viewport.Height = vpHeight
+		m.viewport.SetWidth(m.width)
+		m.viewport.SetHeight(vpHeight)
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "esc", "?":
 			return m, func() tea.Msg { return BackToBrowserMsg{} }
@@ -150,10 +151,10 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m HelpModel) View() string {
+func (m HelpModel) View() tea.View {
 	if !m.ready {
-		return ""
+		return tea.NewView("")
 	}
 	footer := helpStyle.Render("  esc/?: close  j/k/up/down: scroll  q: quit")
-	return fmt.Sprintf("%s\n%s", m.viewport.View(), footer)
+	return tea.NewView(fmt.Sprintf("%s\n%s", m.viewport.View(), footer))
 }

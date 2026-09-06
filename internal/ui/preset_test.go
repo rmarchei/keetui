@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/rmarchei/keetui/internal/config"
 )
@@ -58,14 +58,14 @@ func TestPresetPickerNavigation(t *testing.T) {
 	initial := m.cursor
 
 	// Navigate down
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	updated, _ := m.Update(textKey("j"))
 	m = updated.(PresetPickerModel)
 	if m.cursor != initial+1 {
 		t.Errorf("after j: cursor=%d, want %d", m.cursor, initial+1)
 	}
 
 	// Navigate up
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	updated, _ = m.Update(textKey("k"))
 	m = updated.(PresetPickerModel)
 	if m.cursor != initial {
 		t.Errorf("after k: cursor=%d, want %d", m.cursor, initial)
@@ -78,7 +78,7 @@ func TestPresetPickerSelectPINPreview(t *testing.T) {
 	m.cursor = 0 // PIN
 
 	// Enter transitions to preview mode
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PresetPickerModel)
 	if m.mode != pickerModePreview {
 		t.Fatalf("expected preview mode, got %d", m.mode)
@@ -109,7 +109,7 @@ func TestPresetPickerSelectPassphrasePreview(t *testing.T) {
 		}
 	}
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PresetPickerModel)
 	if m.mode != pickerModePreview {
 		t.Fatalf("expected preview mode, got %d", m.mode)
@@ -126,13 +126,13 @@ func TestPresetPickerPreviewAccept(t *testing.T) {
 	m.cursor = 0 // PIN
 
 	// Enter → preview
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PresetPickerModel)
 
 	pw := m.generatedPassword
 
 	// Enter again → accept
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected command from Enter in preview")
 	}
@@ -152,7 +152,7 @@ func TestPresetPickerPreviewRefresh(t *testing.T) {
 	m.cursor = 0 // PIN
 
 	// Enter → preview
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PresetPickerModel)
 	firstPW := m.generatedPassword
 
@@ -160,7 +160,7 @@ func TestPresetPickerPreviewRefresh(t *testing.T) {
 	// Try multiple times to avoid flaky test
 	changed := false
 	for range 10 {
-		updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+		updated, _ = m.Update(textKey("r"))
 		m = updated.(PresetPickerModel)
 		if m.generatedPassword != firstPW {
 			changed = true
@@ -181,21 +181,21 @@ func TestPresetPickerPreviewToggleVisibility(t *testing.T) {
 	m.cursor = 0
 
 	// Enter → preview (visible by default)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PresetPickerModel)
 	if !m.passwordVisible {
 		t.Fatal("password should be visible initially")
 	}
 
 	// Press 'p' to hide
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	updated, _ = m.Update(textKey("p"))
 	m = updated.(PresetPickerModel)
 	if m.passwordVisible {
 		t.Error("password should be hidden after p")
 	}
 
 	// Press 'p' again to show
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	updated, _ = m.Update(textKey("p"))
 	m = updated.(PresetPickerModel)
 	if !m.passwordVisible {
 		t.Error("password should be visible after second p")
@@ -208,11 +208,11 @@ func TestPresetPickerPreviewEscBackToList(t *testing.T) {
 	m.cursor = 0
 
 	// Enter → preview
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PresetPickerModel)
 
 	// Esc → back to list
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(PresetPickerModel)
 	if m.mode != pickerModeList {
 		t.Errorf("expected list mode, got %d", m.mode)
@@ -227,7 +227,7 @@ func TestPresetPickerPreviewEscBackToCustom(t *testing.T) {
 	m.toggles = [4]bool{false, true, false, false} // lowercase only
 
 	// Enter in custom → preview
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PresetPickerModel)
 	if m.mode != pickerModePreview {
 		t.Fatalf("expected preview mode, got %d", m.mode)
@@ -237,7 +237,7 @@ func TestPresetPickerPreviewEscBackToCustom(t *testing.T) {
 	}
 
 	// Esc → back to custom
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(PresetPickerModel)
 	if m.mode != pickerModeCustom {
 		t.Errorf("expected custom mode, got %d", m.mode)
@@ -254,7 +254,7 @@ func TestPresetPickerSelectCustomOpensForm(t *testing.T) {
 		}
 	}
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PresetPickerModel)
 	if m.mode != pickerModeCustom {
 		t.Error("selecting Custom should switch to custom mode")
@@ -269,7 +269,7 @@ func TestPresetPickerCustomGeneratePreview(t *testing.T) {
 	m.toggles = [4]bool{false, true, false, false} // lowercase only
 
 	// Enter in custom → preview
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PresetPickerModel)
 	if m.mode != pickerModePreview {
 		t.Fatalf("expected preview mode, got %d", m.mode)
@@ -282,7 +282,7 @@ func TestPresetPickerCustomGeneratePreview(t *testing.T) {
 	}
 
 	// Enter in preview → accept
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected command from Enter in preview")
 	}
@@ -303,7 +303,7 @@ func TestPresetPickerCustomNoCharsetError(t *testing.T) {
 	m.lengthInput.SetValue("12")
 	m.toggles = [4]bool{false, false, false, false} // all off
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PresetPickerModel)
 	if m.err == nil {
 		t.Error("expected error when all character classes disabled")
@@ -317,7 +317,7 @@ func TestPresetPickerEscCancels(t *testing.T) {
 	cfg := config.Default()
 	m := NewPresetPickerModel(cfg, "")
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("expected command from Esc")
 	}
@@ -332,7 +332,7 @@ func TestPresetPickerCustomEscReturnsToList(t *testing.T) {
 	m := NewPresetPickerModel(cfg, "")
 	m.mode = pickerModeCustom
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(PresetPickerModel)
 	if m.mode != pickerModeList {
 		t.Error("Esc in custom mode should return to list mode")
@@ -347,7 +347,7 @@ func TestPresetPickerViewPreviewMasked(t *testing.T) {
 	m.lastPresetName = "Strong"
 	m.passwordVisible = false
 
-	view := m.View()
+	view := m.View().Content
 	if strings.Contains(view, "secret123") {
 		t.Error("masked view should not contain the actual password")
 	}
@@ -367,7 +367,7 @@ func TestPresetPickerViewPreviewVisible(t *testing.T) {
 	m.lastPresetName = "Strong"
 	m.passwordVisible = true
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "secret123") {
 		t.Error("visible view should contain the actual password")
 	}

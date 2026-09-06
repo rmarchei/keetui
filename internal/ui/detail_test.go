@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
@@ -30,30 +30,30 @@ func TestDetailPasswordToggle(t *testing.T) {
 	}
 
 	// Select password field (index 1)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: string('j')})
 	m = updated.(DetailModel)
 	if m.selectedField != 1 {
 		t.Fatalf("selectedField = %d, want 1 (password)", m.selectedField)
 	}
 
 	// Toggle password on selected field
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'p', Text: string('p')})
 	m = updated.(DetailModel)
 	if !m.revealedFields["builtin:password"] {
 		t.Error("password should be visible after toggle")
 	}
 
 	// Toggle back
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'p', Text: string('p')})
 	m = updated.(DetailModel)
 	if m.revealedFields["builtin:password"] {
 		t.Error("password should be hidden after second toggle")
 	}
 
 	// Toggle on non-protected field should do nothing
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}) // back to username
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'k', Text: string('k')}) // back to username
 	m = updated.(DetailModel)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'p', Text: string('p')})
 	m = updated.(DetailModel)
 	if m.revealedFields["username"] {
 		t.Error("username is not protected, toggle should have no effect")
@@ -76,7 +76,7 @@ func TestDetailCopyCommands(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{tt.key}})
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: tt.key, Text: string(tt.key)})
 		m = updated.(DetailModel)
 		if cmd == nil {
 			t.Errorf("key %c should produce a command", tt.key)
@@ -106,7 +106,7 @@ func TestDetailRevealKeepsLayoutAndRawClipboardValue(t *testing.T) {
 	m.selectedField = 1
 	wantLines := strings.Count(m.buildContent(), "\n")
 	for i := range 4 {
-		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+		updated, _ := m.Update(tea.KeyPressMsg{Code: 'p', Text: string('p')})
 		m = updated.(DetailModel)
 		content := m.buildContent()
 		if got := strings.Count(content, "\n"); got != wantLines {
@@ -118,7 +118,7 @@ func TestDetailRevealKeepsLayoutAndRawClipboardValue(t *testing.T) {
 		if i%2 == 0 && !strings.Contains(content, sanitizeDisplay(entry.Password)) {
 			t.Error("revealed password should contain display-safe placeholders")
 		}
-		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		if cmd == nil {
 			t.Fatal("enter on password should produce a copy command even with an empty username")
 		}
@@ -134,7 +134,7 @@ func TestDetailEditMsg(t *testing.T) {
 	m := NewDetailModel(entry, config.Default())
 	m.SetSize(80, 24)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'e', Text: string('e')})
 	if cmd == nil {
 		t.Fatal("e key should produce a command")
 	}
@@ -150,14 +150,14 @@ func TestDetailQRToggle(t *testing.T) {
 	m.SetSize(80, 24)
 
 	// Show QR
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Q'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'Q', Text: string('Q')})
 	m = updated.(DetailModel)
 	if !m.showQR {
 		t.Error("QR should be shown after Q")
 	}
 
 	// Close QR
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(DetailModel)
 	if m.showQR {
 		t.Error("QR should be hidden after esc")
@@ -169,7 +169,7 @@ func TestDetailHIBPTrigger(t *testing.T) {
 	m := NewDetailModel(entry, config.Default())
 	m.SetSize(80, 24)
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'5'}})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: '5', Text: string('5')})
 	m = updated.(DetailModel)
 	if cmd == nil {
 		t.Fatal("5 key should produce a command for HIBP check")
@@ -184,7 +184,7 @@ func TestDetailBackMsg(t *testing.T) {
 	m := NewDetailModel(entry, config.Default())
 	m.SetSize(80, 24)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc should produce a command")
 	}
@@ -207,21 +207,21 @@ func TestDetailAttachmentMode(t *testing.T) {
 	m.RefreshContent()
 
 	// Enter attachment mode
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'a', Text: string('a')})
 	m = updated.(DetailModel)
 	if !m.attachMode {
 		t.Error("should be in attachment mode after 'a'")
 	}
 
 	// Navigate
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: string('j')})
 	m = updated.(DetailModel)
 	if m.attachIdx != 1 {
 		t.Errorf("attachIdx = %d, want 1", m.attachIdx)
 	}
 
 	// Exit attachment mode
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = updated.(DetailModel)
 	if m.attachMode {
 		t.Error("should exit attachment mode on esc")
@@ -239,21 +239,21 @@ func TestDetailFieldNavigation(t *testing.T) {
 	}
 
 	// Move down
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: string('j')})
 	m = updated.(DetailModel)
 	if m.selectedField != 1 {
 		t.Errorf("selectedField after j = %d, want 1", m.selectedField)
 	}
 
 	// Move up
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'k', Text: string('k')})
 	m = updated.(DetailModel)
 	if m.selectedField != 0 {
 		t.Errorf("selectedField after k = %d, want 0", m.selectedField)
 	}
 
 	// Should not go below 0
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'k', Text: string('k')})
 	m = updated.(DetailModel)
 	if m.selectedField != 0 {
 		t.Errorf("selectedField should not go below 0, got %d", m.selectedField)
@@ -266,7 +266,7 @@ func TestDetailEnterCopiesSelected(t *testing.T) {
 	m.SetSize(80, 24)
 
 	// Field 0 = username
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("enter should produce a copy command")
 	}
@@ -289,16 +289,16 @@ func TestDetailQRSelectedField(t *testing.T) {
 	m.SetSize(80, 24)
 
 	// Move to URL field (index 2)
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: string('j')})
 	m = updated.(DetailModel)
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: string('j')})
 	m = updated.(DetailModel)
 	if m.selectedField != 2 {
 		t.Fatalf("selectedField = %d, want 2 (URL)", m.selectedField)
 	}
 
 	// Show QR
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Q'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'Q', Text: string('Q')})
 	m = updated.(DetailModel)
 	if !m.showQR {
 		t.Error("QR should be shown")
@@ -323,11 +323,10 @@ func TestDetailMouseSelectField(t *testing.T) {
 	vpStart := 2
 
 	// Click on Username line (viewport line 0)
-	updated, _ := m.Update(tea.MouseMsg{
+	updated, _ := m.Update(tea.MouseClickMsg{
 		X:      10,
 		Y:      vpStart,
-		Button: tea.MouseButtonLeft,
-		Action: tea.MouseActionPress,
+		Button: tea.MouseLeft,
 	})
 	m = updated.(DetailModel)
 	if m.selectedField != 0 {
@@ -335,11 +334,10 @@ func TestDetailMouseSelectField(t *testing.T) {
 	}
 
 	// Click on Password line (viewport line 1)
-	updated, _ = m.Update(tea.MouseMsg{
+	updated, _ = m.Update(tea.MouseClickMsg{
 		X:      10,
 		Y:      vpStart + 1,
-		Button: tea.MouseButtonLeft,
-		Action: tea.MouseActionPress,
+		Button: tea.MouseLeft,
 	})
 	m = updated.(DetailModel)
 	if m.selectedField != 1 {
@@ -347,11 +345,10 @@ func TestDetailMouseSelectField(t *testing.T) {
 	}
 
 	// Click on URL line (viewport line 2)
-	updated, _ = m.Update(tea.MouseMsg{
+	updated, _ = m.Update(tea.MouseClickMsg{
 		X:      10,
 		Y:      vpStart + 2,
-		Button: tea.MouseButtonLeft,
-		Action: tea.MouseActionPress,
+		Button: tea.MouseLeft,
 	})
 	m = updated.(DetailModel)
 	if m.selectedField != 2 {
@@ -429,7 +426,7 @@ func TestDetailView(t *testing.T) {
 	m := NewDetailModel(entry, config.Default())
 	m.SetSize(80, 24)
 
-	view := m.View()
+	view := m.View().Content
 	if view == "" {
 		t.Error("View() should return non-empty string")
 	}
@@ -518,14 +515,14 @@ func TestNotesExpandToggle(t *testing.T) {
 	}
 
 	// Press p to expand
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'p', Text: string('p')})
 	m = updated.(DetailModel)
 	if !m.notesExpanded {
 		t.Error("notes should be expanded after p")
 	}
 
 	// Press p to collapse
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'p', Text: string('p')})
 	m = updated.(DetailModel)
 	if m.notesExpanded {
 		t.Error("notes should be collapsed after second p")

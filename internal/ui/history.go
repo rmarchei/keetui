@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -57,7 +57,7 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case m.keys.Quit:
 			return m, func() tea.Msg { return RequestQuitMsg{} }
@@ -99,7 +99,7 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m HistoryModel) View() string {
+func (m HistoryModel) View() tea.View {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -154,5 +154,5 @@ func (m HistoryModel) View() string {
 		m.keys.TogglePassword, m.keys.CopyPassword, m.keys.Quit)))
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.NewView(b.String())
 }

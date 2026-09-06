@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestPasswordNavigation(t *testing.T) {
@@ -14,13 +14,13 @@ func TestPasswordNavigation(t *testing.T) {
 		t.Errorf("initial focus = %d, want 0", m.focused)
 	}
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m = updated.(PasswordModel)
 	if m.focused != 1 {
 		t.Errorf("focus after tab = %d, want 1", m.focused)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m = updated.(PasswordModel)
 	if m.focused != 0 {
 		t.Errorf("focus after second tab = %d, want 0", m.focused)
@@ -31,7 +31,7 @@ func TestPasswordRejectsEmpty(t *testing.T) {
 	m := NewPasswordModel()
 	m.width, m.height = 80, 24
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PasswordModel)
 	if cmd != nil {
 		t.Error("enter with empty password should not produce a command")
@@ -51,7 +51,7 @@ func TestPasswordRejectsMismatch(t *testing.T) {
 	m.newInput.SetValue("password1")
 	m.confirmInput.SetValue("password2")
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(PasswordModel)
 	if cmd != nil {
 		t.Error("mismatched passwords should not produce a command")
@@ -71,7 +71,7 @@ func TestPasswordAcceptsMatch(t *testing.T) {
 	m.newInput.SetValue("newpass123")
 	m.confirmInput.SetValue("newpass123")
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("matching passwords should produce a command")
 	}
@@ -89,7 +89,7 @@ func TestPasswordCancel(t *testing.T) {
 	m := NewPasswordModel()
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc should produce a command")
 	}
@@ -103,7 +103,7 @@ func TestPasswordView(t *testing.T) {
 	m := NewPasswordModel()
 	m.width, m.height = 80, 24
 
-	view := m.View()
+	view := m.View().Content
 	if view == "" {
 		t.Error("View() should return non-empty string")
 	}

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/rmarchei/keetui/internal/keepass"
 )
@@ -14,7 +14,7 @@ func TestAuditBack(t *testing.T) {
 	m := NewAuditModel(keepass.AuditResult{})
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc should produce a command")
 	}
@@ -28,7 +28,7 @@ func TestAuditQuit(t *testing.T) {
 	m := NewAuditModel(keepass.AuditResult{})
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: string('q')})
 	if cmd == nil {
 		t.Fatal("q should produce a command")
 	}
@@ -54,14 +54,14 @@ func TestAuditNavigation(t *testing.T) {
 	}
 
 	// Move down should skip headers
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'j', Text: string('j')})
 	m = updated.(AuditModel)
 	if m.cursor != 2 {
 		t.Errorf("cursor after j = %d, want 2", m.cursor)
 	}
 
 	// Move back up
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: 'k', Text: string('k')})
 	m = updated.(AuditModel)
 	if m.cursor != 1 {
 		t.Errorf("cursor after k = %d, want 1", m.cursor)
@@ -77,7 +77,7 @@ func TestAuditSelectEntry(t *testing.T) {
 	m := NewAuditModel(result)
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("enter on entry should produce a command")
 	}
@@ -95,7 +95,7 @@ func TestAuditEmptyView(t *testing.T) {
 	m := NewAuditModel(keepass.AuditResult{})
 	m.width, m.height = 80, 24
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "No issues found") {
 		t.Error("View() should contain 'No issues found' when empty")
 	}
@@ -110,7 +110,7 @@ func TestAuditView(t *testing.T) {
 	m := NewAuditModel(result)
 	m.width, m.height = 80, 24
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "Password Audit") {
 		t.Error("View() should contain 'Password Audit'")
 	}
@@ -140,7 +140,7 @@ func TestAuditViewFitsTerminalHeight(t *testing.T) {
 	// Scroll to the bottom to exercise every window position.
 	for range 45 {
 		m.moveDown()
-		if rows := strings.Count(m.View(), "\n"); rows > m.height {
+		if rows := strings.Count(m.View().Content, "\n"); rows > m.height {
 			t.Fatalf("view renders %d rows into a %d-row budget", rows, m.height)
 		}
 	}

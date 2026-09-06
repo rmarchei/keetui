@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/rmarchei/keetui/internal/keepass"
 )
@@ -90,7 +90,7 @@ func (m AuditModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
@@ -143,7 +143,7 @@ func (m *AuditModel) moveUp() {
 	}
 }
 
-func (m AuditModel) View() string {
+func (m AuditModel) View() tea.View {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -194,5 +194,5 @@ func (m AuditModel) View() string {
 	b.WriteString(helpStyle.Render("  j/k: navigate  enter: view entry  esc: back  q: quit"))
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.NewView(b.String())
 }

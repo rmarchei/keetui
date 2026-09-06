@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
@@ -92,10 +92,10 @@ func NewPresetPickerModel(cfg config.Config, currentPassword string) PresetPicke
 	}
 
 	// Set up custom sub-screen
-	li := textinput.New()
+	li := newTextInput()
 	li.Prompt = "  Length: "
-	li.PromptStyle = labelStyle
-	li.Width = 8
+	setInputPromptStyle(&li, labelStyle)
+	li.SetWidth(8)
 	li.CharLimit = 4
 	li.SetValue(strconv.Itoa(cfg.PasswordLen()))
 
@@ -127,7 +127,7 @@ func (m PresetPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		m.err = nil
 		switch m.mode {
 		case pickerModeList:
@@ -138,10 +138,16 @@ func (m PresetPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updatePreview(msg)
 		}
 	}
+	// Paste and cursor blink messages are not key presses in Bubble Tea v2.
+	if m.mode == pickerModeCustom && m.customFocus == 0 {
+		var cmd tea.Cmd
+		m.lengthInput, cmd = m.lengthInput.Update(msg)
+		return m, cmd
+	}
 	return m, nil
 }
 
-func (m PresetPickerModel) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m PresetPickerModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, func() tea.Msg { return RequestQuitMsg{} }
@@ -246,7 +252,7 @@ func (m PresetPickerModel) generateCustomPassword() (string, error) {
 	return generatePassword(length, charset)
 }
 
-func (m PresetPickerModel) updateCustom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m PresetPickerModel) updateCustom(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, func() tea.Msg { return RequestQuitMsg{} }
@@ -260,7 +266,7 @@ func (m PresetPickerModel) updateCustom(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab", "up", "k":
 		m.customFocus = (m.customFocus - 1 + 5) % 5
 		return m, m.updateCustomFocus()
-	case " ":
+	case "space":
 		if m.customFocus >= 1 && m.customFocus <= 4 {
 			m.toggles[m.customFocus-1] = !m.toggles[m.customFocus-1]
 		}
@@ -301,7 +307,7 @@ func (m PresetPickerModel) generateCustom() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m PresetPickerModel) updatePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m PresetPickerModel) updatePreview(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, func() tea.Msg { return RequestQuitMsg{} }
@@ -331,14 +337,14 @@ func (m PresetPickerModel) updatePreview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m PresetPickerModel) View() string {
+func (m PresetPickerModel) View() tea.View {
 	switch m.mode {
 	case pickerModeCustom:
-		return m.viewCustom()
+		return tea.NewView(m.viewCustom())
 	case pickerModePreview:
-		return m.viewPreview()
+		return tea.NewView(m.viewPreview())
 	default:
-		return m.viewList()
+		return tea.NewView(m.viewList())
 	}
 }
 

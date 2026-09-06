@@ -4,14 +4,14 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestUnlockRejectsEmpty(t *testing.T) {
 	m := NewUnlockModel("test.kdbx", "")
 	m.width, m.height = 80, 24
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = updated.(UnlockModel)
 	if cmd != nil {
 		t.Error("enter with empty password should not produce a command")
@@ -29,7 +29,7 @@ func TestUnlockAcceptsPassword(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	m.input.SetValue("mypassword")
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("enter with password should produce a command")
 	}
@@ -53,7 +53,7 @@ func TestUnlockShowsKeyFilePath(t *testing.T) {
 	m := NewUnlockModel("test.kdbx", "key.key")
 	m.width, m.height = 80, 24
 
-	view := m.View()
+	view := m.View().Content
 	if !strings.Contains(view, "key.key") {
 		t.Error("View() should contain key file path")
 	}
@@ -63,7 +63,7 @@ func TestUnlockHidesKeyFileWhenEmpty(t *testing.T) {
 	m := NewUnlockModel("test.kdbx", "")
 	m.width, m.height = 80, 24
 
-	view := m.View()
+	view := m.View().Content
 	if strings.Contains(view, "Key:") {
 		t.Error("View() should not contain Key: line when no key file")
 	}
@@ -73,7 +73,7 @@ func TestUnlockView(t *testing.T) {
 	m := NewUnlockModel("test.kdbx", "")
 	m.width, m.height = 80, 24
 
-	view := m.View()
+	view := m.View().Content
 	if view == "" {
 		t.Error("View() should return non-empty string")
 	}

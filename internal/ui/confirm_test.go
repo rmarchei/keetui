@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestConfirmYesKey(t *testing.T) {
@@ -14,7 +14,7 @@ func TestConfirmYesKey(t *testing.T) {
 	})
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'y', Text: string('y')})
 	if cmd == nil {
 		t.Fatal("y key should produce a command")
 	}
@@ -28,7 +28,7 @@ func TestConfirmNoKey(t *testing.T) {
 	m := NewConfirmModel("Delete?", func() tea.Msg { return nil })
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: string('n')})
 	if cmd == nil {
 		t.Fatal("n key should produce a command")
 	}
@@ -47,14 +47,14 @@ func TestConfirmToggle(t *testing.T) {
 	}
 
 	// Toggle
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m = updated.(ConfirmModel)
 	if !m.selected {
 		t.Error("should be Yes after tab")
 	}
 
 	// Toggle back
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m = updated.(ConfirmModel)
 	if m.selected {
 		t.Error("should be No after second tab")
@@ -66,7 +66,7 @@ func TestConfirmEnter(t *testing.T) {
 	m := NewConfirmModel("Delete?", func() tea.Msg { return nil })
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("enter should produce a command")
 	}
@@ -78,7 +78,7 @@ func TestConfirmEnter(t *testing.T) {
 	// Enter with Yes selected
 	m = NewConfirmModel("Delete?", func() tea.Msg { return nil })
 	m.selected = true
-	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("enter should produce a command")
 	}
@@ -88,7 +88,7 @@ func TestConfirmEsc(t *testing.T) {
 	m := NewConfirmModel("Delete?", func() tea.Msg { return nil })
 	m.width, m.height = 80, 24
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc should produce a command")
 	}
@@ -102,7 +102,7 @@ func TestConfirmView(t *testing.T) {
 	m := NewConfirmModel("Are you sure?", func() tea.Msg { return nil })
 	m.width, m.height = 80, 24
 
-	view := m.View()
+	view := m.View().Content
 	if view == "" {
 		t.Error("View() should return non-empty string")
 	}

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // ConfirmModel shows a yes/no confirmation prompt.
@@ -35,8 +35,8 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.MouseMsg:
-		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
 			// Buttons are on line 5 (0-indexed): newline, title, newline, message, newline, buttons
 			if msg.Y == 5 {
 				// No button roughly at x < 14, Yes button after
@@ -50,7 +50,7 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			// Route through RequestQuitMsg so the app can warn about
@@ -73,7 +73,7 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m ConfirmModel) View() string {
+func (m ConfirmModel) View() tea.View {
 	var b strings.Builder
 
 	b.WriteString("\n")
@@ -95,5 +95,5 @@ func (m ConfirmModel) View() string {
 	b.WriteString(helpStyle.Render("  y: yes  n/esc: no  tab: toggle  enter: confirm"))
 	b.WriteString("\n")
 
-	return b.String()
+	return tea.NewView(b.String())
 }

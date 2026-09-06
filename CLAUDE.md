@@ -68,9 +68,9 @@ keetui/
 | Package | Purpose |
 |---------|---------|
 | `github.com/tobischo/gokeepasslib/v3` | KeePass .kdbx file reading/writing |
-| `github.com/charmbracelet/bubbletea` | TUI framework (Elm-style MVU architecture) |
-| `github.com/charmbracelet/bubbles` | TUI components (text input, viewport) |
-| `github.com/charmbracelet/lipgloss` | Terminal styling |
+| `charm.land/bubbletea/v2` | TUI framework (Elm-style MVU architecture) |
+| `charm.land/bubbles/v2` | TUI components (text input, viewport) |
+| `charm.land/lipgloss/v2` | Terminal styling |
 | `github.com/pquerna/otp` | TOTP/2FA code generation |
 | `github.com/boombuler/barcode` | QR code generation |
 
@@ -156,6 +156,7 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 | `show_password_strength` | true | Show password strength indicator in detail and editor views |
 | `default_preset` | `"Strong"` | Default password preset: `PIN`, `Alphanumeric`, `Strong`, `Passphrase`, `Custom` |
 | `theme` | `"dark"` | Color theme: `dark`, `light`, or `high-contrast` |
+| `confirm_quit` | true | Confirm before quitting, even without unsaved changes (`false`: disable) |
 | `backup_on_save` | false | Create `.kdbx.bak` backup before each save |
 | `keybindings` | (object) | Override default keybindings (see `keybindings.go` for keys) |
 
@@ -170,6 +171,9 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - Package names are lowercase, single-word where possible
 - Error handling: wrap errors with `fmt.Errorf("context: %w", err)`
 - TUI models implement the `tea.Model` interface (`Init`, `Update`, `View`)
+- Charm v2 views return `tea.View`; nested string composition uses `.View().Content`. Only `AppModel.View` sets alternate-screen and mouse modes. Inputs use virtual cursors so their positions remain local to the rendered strings.
+- Handle key presses with `tea.KeyPressMsg`, not the `tea.KeyMsg` interface (which includes releases). Forward non-key input messages as well: bracketed paste is `tea.PasteMsg`, and clipboard paste commands/cursor ticks also need to reach active inputs. Keep paste events in the save-input gate and auto-lock activity tracking.
+- Set `viewport.FillHeight = true` where fixed-height layout is required; v2 no longer fills empty rows by default.
 - Cross-view communication uses typed message structs (e.g., `type FooMsg struct{}`)
 - Styles are centralized in `internal/ui/styles.go`, themes in `internal/ui/themes.go`
 - Always run `gofmt -w .` before committing (enforced by pre-commit hook)
