@@ -6,6 +6,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // UnlockModel handles the password entry screen.
@@ -17,6 +18,7 @@ type UnlockModel struct {
 	unlocking   bool // true while the database is being opened in the background
 	width       int
 	height      int
+	errorOffset int
 }
 
 // DatabaseOpenedMsg is sent when the database is successfully opened.
@@ -50,6 +52,7 @@ func (m UnlockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		sizeInput(&m.input, max(1, msg.Width-2))
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -62,9 +65,22 @@ func (m UnlockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.String() {
+		case "pgdown", "pgup":
+			if m.err != nil {
+				_, height := viewSize(m.width, m.height)
+				step := max(1, height-strings.Count(m.header(), "\n")-lipgloss.Height(m.footer()))
+				if msg.String() == "pgdown" {
+					m.errorOffset += step
+				} else {
+					m.errorOffset -= step
+				}
+				m.errorOffset = min(max(0, m.errorOffset), max(0, lipgloss.Height(m.errorContent())-step))
+			}
+			return m, nil
 		case "ctrl+c":
 			return m, tea.Quit
 		case "enter":
+			m.errorOffset = 0
 			// Keyfile-only databases have no password: allow an empty
 			// password when a key file was supplied.
 			if m.input.Value() == "" && m.keyFilePath == "" {
@@ -90,32 +106,48 @@ func (m UnlockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m UnlockModel) View() tea.View {
+func (m UnlockModel) header() string {
 	var b strings.Builder
+	width, _ := viewSize(m.width, m.height)
 
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" keetui "))
 	b.WriteString("\n\n")
-	fmt.Fprintf(&b, "  File: %s\n", m.filePath)
+	fmt.Fprintf(&b, "  File: %s\n", pathLabel(m.filePath, width-8))
 	if m.keyFilePath != "" {
-		fmt.Fprintf(&b, "  Key:  %s\n", m.keyFilePath)
+		fmt.Fprintf(&b, "  Key:  %s\n", pathLabel(m.keyFilePath, width-8))
 	}
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "  %s\n", m.input.View())
+	return b.String()
+}
 
-	if m.unlocking {
-		b.WriteString("\n")
-		b.WriteString(helpStyle.Render("  Unlocking…"))
-		b.WriteString("\n")
-	} else if m.err != nil {
-		b.WriteString("\n")
-		b.WriteString(errorMsgStyle.Render(fmt.Sprintf("  Error: %s", m.err)))
-		b.WriteString("\n")
+func (m UnlockModel) errorContent() string {
+	if m.err == nil {
+		return ""
 	}
+	width, _ := viewSize(m.width, m.height)
+	return wrapContent(errorMsgStyle.Render("Error: "+sanitizeDisplay(m.err.Error())), width)
+}
 
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  enter: unlock  ctrl+c: quit"))
-	b.WriteString("\n")
+func (m UnlockModel) footer() string {
+	hints := []string{"enter: unlock", "ctrl+c: quit"}
+	if m.err != nil {
+		hints = append(hints, "pgup/pgdown: error")
+	}
+	return renderHints(m.width, hints...)
+}
 
-	return tea.NewView(b.String())
+func (m UnlockModel) View() tea.View {
+	width, height := viewSize(m.width, m.height)
+	sizeInput(&m.input, max(1, width-2))
+	header := m.header()
+	body := header
+	if m.unlocking {
+		body += "\n" + helpStyle.Render("  Unlocking…")
+	} else if m.err != nil {
+		available := max(1, height-strings.Count(header, "\n")-lipgloss.Height(m.footer()))
+		body += contentWindow(m.errorContent(), width, available, m.errorOffset)
+	}
+	return tea.NewView(screen(body, m.footer(), width, height, 0))
 }

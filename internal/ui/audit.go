@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/rmarchei/keetui/internal/keepass"
 )
@@ -79,8 +80,8 @@ func (m AuditModel) Init() tea.Cmd {
 func (m AuditModel) visibleHeight() int {
 	// Fixed chrome: 5 rows above the list (blank, title, blank, issue
 	// count, blank) and 4 below (blank, position counter, blank, help).
-	h := max(m.height-9, 5)
-	return h
+	_, height := viewSize(m.width, m.height)
+	return max(1, height-7-lipgloss.Height(m.footer()))
 }
 
 func (m AuditModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -88,6 +89,7 @@ func (m AuditModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -145,6 +147,7 @@ func (m *AuditModel) moveUp() {
 
 func (m AuditModel) View() tea.View {
 	var b strings.Builder
+	m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Password Audit "))
@@ -190,9 +193,9 @@ func (m AuditModel) View() tea.View {
 		}
 	}
 
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  j/k: navigate  enter: view entry  esc: back  q: quit"))
-	b.WriteString("\n")
+	return tea.NewView(screen(b.String(), m.footer(), m.width, m.height, 0))
+}
 
-	return tea.NewView(b.String())
+func (m AuditModel) footer() string {
+	return renderHints(m.width, "esc: back", "F1: help", "j/k: navigate", "enter: view entry", "q: quit")
 }

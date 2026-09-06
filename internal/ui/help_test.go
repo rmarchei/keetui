@@ -17,8 +17,8 @@ func TestHelpClose(t *testing.T) {
 		t.Fatal("esc should produce a command")
 	}
 	msg := cmd()
-	if _, ok := msg.(BackToBrowserMsg); !ok {
-		t.Errorf("expected BackToBrowserMsg, got %T", msg)
+	if _, ok := msg.(CloseHelpMsg); !ok {
+		t.Errorf("expected CloseHelpMsg, got %T", msg)
 	}
 }
 
@@ -30,8 +30,8 @@ func TestHelpCloseQuestion(t *testing.T) {
 		t.Fatal("? should produce a command")
 	}
 	msg := cmd()
-	if _, ok := msg.(BackToBrowserMsg); !ok {
-		t.Errorf("expected BackToBrowserMsg, got %T", msg)
+	if _, ok := msg.(CloseHelpMsg); !ok {
+		t.Errorf("expected CloseHelpMsg, got %T", msg)
 	}
 }
 

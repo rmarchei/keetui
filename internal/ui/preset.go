@@ -125,6 +125,7 @@ func (m PresetPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		sizeInput(&m.lengthInput, msg.Width)
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -350,6 +351,7 @@ func (m PresetPickerModel) View() tea.View {
 
 func (m PresetPickerModel) viewList() string {
 	var b strings.Builder
+	width, height := viewSize(m.width, m.height)
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Generate Password "))
 	b.WriteString("\n\n")
@@ -385,14 +387,15 @@ func (m PresetPickerModel) viewList() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  j/k: navigate  enter: select  d: set default  esc: cancel"))
-	b.WriteString("\n")
-
-	return b.String()
+	footer := renderHints(width, "enter: select", "esc: cancel", "F1: help", "j/k: navigate", "d: set default")
+	offset := followField(0, fieldRows{3 + m.cursor, 3 + m.cursor}, bodyHeight(height, footer))
+	return screen(b.String(), footer, width, height, offset)
 }
 
 func (m PresetPickerModel) viewCustom() string {
 	var b strings.Builder
+	width, height := viewSize(m.width, m.height)
+	sizeInput(&m.lengthInput, width)
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Generate Password — Custom "))
 	b.WriteString("\n\n")
@@ -433,14 +436,18 @@ func (m PresetPickerModel) viewCustom() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  tab: next  space: toggle  enter: generate  esc: back"))
-	b.WriteString("\n")
-
-	return b.String()
+	footer := renderHints(width, "enter: generate", "esc: back", "F1: help", "tab: next", "space: toggle")
+	row := 3
+	if m.customFocus > 0 {
+		row = 4 + m.customFocus
+	}
+	offset := followField(0, fieldRows{row, row}, bodyHeight(height, footer))
+	return screen(b.String(), footer, width, height, offset)
 }
 
 func (m PresetPickerModel) viewPreview() string {
 	var b strings.Builder
+	width, height := viewSize(m.width, m.height)
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(fmt.Sprintf(" Generate Password — %s ", m.lastPresetName)))
 	b.WriteString("\n\n")
@@ -458,10 +465,8 @@ func (m PresetPickerModel) viewPreview() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  r: refresh  p: show/hide  enter: accept  esc: back"))
-	b.WriteString("\n")
-
-	return b.String()
+	footer := renderHints(width, "enter: accept", "esc: back", "F1: help", "r: refresh", "p: show/hide")
+	return screen(wrapContent(b.String(), width), footer, width, height, 0)
 }
 
 // describePassword analyzes a password and returns a human-readable description

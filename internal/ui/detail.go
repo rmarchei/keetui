@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/boombuler/barcode/qr"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"github.com/tobischo/gokeepasslib/v3"
@@ -341,6 +342,7 @@ func (m *DetailModel) refreshContentAndFollow() {
 	if !m.ready {
 		return
 	}
+	m.syncViewportSize()
 	m.viewport.SetContent(m.buildContent())
 	line := m.lineForField(m.selectedField)
 	vpHeight := m.viewport.Height()
@@ -414,6 +416,7 @@ func totpAlgorithm(name string) otp.Algorithm {
 }
 
 func (m *DetailModel) syncViewportSize() {
+	sizeInput(&m.attachPathInput, m.width)
 	// View() concatenates: headerView() + viewport.View() + "\n" + footerView()
 	// Count newlines contributed by each section to compute viewport height.
 	headerNewlines := strings.Count(m.headerView(), "\n")
@@ -442,14 +445,14 @@ func (m DetailModel) headerView() string {
 
 func (m DetailModel) footerView() string {
 	if m.showQR {
-		return helpStyle.Render(fmt.Sprintf("  QR: %s  esc: close  %s: close", sanitizeDisplay(m.qrLabel), m.keys.ShowQR))
+		return renderHints(m.width, "esc: close", m.keys.ShowQR+": close", "QR: "+sanitizeDisplay(m.qrLabel))
 	}
-	if m.addingAttachment {
-		return helpStyle.Render("  enter: add file  esc: cancel")
+	if m.addingAttachment || m.extractingAttachment {
+		return renderHints(m.width, "enter: confirm path", "esc: cancel", "F1: help")
 	}
 	if m.attachMode {
 		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
-		return helpStyle.Render(help)
+		return renderHints(m.width, append([]string{"F1: help", "esc: back"}, strings.Split(strings.TrimSpace(help), "  ")...)...)
 	}
 	// Show selected field name in footer
 	var fieldPrefix string
@@ -475,22 +478,15 @@ func (m DetailModel) footerView() string {
 		}
 		help += fmt.Sprintf("  %s: HIBP  esc: back  %s: quit", m.keys.HIBPCheck, m.keys.Quit)
 	}
-	return helpStyle.Render(fieldPrefix + help)
+	return renderHints(m.width, append([]string{"?: help", "esc: back", strings.TrimSpace(fieldPrefix)}, strings.Split(strings.TrimSpace(help), "  ")...)...)
 }
 
-// truncateString truncates s to maxWidth runes, appending "…" if truncated.
+// truncateString truncates to terminal cells, preserving wide graphemes.
 func truncateString(s string, maxWidth int) string {
 	if maxWidth <= 0 {
 		return ""
 	}
-	runes := []rune(s)
-	if len(runes) <= maxWidth {
-		return s
-	}
-	if maxWidth <= 1 {
-		return "…"
-	}
-	return string(runes[:maxWidth-1]) + "…"
+	return ansi.Truncate(s, maxWidth, "…")
 }
 
 // truncateLabel shortens a field label to fit within the labelStyle fixed width.
@@ -678,6 +674,9 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// visible line. strings.Count gives the number of newlines, which
 			// equals the Y offset where viewport content begins.
 			vpStartY := strings.Count(m.headerView(), "\n")
+			if click.Y < vpStartY || click.Y >= vpStartY+m.viewport.Height() {
+				return m, nil
+			}
 			vpRow := click.Y - vpStartY + m.viewport.YOffset()
 			if idx, ok := m.fieldAtLine(vpRow); ok {
 				m.selectedField = idx
@@ -1043,7 +1042,8 @@ func (m DetailModel) View() tea.View {
 	if !m.ready {
 		return tea.NewView("")
 	}
-	return tea.NewView(m.headerView() + m.viewport.View() + "\n" + m.footerView())
+	m.syncViewportSize()
+	return tea.NewView(fitFrame(m.headerView()+m.viewport.View()+"\n"+m.footerView(), m.width, m.height))
 }
 
 // renderStrength returns a styled strength label.

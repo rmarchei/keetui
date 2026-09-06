@@ -62,6 +62,7 @@ func (m PathInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		sizeInput(&m.input, msg.Width)
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -129,6 +130,8 @@ func (m PathInputModel) toggleFocus() PathInputModel {
 
 func (m PathInputModel) View() tea.View {
 	var b strings.Builder
+	width, _ := viewSize(m.width, m.height)
+	sizeInput(&m.input, width)
 
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Save As "))
@@ -154,10 +157,8 @@ func (m PathInputModel) View() tea.View {
 	if m.canUpgrade {
 		help = "  tab: switch field  enter: save  esc: cancel"
 	}
-	b.WriteString(helpStyle.Render(help))
-	b.WriteString("\n")
-
-	return tea.NewView(b.String())
+	footer := renderHints(width, append(strings.Split(strings.TrimSpace(help), "  "), "F1: help")...)
+	return tea.NewView(screen(wrapContent(b.String(), width), footer, m.width, m.height, 0))
 }
 
 // formatOption renders a format choice, highlighted when selected.

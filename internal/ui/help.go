@@ -13,6 +13,8 @@ import (
 // ShowHelpMsg requests showing the help overlay.
 type ShowHelpMsg struct{}
 
+type CloseHelpMsg struct{}
+
 // HelpModel displays a scrollable keybinding cheat sheet.
 type HelpModel struct {
 	keys     config.KeyBindings
@@ -20,6 +22,7 @@ type HelpModel struct {
 	width    int
 	height   int
 	ready    bool
+	message  string
 }
 
 // NewHelpModel creates a help model with the given keybindings and dimensions.
@@ -29,11 +32,9 @@ func NewHelpModel(keys config.KeyBindings, width, height int) HelpModel {
 		width:  width,
 		height: height,
 	}
-	footerHeight := 1
-	vpHeight := max(height-footerHeight, 1)
-	m.viewport = viewport.New(viewport.WithWidth(width), viewport.WithHeight(vpHeight))
+	m.viewport = viewport.New()
 	m.viewport.FillHeight = true
-	m.viewport.SetContent(m.buildContent())
+	m.resize()
 	m.ready = true
 	return m
 }
@@ -44,6 +45,10 @@ func (m HelpModel) buildContent() string {
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Keyboard Shortcuts "))
 	b.WriteString("\n\n")
+	if m.message != "" {
+		b.WriteString(labelStyle.Render("Last message:") + "\n")
+		b.WriteString(m.message + "\n\n")
+	}
 
 	section := func(title string, bindings []struct{ key, desc string }) {
 		fmt.Fprintf(&b, "  %s\n", labelStyle.Render(title))
@@ -101,6 +106,7 @@ func (m HelpModel) buildContent() string {
 	})
 
 	section("Editor", []struct{ key, desc string }{
+		{"F1", "Help (preserves the current form)"},
 		{"tab/shift+tab", "Navigate fields"},
 		{"ctrl+r", "Toggle password/TOTP visibility"},
 		{"ctrl+s", "Save entry"},
@@ -109,6 +115,13 @@ func (m HelpModel) buildContent() string {
 		{"ctrl+t", "Toggle protected on custom field"},
 		{"ctrl+d", "Delete custom field"},
 		{"esc", "Cancel"},
+	})
+	section("Settings / dialogs", []struct{ key, desc string }{
+		{"tab/shift+tab", "Navigate fields (scrolls to selection)"},
+		{"enter", "Save or confirm"},
+		{"ctrl+s", "Save settings"},
+		{"esc", "Cancel / go back"},
+		{"F1", "Help / full status message"},
 	})
 
 	section("Recycle Bin", []struct{ key, desc string }{
@@ -129,16 +142,13 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		footerHeight := 1
-		vpHeight := max(m.height-footerHeight, 1)
-		m.viewport.SetWidth(m.width)
-		m.viewport.SetHeight(vpHeight)
+		m.resize()
 		return m, nil
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "esc", "?":
-			return m, func() tea.Msg { return BackToBrowserMsg{} }
+		case "esc", "?", "f1":
+			return m, func() tea.Msg { return CloseHelpMsg{} }
 		case "q":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "ctrl+c":
@@ -155,6 +165,16 @@ func (m HelpModel) View() tea.View {
 	if !m.ready {
 		return tea.NewView("")
 	}
-	footer := helpStyle.Render("  esc/?: close  j/k/up/down: scroll  q: quit")
-	return tea.NewView(fmt.Sprintf("%s\n%s", m.viewport.View(), footer))
+	return tea.NewView(screen(m.viewport.View(), m.footer(), m.width, m.height, 0))
+}
+
+func (m HelpModel) footer() string {
+	return renderHints(m.width, "esc/F1/?: close", "j/k: scroll", "pgup/pgdown: page", "q: quit")
+}
+
+func (m *HelpModel) resize() {
+	width, height := viewSize(m.width, m.height)
+	m.viewport.SetWidth(width)
+	m.viewport.SetHeight(max(1, bodyHeight(height, m.footer())))
+	m.viewport.SetContent(wrapContent(m.buildContent(), width))
 }

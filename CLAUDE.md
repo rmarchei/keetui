@@ -174,6 +174,8 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - Charm v2 views return `tea.View`; nested string composition uses `.View().Content`. Only `AppModel.View` sets alternate-screen and mouse modes. Inputs use virtual cursors so their positions remain local to the rendered strings.
 - Handle key presses with `tea.KeyPressMsg`, not the `tea.KeyMsg` interface (which includes releases). Forward non-key input messages as well: bracketed paste is `tea.PasteMsg`, and clipboard paste commands/cursor ticks also need to reach active inputs. Keep paste events in the save-input gate and auto-lock activity tracking.
 - Set `viewport.FillHeight = true` where fixed-height layout is required; v2 no longer fills empty rows by default.
+- Use `layout.go` for terminal-cell-aware frames, whole-item hints, and filename-preserving paths. Reserve footer height before sizing scrollable content; keep the application status bar on exactly one row. New/returning views receive dimensions through `AppModel.Update`, not only terminal resize events. Form scrolling must follow focus, and mouse coordinates must account for the scroll offset.
+- Help is an overlay: `CloseHelpMsg` restores the previous screen, including unsaved form input. `F1` is safe inside inputs; do not steal printable `?`. Keep pending secret re-mask timers active while help is open.
 - Cross-view communication uses typed message structs (e.g., `type FooMsg struct{}`)
 - Styles are centralized in `internal/ui/styles.go`, themes in `internal/ui/themes.go`
 - Always run `gofmt -w .` before committing (enforced by pre-commit hook)

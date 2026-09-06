@@ -57,6 +57,8 @@ func (m PasswordModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		sizeInput(&m.newInput, msg.Width)
+		sizeInput(&m.confirmInput, msg.Width)
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -108,6 +110,9 @@ func (m PasswordModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m PasswordModel) View() tea.View {
 	var b strings.Builder
+	width, height := viewSize(m.width, m.height)
+	sizeInput(&m.newInput, width)
+	sizeInput(&m.confirmInput, width)
 
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Change Master Password "))
@@ -125,8 +130,7 @@ func (m PasswordModel) View() tea.View {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  tab: switch field  enter: confirm  esc: cancel"))
-	b.WriteString("\n")
-
-	return tea.NewView(b.String())
+	footer := renderHints(width, "enter: confirm", "esc: cancel", "tab: switch field", "F1: help")
+	offset := followField(0, fieldRows{3 + m.focused, 3 + m.focused}, bodyHeight(height, footer))
+	return tea.NewView(screen(wrapContent(b.String(), width), footer, width, height, offset))
 }

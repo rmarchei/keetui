@@ -12,6 +12,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -107,38 +109,39 @@ type quitMsg struct{}
 
 // AppModel is the top-level model coordinating all views.
 type AppModel struct {
-	state        viewState
-	db           *keepass.DB
-	unlock       UnlockModel
-	browser      BrowserModel
-	detail       DetailModel
-	editor       EditorModel
-	groupInput   GroupInputModel
-	confirm      ConfirmModel
-	password     PasswordModel
-	stats        StatsModel
-	settings     SettingsModel
-	history      HistoryModel
-	audit        AuditModel
-	help         HelpModel
-	pathInput    PathInputModel
-	presetPicker PresetPickerModel
-	width        int
-	height       int
-	lastActivity time.Time // tracks last user interaction for auto-lock
-	autoLockGen  int       // current auto-lock timer generation; see autoLockMsg
-	filePath     string    // remember file path for re-lock
-	keyFilePath  string    // remember key file path for re-lock
-	cfg          config.Config
-	dirty        bool      // true when in-memory changes haven't been saved
-	saving       bool      // true while a save runs in the background; input is gated
-	lastCopied   string    // most recent keetui-copied clipboard value not yet cleared
-	returnState  viewState // view to return to after confirm dialog
-	entryCount   int       // cached entry count for status bar
-	undoStack    undoStack // undo history
-	readOnly     bool      // when true, all mutations are blocked
-	statusText   string    // transient status message for status bar
-	statusError  bool      // true if status message is an error
+	state           viewState
+	db              *keepass.DB
+	unlock          UnlockModel
+	browser         BrowserModel
+	detail          DetailModel
+	editor          EditorModel
+	groupInput      GroupInputModel
+	confirm         ConfirmModel
+	password        PasswordModel
+	stats           StatsModel
+	settings        SettingsModel
+	history         HistoryModel
+	audit           AuditModel
+	help            HelpModel
+	pathInput       PathInputModel
+	presetPicker    PresetPickerModel
+	width           int
+	height          int
+	lastActivity    time.Time // tracks last user interaction for auto-lock
+	autoLockGen     int       // current auto-lock timer generation; see autoLockMsg
+	filePath        string    // remember file path for re-lock
+	keyFilePath     string    // remember key file path for re-lock
+	cfg             config.Config
+	dirty           bool      // true when in-memory changes haven't been saved
+	saving          bool      // true while a save runs in the background; input is gated
+	lastCopied      string    // most recent keetui-copied clipboard value not yet cleared
+	returnState     viewState // view to return to after confirm dialog
+	helpReturnState viewState // help must not overwrite a pending confirmation
+	entryCount      int       // cached entry count for status bar
+	undoStack       undoStack // undo history
+	readOnly        bool      // when true, all mutations are blocked
+	statusText      string    // transient status message for status bar
+	statusError     bool      // true if status message is an error
 }
 
 // NewApp creates the application starting at the unlock screen.
@@ -192,13 +195,31 @@ func (m AppModel) scheduleClearClipboard(copiedValue string) tea.Cmd {
 }
 
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.update(msg)
+	next := updated.(AppModel)
+	// A new/returning screen needs dimensions immediately, even when the
+	// terminal has not emitted another WindowSizeMsg.
+	if next.state != m.state {
+		updated, _ = next.updateActive(tea.WindowSizeMsg{Width: next.width, Height: next.viewHeight()})
+		next = updated.(AppModel)
+	}
+	return next, cmd
+}
+
+func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// A help overlay must not swallow the editor's pending secret re-mask.
+	if _, ok := msg.(maskPasswordMsg); ok && m.state != viewEditor && m.editor.revealSeq > 0 {
+		updated, cmd := m.editor.Update(msg)
+		m.editor = updated.(EditorModel)
+		return m, cmd
+	}
 	// Handle window size globally
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = wsm.Width
 		m.height = wsm.Height
 		// Reduce height for sub-views to make room for the status bar
 		if m.state != viewUnlock {
-			msg = tea.WindowSizeMsg{Width: wsm.Width, Height: wsm.Height - 1}
+			msg = tea.WindowSizeMsg{Width: wsm.Width, Height: max(0, wsm.Height-1)}
 		}
 		// The long-lived browser model must track size even while another
 		// view is active, or returning to it renders stale dimensions.
@@ -219,6 +240,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.scheduleAutoLock()
 			return m, cmd
 		}
+	}
+
+	// F1 works in forms without stealing printable characters from inputs.
+	// Capture a long status message before normal activity clears it.
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "f1" && m.state != viewUnlock && m.state != viewHelp {
+		m.lastActivity = time.Now()
+		return m.openHelp()
 	}
 
 	// Track user activity for auto-lock (key presses, mouse events, and pastes).
@@ -664,8 +692,26 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ShowHelpMsg:
-		m.help = NewHelpModel(m.cfg.Keys(), m.width, m.viewHeight())
-		m.state = viewHelp
+		return m.openHelp()
+
+	case CloseHelpMsg:
+		m.state = m.helpReturnState
+		switch m.state {
+		case viewDetail:
+			return m, m.detail.startTOTPTick()
+		case viewEditor:
+			return m, m.editor.Init()
+		case viewSettings:
+			return m, m.settings.Init()
+		case viewPathInput:
+			return m, m.pathInput.Init()
+		case viewGroupInput:
+			return m, m.groupInput.Init()
+		case viewPassword:
+			return m, m.password.Init()
+		case viewPresetPicker:
+			return m, m.presetPicker.Init()
+		}
 		return m, nil
 
 	case ShowStatsMsg:
@@ -949,6 +995,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.unlock.Init()
 	}
 
+	return m.updateActive(msg)
+}
+
+func (m AppModel) openHelp() (tea.Model, tea.Cmd) {
+	if m.state == viewHelp {
+		return m, nil
+	}
+	m.helpReturnState = m.state
+	m.help = NewHelpModel(m.cfg.Keys(), m.width, m.viewHeight())
+	if m.statusText != "" {
+		m.help.message = sanitizeDisplay(m.statusText)
+		m.help.resize()
+	}
+	m.state = viewHelp
+	return m, nil
+}
+
+func (m AppModel) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Delegate to active view
 	var cmd tea.Cmd
 	switch m.state {
@@ -1024,7 +1088,7 @@ func (m AppModel) viewContent() string {
 	var view string
 	switch m.state {
 	case viewUnlock:
-		return m.unlock.View().Content
+		return fitFrame(m.unlock.View().Content, m.width, m.height)
 	case viewBrowser:
 		view = m.browser.View().Content
 	case viewDetail:
@@ -1052,7 +1116,10 @@ func (m AppModel) viewContent() string {
 	case viewPresetPicker:
 		view = m.presetPicker.View().Content
 	}
-	return view + "\n" + m.statusBar()
+	if m.height <= 1 {
+		return fitFrame(m.statusBar(), m.width, m.height)
+	}
+	return fitFrame(view, m.width, m.viewHeight()) + "\n" + m.statusBar()
 }
 
 func (m *AppModel) refreshEntryCount() {
@@ -1062,8 +1129,9 @@ func (m *AppModel) refreshEntryCount() {
 }
 
 func (m AppModel) statusBar() string {
-	filename := filepath.Base(m.filePath)
-	parts := []string{filename, fmt.Sprintf("%d entries", m.entryCount)}
+	width, _ := viewSize(m.width, m.height)
+	budget := max(0, width-2) // status style's horizontal padding
+	var parts []string
 	if m.readOnly {
 		parts = append(parts, statusBarModifiedStyle.Render("[read-only]"))
 	}
@@ -1073,25 +1141,34 @@ func (m AppModel) statusBar() string {
 	if m.dirty {
 		parts = append(parts, statusBarModifiedStyle.Render("[modified]"))
 	}
-	if m.undoStack.length() > 0 {
-		parts = append(parts, helpStyle.Render(fmt.Sprintf("ctrl+z: undo (%d)", m.undoStack.length())))
+	filename := sanitizeDisplay(filepath.Base(m.filePath))
+	parts = append(parts, ansi.Truncate(filename, max(1, budget/3), "…"))
+	if m.statusText == "" {
+		parts = append(parts, fmt.Sprintf("%d entries", m.entryCount))
+		if m.undoStack.length() > 0 {
+			parts = append(parts, helpStyle.Render(fmt.Sprintf("ctrl+z: undo (%d)", m.undoStack.length())))
+		}
 	}
 	if m.statusText != "" {
+		parts = append(parts, helpStyle.Render("F1: details"))
+		remaining := max(0, budget-lipgloss.Width(strings.Join(parts, "  "))-4)
+		message := ansi.Truncate(sanitizeDisplay(m.statusText), remaining, "…")
 		if m.statusError {
-			parts = append(parts, errorMsgStyle.Render(sanitizeDisplay(m.statusText)))
+			parts = append(parts, errorMsgStyle.Render(message))
 		} else {
-			parts = append(parts, successStyle.Render(sanitizeDisplay(m.statusText)))
+			parts = append(parts, successStyle.Render(message))
 		}
 	}
 	content := strings.Join(parts, "  ")
-	return statusBarBgStyle.Width(m.width).Render(content)
+	content = ansi.Truncate(content, budget, "…")
+	return fitFrame(statusBarBgStyle.Width(width).Render(content), width, 1)
 }
 
 func (m AppModel) viewHeight() int {
 	if m.state == viewUnlock {
 		return m.height
 	}
-	return m.height - 1
+	return max(0, m.height-1)
 }
 
 func (m AppModel) handleUndo() (tea.Model, tea.Cmd) {

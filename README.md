@@ -133,6 +133,15 @@ You can also upgrade from the TUI: press `s` to open the save dialog, then `Tab`
 
 All keybindings shown below are defaults and can be customized via the config file (see [Keybindings](#keybindings)).
 
+Screens adapt to the terminal size. Settings and entry forms scroll to keep the
+focused field visible; use `Tab` / `Shift+Tab` to move between fields. Shortcut
+hints use up to two rows, showing essential actions when space is limited.
+Press `F1` in any unlocked screen for the full help (and the full current status
+message); `Esc` / `F1` returns without losing form edits. `?` also opens help in
+the browser and entry detail, but remains ordinary text inside inputs.
+Use `PageUp` / `PageDown` to read long unlock errors, and `j` / `k` or
+`PageUp` / `PageDown` to scroll database statistics.
+
 ### Browser
 
 | Key | Action |

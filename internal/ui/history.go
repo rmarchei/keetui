@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -46,8 +47,8 @@ func (m HistoryModel) Init() tea.Cmd {
 }
 
 func (m HistoryModel) visibleHeight() int {
-	h := max(m.height-8, 5)
-	return h
+	_, height := viewSize(m.width, m.height)
+	return max(1, height-5-lipgloss.Height(m.footer()))
 }
 
 func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -55,6 +56,7 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -101,9 +103,10 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m HistoryModel) View() tea.View {
 	var b strings.Builder
+	m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 
 	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(fmt.Sprintf(" History: %s ", m.entryTitle)))
+	b.WriteString(titleStyle.Render(fmt.Sprintf(" History: %s ", sanitizeDisplay(m.entryTitle))))
 	b.WriteString("\n\n")
 
 	if len(m.history) == 0 {
@@ -149,10 +152,9 @@ func (m HistoryModel) View() tea.View {
 		}
 	}
 
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render(fmt.Sprintf("  j/k: navigate  %s: toggle passwords  %s: copy selected password  esc: back  %s: quit",
-		m.keys.TogglePassword, m.keys.CopyPassword, m.keys.Quit)))
-	b.WriteString("\n")
+	return tea.NewView(screen(b.String(), m.footer(), m.width, m.height, 0))
+}
 
-	return tea.NewView(b.String())
+func (m HistoryModel) footer() string {
+	return renderHints(m.width, "esc: back", "F1: help", "j/k: navigate", m.keys.TogglePassword+": toggle passwords", m.keys.CopyPassword+": copy password", m.keys.Quit+": quit")
 }

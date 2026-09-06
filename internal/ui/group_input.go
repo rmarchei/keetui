@@ -50,6 +50,7 @@ func (m GroupInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		sizeInput(&m.input, msg.Width)
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -80,6 +81,8 @@ func (m GroupInputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m GroupInputModel) View() tea.View {
 	var b strings.Builder
+	width, _ := viewSize(m.width, m.height)
+	sizeInput(&m.input, width)
 
 	b.WriteString("\n")
 	title := " New Group "
@@ -90,8 +93,5 @@ func (m GroupInputModel) View() tea.View {
 	b.WriteString("\n\n")
 	b.WriteString(m.input.View())
 	b.WriteString("\n\n")
-	b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
-	b.WriteString("\n")
-
-	return tea.NewView(b.String())
+	return tea.NewView(screen(b.String(), renderHints(width, "enter: confirm", "esc: cancel", "F1: help"), m.width, m.height, 0))
 }

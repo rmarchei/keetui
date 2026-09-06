@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // ConfirmModel shows a yes/no confirmation prompt.
@@ -37,8 +38,9 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
-			// Buttons are on line 5 (0-indexed): newline, title, newline, message, newline, buttons
-			if msg.Y == 5 {
+			width, _ := viewSize(m.width, m.height)
+			buttonRow := 4 + lipgloss.Height(wrapContent("  "+sanitizeDisplay(m.message), width))
+			if msg.Y == buttonRow {
 				// No button roughly at x < 14, Yes button after
 				if msg.X < 14 {
 					m.selected = false
@@ -75,11 +77,12 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m ConfirmModel) View() tea.View {
 	var b strings.Builder
+	width, _ := viewSize(m.width, m.height)
 
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Confirm "))
 	b.WriteString("\n\n")
-	fmt.Fprintf(&b, "  %s\n\n", sanitizeDisplay(m.message))
+	fmt.Fprintf(&b, "%s\n\n", wrapContent("  "+sanitizeDisplay(m.message), width))
 
 	var no, yes string
 	if m.selected {
@@ -92,8 +95,5 @@ func (m ConfirmModel) View() tea.View {
 	fmt.Fprintf(&b, "  %s  %s\n", no, yes)
 
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  y: yes  n/esc: no  tab: toggle  enter: confirm"))
-	b.WriteString("\n")
-
-	return tea.NewView(b.String())
+	return tea.NewView(screen(b.String(), renderHints(width, "y: yes", "n/esc: no", "tab: toggle", "enter: confirm", "F1: help"), m.width, m.height, 0))
 }

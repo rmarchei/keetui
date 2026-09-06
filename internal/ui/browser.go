@@ -7,6 +7,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -331,15 +332,13 @@ func (m BrowserModel) Init() tea.Cmd {
 }
 
 func (m BrowserModel) visibleHeight() int {
-	// Reserve lines for header, breadcrumb, blank lines, help, status
-	h := m.height - 8
+	_, height := viewSize(m.width, m.height)
+	// Four header rows, two position-counter rows, and measured hints.
+	h := height - 6 - lipgloss.Height(m.footerView())
 	if m.searching {
 		h -= 2 // search input line
 	}
-	if h < 5 {
-		h = 5
-	}
-	return h
+	return max(1, h)
 }
 
 // fuzzyMatch returns true if all characters in pattern appear in s in order (case-insensitive).
@@ -432,6 +431,8 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		sizeInput(&m.searchInput, msg.Width)
+		m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 		return m, nil
 
 	case RefreshMsg:
@@ -526,7 +527,7 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Calculate header lines: 1 newline + 1 title + 1 breadcrumb + 1 blank = 4
 				headerLines := 4
 				idx := mouse.Y - headerLines + m.offset
-				if idx >= 0 && idx < len(m.items) {
+				if mouse.Y >= headerLines && mouse.Y < headerLines+m.visibleHeight() && idx >= 0 && idx < len(m.items) {
 					if idx == m.cursor {
 						// Click on already-selected item: open it
 						item := m.items[m.cursor]
@@ -946,6 +947,7 @@ func (m *BrowserModel) updateSearchInput(msg tea.Msg) tea.Cmd {
 
 func (m BrowserModel) View() tea.View {
 	var b strings.Builder
+	m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" keetui "))
@@ -1041,30 +1043,33 @@ func (m BrowserModel) View() tea.View {
 		}
 	}
 
-	b.WriteString("\n")
+	return tea.NewView(screen(b.String(), m.footerView(), m.width, m.height, 0))
+}
+
+func (m BrowserModel) footerView() string {
+	var help string
 	if m.searching {
-		b.WriteString(helpStyle.Render("  enter: confirm  esc: cancel"))
+		return renderHints(m.width, "enter: confirm", "esc: cancel", "F1: help")
 	} else if m.readOnly {
-		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: sort  %s: tag  %s: info  %s: audit  %s: quit",
+		help = fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: sort  %s: tag  %s: info  %s: audit  %s: quit",
 			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
 			m.keys.Search, m.keys.CycleSort, m.keys.FilterTag, m.keys.ShowStats, m.keys.ShowAudit, m.keys.Quit)
-		b.WriteString(helpStyle.Render(help))
 	} else if m.inRecycleBin() {
-		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: delete permanently  %s: restore  %s: empty bin  %s: save  %s: quit",
+		help = fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: delete permanently  %s: restore  %s: empty bin  %s: save  %s: quit",
 			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
 			m.keys.Delete, m.keys.Restore, m.keys.EmptyRecycleBin,
 			m.keys.Save, m.keys.Quit)
-		b.WriteString(helpStyle.Render(help))
 	} else {
-		help := fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: sort  %s: tag  %s: new  %s: group  %s: rename  %s: dup  %s: fav  %s: cut  %s: paste  %s: del  %s: info  %s: audit  %s: config  %s: save  %s: password  %s: quit",
+		help = fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: sort  %s: tag  %s: new  %s: group  %s: rename  %s: dup  %s: fav  %s: cut  %s: paste  %s: del  %s: info  %s: audit  %s: config  %s: save  %s: password  %s: quit",
 			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
 			m.keys.Search, m.keys.CycleSort, m.keys.FilterTag, m.keys.NewEntry, m.keys.NewGroup,
 			m.keys.RenameGroup, m.keys.Duplicate, m.keys.Favorite, m.keys.Cut, m.keys.Paste,
 			m.keys.Delete, m.keys.ShowStats, m.keys.ShowAudit,
 			m.keys.ShowSettings, m.keys.Save, m.keys.ChangePassword, m.keys.Quit)
-		b.WriteString(helpStyle.Render(help))
 	}
-	b.WriteString("\n")
-
-	return tea.NewView(b.String())
+	essentials := []string{"?: help", m.keys.Quit + ": quit"}
+	if !m.readOnly {
+		essentials = append(essentials, m.keys.Save+": save")
+	}
+	return renderHints(m.width, append(essentials, strings.Split(strings.TrimSpace(help), "  ")...)...)
 }

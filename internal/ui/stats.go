@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/rmarchei/keetui/internal/keepass"
 )
@@ -14,6 +15,7 @@ type StatsModel struct {
 	stats  keepass.DBStats
 	width  int
 	height int
+	offset int
 }
 
 // ShowStatsMsg requests showing database stats.
@@ -42,14 +44,34 @@ func (m StatsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "esc", "h", "left":
 			return m, func() tea.Msg { return BackToBrowserMsg{} }
+		case "j", "down", "k", "up", "pgdown", "pgup", "home", "end":
+			_, height := viewSize(m.width, m.height)
+			visible := max(1, bodyHeight(height, m.footer()))
+			limit := max(0, lipgloss.Height(m.body())-visible)
+			switch msg.String() {
+			case "j", "down":
+				m.offset++
+			case "k", "up":
+				m.offset--
+			case "pgdown":
+				m.offset += visible
+			case "pgup":
+				m.offset -= visible
+			case "home":
+				m.offset = 0
+			case "end":
+				m.offset = limit
+			}
+			m.offset = min(max(0, m.offset), limit)
 		}
 	}
 
 	return m, nil
 }
 
-func (m StatsModel) View() tea.View {
+func (m StatsModel) body() string {
 	var b strings.Builder
+	width, _ := viewSize(m.width, m.height)
 
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Database Info "))
@@ -57,7 +79,7 @@ func (m StatsModel) View() tea.View {
 
 	fmt.Fprintf(&b, "  %s %s\n",
 		labelStyle.Render("File:"),
-		valueStyle.Render(m.stats.FilePath))
+		pathLabel(m.stats.FilePath, max(1, width-15)))
 
 	fmt.Fprintf(&b, "  %s %s\n",
 		labelStyle.Render("Size:"),
@@ -119,11 +141,15 @@ func (m StatsModel) View() tea.View {
 			successStyle.Render("0"))
 	}
 
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  esc: back  q: quit"))
-	b.WriteString("\n")
+	return wrapContent(b.String(), width)
+}
 
-	return tea.NewView(b.String())
+func (m StatsModel) footer() string {
+	return renderHints(m.width, "esc: back", "q: quit", "j/k: scroll", "pgup/pgdown: page", "F1: help")
+}
+
+func (m StatsModel) View() tea.View {
+	return tea.NewView(screen(m.body(), m.footer(), m.width, m.height, m.offset))
 }
 
 func formatSize(bytes int64) string {

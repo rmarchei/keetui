@@ -76,6 +76,7 @@ type SettingsModel struct {
 	height  int
 	status  string
 	isError bool
+	offset  int
 }
 
 func NewSettingsModel(cfg config.Config) SettingsModel {
@@ -141,11 +142,25 @@ func (m SettingsModel) Init() tea.Cmd {
 }
 
 func (m SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.update(msg)
+	next := updated.(SettingsModel)
+	next.syncLayout()
+	return next, cmd
+}
+
+func (m SettingsModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
+	case tea.MouseWheelMsg:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			return m.update(tea.KeyPressMsg{Code: tea.KeyUp})
+		case tea.MouseWheelDown:
+			return m.update(tea.KeyPressMsg{Code: tea.KeyDown})
+		}
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
@@ -311,8 +326,19 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg { return ConfigSavedMsg{Cfg: newCfg} }
 }
 
-func (m SettingsModel) View() tea.View {
+func (m *SettingsModel) syncLayout() {
+	width, height := viewSize(m.width, m.height)
+	for i := range m.inputs {
+		sizeInput(&m.inputs[i], width)
+	}
+	_, rows := m.body()
+	m.offset = followField(m.offset, rows[m.focused], bodyHeight(height, m.footer()))
+}
+
+func (m SettingsModel) body() (string, []fieldRows) {
 	var b strings.Builder
+	var rows []fieldRows
+	width, _ := viewSize(m.width, m.height)
 
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Settings "))
@@ -320,28 +346,38 @@ func (m SettingsModel) View() tea.View {
 
 	fmt.Fprintf(&b, "  %s %s\n\n",
 		helpStyle.Render("Config file:"),
-		valueStyle.Render(config.Path()))
+		pathLabel(config.Path(), max(1, width-15)))
 
 	for i := range m.inputs {
+		start := strings.Count(b.String(), "\n")
 		b.WriteString(m.inputs[i].View())
 		b.WriteString("\n")
-		fmt.Fprintf(&b, "  %s\n", hiddenStyle.Render(settingDescriptions[i]))
+		fmt.Fprintf(&b, "%s\n", wrapContent(hiddenStyle.Render("  "+settingDescriptions[i]), width))
+		rows = append(rows, fieldRows{start, strings.Count(b.String(), "\n") - 1})
 		if i < settingCount-1 {
 			b.WriteString("\n")
 		}
 	}
 
-	b.WriteString("\n")
+	return b.String(), rows
+}
+
+func (m SettingsModel) footer() string {
+	width, _ := viewSize(m.width, m.height)
+	var b strings.Builder
 	if m.status != "" {
 		if m.isError {
-			fmt.Fprintf(&b, "  %s\n", errorMsgStyle.Render(m.status))
+			fmt.Fprintf(&b, "%s\n", wrapContent(errorMsgStyle.Render(sanitizeDisplay(m.status)), width))
 		} else {
-			fmt.Fprintf(&b, "  %s\n", successStyle.Render(m.status))
+			fmt.Fprintf(&b, "%s\n", wrapContent(successStyle.Render(sanitizeDisplay(m.status)), width))
 		}
 	}
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  enter/ctrl+s: save  esc: back"))
-	b.WriteString("\n")
+	b.WriteString(renderHints(width, "enter/ctrl+s: save", "esc: back", "F1: help", "tab/shift+tab: navigate"))
+	return b.String()
+}
 
-	return tea.NewView(b.String())
+func (m SettingsModel) View() tea.View {
+	m.syncLayout()
+	body, _ := m.body()
+	return tea.NewView(screen(body, m.footer(), m.width, m.height, m.offset))
 }

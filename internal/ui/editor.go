@@ -10,6 +10,7 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -59,6 +60,7 @@ type EditorModel struct {
 	cfg           config.Config
 	revealSeq     int  // incremented on each keystroke that triggers auto-reveal
 	persistReveal bool // true when ctrl+r was used to persistently show password
+	offset        int
 }
 
 type customFieldInput struct {
@@ -168,6 +170,14 @@ func (m EditorModel) Init() tea.Cmd {
 }
 
 func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.syncLayout()
+	updated, cmd := m.update(msg)
+	next := updated.(EditorModel)
+	next.syncLayout()
+	return next, cmd
+}
+
+func (m EditorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -182,24 +192,14 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
-			// Header: 1 blank + 1 title + 1 blank = 3 lines
-			row := msg.Y - 3
-			// Notes field has a label line + textarea height, so fields after
-			// notes are shifted down by (notesHeight - 1 + 1 for label) extra rows.
-			notesExtraRows := m.notesInput.Height() // label + textarea - 1 regular row
-			if row >= 0 {
-				if row < fieldNotes {
-					m.focused = row
-					return m, m.updateFocus()
-				}
-				if row >= fieldNotes && row < fieldNotes+notesExtraRows+1 {
-					m.focused = fieldNotes
-					return m, m.updateFocus()
-				}
-				// Adjust row for fields after notes
-				adjustedRow := row - notesExtraRows
-				if adjustedRow >= fieldNotes+1 && adjustedRow < fixedFieldCount {
-					m.focused = adjustedRow
+			_, height := viewSize(m.width, m.height)
+			_, rows := m.body()
+			if msg.Y >= 0 && msg.Y < bodyHeight(height, m.footer()) {
+				for i, row := range rows {
+					if msg.Y+m.offset < row.start || msg.Y+m.offset > row.end {
+						continue
+					}
+					m.focused = i
 					return m, m.updateFocus()
 				}
 			}
@@ -505,8 +505,26 @@ func (m *EditorModel) SetGeneratedPassword(pw string) tea.Cmd {
 	return m.scheduleAutoMask(fieldPassword, 2*time.Second)
 }
 
-func (m EditorModel) View() tea.View {
+func (m *EditorModel) syncLayout() {
+	width, height := viewSize(m.width, m.height)
+	for i := range m.inputs {
+		sizeInput(&m.inputs[i], width)
+	}
+	m.notesInput.SetWidth(max(1, width-1))
+	m.notesInput.SetHeight(min(4, max(1, height-6)))
+	for i := range m.customInputs {
+		sizeInput(&m.customInputs[i].key, width)
+		sizeInput(&m.customInputs[i].value, width)
+	}
+	_, rows := m.body()
+	m.focused = min(max(0, m.focused), len(rows)-1)
+	m.offset = followField(m.offset, rows[m.focused], bodyHeight(height, m.footer()))
+}
+
+func (m EditorModel) body() (string, []fieldRows) {
 	var b strings.Builder
+	var rows []fieldRows
+	width, _ := viewSize(m.width, m.height)
 
 	b.WriteString("\n")
 	action := "Edit Entry"
@@ -517,11 +535,13 @@ func (m EditorModel) View() tea.View {
 	b.WriteString("\n\n")
 
 	for i := range m.inputs {
+		start := strings.Count(b.String(), "\n")
 		if i == fieldNotes {
 			// Render multi-line textarea for notes
 			fmt.Fprintf(&b, "  %s\n", labelStyle.Render("Notes:"))
 			b.WriteString(m.notesInput.View())
 			b.WriteString("\n")
+			rows = append(rows, fieldRows{start, strings.Count(b.String(), "\n") - 1})
 			continue
 		}
 		b.WriteString(m.inputs[i].View())
@@ -530,11 +550,18 @@ func (m EditorModel) View() tea.View {
 			pw := m.inputs[fieldPassword].Value()
 			if pw != "" {
 				strength := keepass.EvaluatePasswordStrength(pw)
-				b.WriteString("  ")
-				b.WriteString(renderStrengthDetail(strength))
+				annotation := renderStrengthDetail(strength)
+				if lipgloss.Width(m.inputs[i].View())+2+lipgloss.Width(annotation) <= width {
+					b.WriteString("  ")
+				} else {
+					b.WriteString("\n")
+				}
+				b.WriteString(wrapContent(annotation, width))
 			}
 		}
 		b.WriteString("\n")
+		// Follow the editable row, not an optional strength annotation.
+		rows = append(rows, fieldRows{start, start})
 	}
 
 	if len(m.customInputs) > 0 {
@@ -542,16 +569,26 @@ func (m EditorModel) View() tea.View {
 		b.WriteString(helpStyle.Render("  Custom Fields:"))
 		b.WriteString("\n")
 		for _, cf := range m.customInputs {
+			start := strings.Count(b.String(), "\n")
 			b.WriteString(cf.key.View())
-			b.WriteString("  ")
-			b.WriteString(cf.value.View())
-			if cf.protected {
-				b.WriteString(hiddenStyle.Render("  [protected]"))
-			}
 			b.WriteString("\n")
+			rows = append(rows, fieldRows{start, start})
+			start++
+			b.WriteString(cf.value.View())
+			b.WriteString("\n")
+			rows = append(rows, fieldRows{start, start})
+			if cf.protected {
+				b.WriteString(hiddenStyle.Render("  [protected]") + "\n")
+			}
 		}
 	}
 
+	return b.String(), rows
+}
+
+func (m EditorModel) footer() string {
+	width, _ := viewSize(m.width, m.height)
+	var b strings.Builder
 	if m.generated {
 		b.WriteString("\n")
 		b.WriteString(successStyle.Render("  Password generated!"))
@@ -560,15 +597,18 @@ func (m EditorModel) View() tea.View {
 
 	if m.err != nil {
 		b.WriteString("\n")
-		b.WriteString(errorMsgStyle.Render(fmt.Sprintf("  Error: %s", m.err)))
+		b.WriteString(wrapContent(errorMsgStyle.Render("Error: "+sanitizeDisplay(m.err.Error())), width))
 		b.WriteString("\n")
 	}
 
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("  tab/shift+tab: navigate  ctrl+r: reveal  ctrl+g: gen password  ctrl+a: add field  ctrl+t: protect  ctrl+d: del field  ctrl+s: save  esc: cancel"))
-	b.WriteString("\n")
+	b.WriteString(renderHints(width, "ctrl+s: save", "esc: cancel", "F1: help", "tab/shift+tab: navigate", "ctrl+r: reveal", "ctrl+g: gen password", "ctrl+a: add field", "ctrl+t: protect", "ctrl+d: del field"))
+	return b.String()
+}
 
-	return tea.NewView(b.String())
+func (m EditorModel) View() tea.View {
+	m.syncLayout()
+	body, _ := m.body()
+	return tea.NewView(screen(body, m.footer(), m.width, m.height, m.offset))
 }
 
 func generatePassword(length int, charset string) (string, error) {
