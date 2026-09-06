@@ -4,7 +4,7 @@ CMD      := ./cmd/keetui
 DIST     := dist
 
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-GOIMAGE  := golang:1.26
+GOIMAGE  := golang:1.27.1
 LINTIMAGE := golangci/golangci-lint:latest
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 
@@ -18,7 +18,7 @@ HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/')
 
 CROSS_PLATFORMS := $(filter-out $(HOST_OS)-$(HOST_ARCH),$(PLATFORMS))
 
-GO_SOURCES := $(shell find cmd internal -name '*.go') go.mod go.sum
+GO_SOURCES := $(shell find cmd internal -name '*.go') go.mod go.sum Makefile
 
 PREFIX   ?= /usr/local
 

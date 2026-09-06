@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version: "1.27.1"
 
       - name: Build
         env:
@@ -105,6 +105,8 @@ jobs:
             license "MIT"
 
             on_macos do
+              depends_on macos: :ventura
+
               if Hardware::CPU.arm?
                 url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-darwin-arm64",
                     using: GitHubPrivateRepositoryReleaseDownloadStrategy

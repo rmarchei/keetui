@@ -62,6 +62,11 @@ go build -o keetui ./cmd/keetui
 
 ### Build with Make
 
+CI, release builds, and container-based Make targets use **Go 1.27.1**.
+macOS binaries built with this toolchain require **macOS 13 Ventura or newer**.
+The module retains Go 1.26.0 as its minimum source version; local builds without
+a container use the installed Go compiler.
+
 ```sh
 make                  # build for current OS/arch (uses container if available)
 make test             # run tests with race detector (uses container if available)
