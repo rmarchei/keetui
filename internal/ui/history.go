@@ -52,11 +52,17 @@ func (m HistoryModel) visibleHeight() int {
 }
 
 func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.update(msg)
+	next := updated.(HistoryModel)
+	next.cursor, next.offset = followList(next.cursor, next.offset, len(next.history), next.visibleHeight())
+	return next, cmd
+}
+
+func (m HistoryModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -71,18 +77,11 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "j", "down":
 			if m.cursor < len(m.history)-1 {
 				m.cursor++
-				vis := m.visibleHeight()
-				if m.cursor >= m.offset+vis {
-					m.offset = m.cursor - vis + 1
-				}
 			}
 
 		case "k", "up":
 			if m.cursor > 0 {
 				m.cursor--
-				if m.cursor < m.offset {
-					m.offset = m.cursor
-				}
 			}
 
 		case m.keys.TogglePassword:
@@ -103,7 +102,6 @@ func (m HistoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m HistoryModel) View() tea.View {
 	var b strings.Builder
-	m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(fmt.Sprintf(" History: %s ", sanitizeDisplay(m.entryTitle))))

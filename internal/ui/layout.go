@@ -91,11 +91,42 @@ func screen(body, footer string, width, height, offset int) string {
 
 func contentWindow(body string, width, height, offset int) string {
 	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
-	offset = min(max(offset, 0), max(0, len(lines)-height))
+	offset = clampOffset(body, height, offset)
 	return fitFrame(strings.Join(lines[offset:], "\n"), width, height)
 }
 
+// Match the rendered window's treatment of trailing newlines everywhere.
+func clampOffset(body string, height, offset int) int {
+	return min(max(offset, 0), scrollLimit(body, height))
+}
+
+func scrollLimit(body string, height int) int {
+	lines := strings.Count(strings.TrimRight(body, "\n"), "\n") + 1
+	return max(0, lines-max(1, height))
+}
+
+func followList(cursor, offset, count, height int) (int, int) {
+	cursor = min(max(cursor, 0), max(0, count-1))
+	offset = followField(offset, fieldRows{cursor, cursor}, height)
+	return cursor, min(offset, max(0, count-max(1, height)))
+}
+
 type fieldRows struct{ start, end int }
+
+// lineBuilder tracks rows incrementally, avoiding rescans of a growing form.
+type lineBuilder struct {
+	builder strings.Builder
+	row     int
+}
+
+func (b *lineBuilder) String() string {
+	return b.builder.String()
+}
+
+func (b *lineBuilder) WriteString(s string) {
+	b.row += strings.Count(s, "\n")
+	b.builder.WriteString(s)
+}
 
 func followField(offset int, field fieldRows, height int) int {
 	height = max(1, height)

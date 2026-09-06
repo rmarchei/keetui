@@ -6,6 +6,7 @@ import (
 	"math/big"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
@@ -62,6 +63,7 @@ type EditorModel struct {
 	persistReveal bool // true when ctrl+r was used to persistently show password
 	offset        int
 	strength      keepass.StrengthResult // recomputed only when the password changes
+	rows          []fieldRows
 }
 
 type customFieldInput struct {
@@ -139,6 +141,7 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 	m.inputs[0].Focus()
 	setInputTextStyle(&m.inputs[0], focusedStyle)
 	m.refreshStrength()
+	m.syncLayout()
 
 	return m
 }
@@ -172,7 +175,6 @@ func (m EditorModel) Init() tea.Cmd {
 }
 
 func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	m.syncLayout()
 	updated, cmd := m.update(msg)
 	next := updated.(EditorModel)
 	if next.inputs[fieldPassword].Value() != m.inputs[fieldPassword].Value() {
@@ -198,9 +200,8 @@ func (m EditorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
 			_, height := viewSize(m.width, m.height)
-			_, rows := m.body()
 			if msg.Y >= 0 && msg.Y < bodyHeight(height, m.footer()) {
-				for i, row := range rows {
+				for i, row := range m.rows {
 					if msg.Y+m.offset < row.start || msg.Y+m.offset > row.end {
 						continue
 					}
@@ -508,6 +509,7 @@ func (m *EditorModel) SetGeneratedPassword(pw string) tea.Cmd {
 	m.refreshStrength()
 	m.inputs[fieldPassword].EchoMode = textinput.EchoNormal
 	m.generated = true
+	m.syncLayout()
 	return m.scheduleAutoMask(fieldPassword, 2*time.Second)
 }
 
@@ -522,19 +524,34 @@ func (m *EditorModel) syncLayout() {
 	for i := range m.inputs {
 		sizeInput(&m.inputs[i], width)
 	}
+	// textinput pads to its width. Shrink a short password input before
+	// deciding whether the annotation actually fits alongside it.
+	if pw := m.inputs[fieldPassword].Value(); m.cfg.ShowPasswordStrength && pw != "" {
+		input := m.inputs[fieldPassword]
+		valueWidth := utf8.RuneCountInString(pw)
+		if input.EchoMode == textinput.EchoNormal {
+			valueWidth = lipgloss.Width(sanitizeDisplay(pw))
+		}
+		input.SetWidth(min(input.Width(), max(1, valueWidth+1)))
+		if lipgloss.Width(input.View())+2+lipgloss.Width(renderStrengthDetail(m.strength)) <= width {
+			m.inputs[fieldPassword] = input
+		}
+	}
 	m.notesInput.SetWidth(max(1, width-1))
 	m.notesInput.SetHeight(min(4, max(1, height-6)))
 	for i := range m.customInputs {
 		sizeInput(&m.customInputs[i].key, width)
 		sizeInput(&m.customInputs[i].value, width)
 	}
-	_, rows := m.body()
+	body, rows := m.body()
+	m.rows = rows
 	m.focused = min(max(0, m.focused), len(rows)-1)
-	m.offset = followField(m.offset, rows[m.focused], bodyHeight(height, m.footer()))
+	visible := bodyHeight(height, m.footer())
+	m.offset = clampOffset(body, visible, followField(m.offset, rows[m.focused], visible))
 }
 
 func (m EditorModel) body() (string, []fieldRows) {
-	var b strings.Builder
+	var b lineBuilder
 	var rows []fieldRows
 	width, _ := viewSize(m.width, m.height)
 
@@ -547,13 +564,13 @@ func (m EditorModel) body() (string, []fieldRows) {
 	b.WriteString("\n\n")
 
 	for i := range m.inputs {
-		start := strings.Count(b.String(), "\n")
+		start := b.row
 		if i == fieldNotes {
 			// Render multi-line textarea for notes
-			fmt.Fprintf(&b, "  %s\n", labelStyle.Render("Notes:"))
+			b.WriteString(fmt.Sprintf("  %s\n", labelStyle.Render("Notes:")))
 			b.WriteString(m.notesInput.View())
 			b.WriteString("\n")
-			rows = append(rows, fieldRows{start, strings.Count(b.String(), "\n") - 1})
+			rows = append(rows, fieldRows{start, b.row - 1})
 			continue
 		}
 		b.WriteString(m.inputs[i].View())
@@ -571,8 +588,7 @@ func (m EditorModel) body() (string, []fieldRows) {
 			}
 		}
 		b.WriteString("\n")
-		// Follow the editable row, not an optional strength annotation.
-		rows = append(rows, fieldRows{start, start})
+		rows = append(rows, fieldRows{start, b.row - 1})
 	}
 
 	if len(m.customInputs) > 0 {
@@ -580,7 +596,7 @@ func (m EditorModel) body() (string, []fieldRows) {
 		b.WriteString(helpStyle.Render("  Custom Fields:"))
 		b.WriteString("\n")
 		for _, cf := range m.customInputs {
-			start := strings.Count(b.String(), "\n")
+			start := b.row
 			b.WriteString(cf.key.View())
 			b.WriteString("\n")
 			rows = append(rows, fieldRows{start, start})
@@ -617,7 +633,6 @@ func (m EditorModel) footer() string {
 }
 
 func (m EditorModel) View() tea.View {
-	m.syncLayout()
 	body, _ := m.body()
 	return tea.NewView(screen(body, m.footer(), m.width, m.height, m.offset))
 }

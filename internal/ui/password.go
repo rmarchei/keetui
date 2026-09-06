@@ -29,7 +29,7 @@ func NewPasswordModel() PasswordModel {
 	ni.EchoMode = textinput.EchoPassword
 	ni.EchoCharacter = '*'
 	ni.Prompt = "  New password:     "
-	setInputPromptStyle(&ni, labelStyle)
+	setInputPromptStyle(&ni, labelStyle.UnsetWidth())
 	ni.SetWidth(40)
 	ni.Focus()
 	setInputTextStyle(&ni, focusedStyle)
@@ -39,7 +39,7 @@ func NewPasswordModel() PasswordModel {
 	ci.EchoMode = textinput.EchoPassword
 	ci.EchoCharacter = '*'
 	ci.Prompt = "  Confirm password: "
-	setInputPromptStyle(&ci, labelStyle)
+	setInputPromptStyle(&ci, labelStyle.UnsetWidth())
 	ci.SetWidth(40)
 
 	return PasswordModel{
@@ -118,9 +118,17 @@ func (m PasswordModel) View() tea.View {
 	b.WriteString(titleStyle.Render(" Change Master Password "))
 	b.WriteString("\n\n")
 
-	b.WriteString(m.newInput.View())
+	start := strings.Count(wrapContent(b.String(), width), "\n")
+	newView := wrapContent(m.newInput.View(), width)
+	confirmView := wrapContent(m.confirmInput.View(), width)
+	field := fieldRows{start, start + strings.Count(newView, "\n")}
+	if m.focused == 1 {
+		field.start = field.end + 1
+		field.end = field.start + strings.Count(confirmView, "\n")
+	}
+	b.WriteString(newView)
 	b.WriteString("\n")
-	b.WriteString(m.confirmInput.View())
+	b.WriteString(confirmView)
 	b.WriteString("\n")
 
 	if m.err != nil {
@@ -131,6 +139,6 @@ func (m PasswordModel) View() tea.View {
 
 	b.WriteString("\n")
 	footer := renderHints(width, "enter: confirm", "esc: cancel", "tab: switch field", "F1: help")
-	offset := followField(0, fieldRows{3 + m.focused, 3 + m.focused}, bodyHeight(height, footer))
+	offset := followField(0, field, bodyHeight(height, footer))
 	return tea.NewView(screen(wrapContent(b.String(), width), footer, width, height, offset))
 }

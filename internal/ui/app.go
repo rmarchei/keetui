@@ -107,6 +107,15 @@ type RequestQuitMsg struct{}
 // quitMsg is sent when the user confirms quitting with unsaved changes.
 type quitMsg struct{}
 
+// Preserve the complete overlay context when a quit prompt temporarily
+// replaces another confirmation (possibly underneath help).
+type quitContext struct {
+	state, returnState viewState
+	confirm            ConfirmModel
+	help               HelpModel
+	helpReturnState    viewState
+}
+
 // AppModel is the top-level model coordinating all views.
 type AppModel struct {
 	state           viewState
@@ -137,6 +146,7 @@ type AppModel struct {
 	lastCopied      string    // most recent keetui-copied clipboard value not yet cleared
 	returnState     viewState // view to return to after confirm dialog
 	helpReturnState viewState // help must not overwrite a pending confirmation
+	quitReturn      *quitContext
 	entryCount      int       // cached entry count for status bar
 	undoStack       undoStack // undo history
 	readOnly        bool      // when true, all mutations are blocked
@@ -203,16 +213,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		updated, _ = next.updateActive(tea.WindowSizeMsg{Width: next.width, Height: next.viewHeight()})
 		next = updated.(AppModel)
 	}
+	if next.state == viewConfirm {
+		// A confirmation can be replaced without changing the active state.
+		next.confirm.width, next.confirm.height = next.width, next.viewHeight()
+	}
 	return next, cmd
 }
 
 func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// A help overlay must not swallow the editor's pending secret re-mask.
-	if _, ok := msg.(maskPasswordMsg); ok && m.state != viewEditor && m.editor.revealSeq > 0 {
-		updated, cmd := m.editor.Update(msg)
-		m.editor = updated.(EditorModel)
-		return m, cmd
-	}
 	// Handle window size globally
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = wsm.Width
@@ -284,26 +292,25 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle cross-view messages first
 	switch msg := msg.(type) {
 	case RequestQuitMsg:
-		if m.dirty {
-			// When already showing a confirm dialog (ctrl+c inside it),
-			// keep the original returnState so cancel goes back to the
-			// underlying view, not to the dialog itself.
-			if m.state != viewConfirm {
-				m.returnState = m.state
+		if m.quitReturn != nil {
+			if m.state == viewHelp && m.helpReturnState == viewConfirm {
+				m.state = viewConfirm
 			}
-			m.confirm = NewConfirmModel("You have unsaved changes. Quit anyway?", func() tea.Msg {
-				return quitMsg{}
-			})
-			m.state = viewConfirm
-			return m, nil
+			return m, nil // already asking; do not replace the pending context
 		}
-		if m.cfg.ConfirmOnQuit() {
+		if m.dirty || m.cfg.ConfirmOnQuit() {
+			m.quitReturn = &quitContext{
+				state: m.state, returnState: m.returnState, confirm: m.confirm,
+				help: m.help, helpReturnState: m.helpReturnState,
+			}
 			if m.state != viewConfirm {
 				m.returnState = m.state
 			}
-			m.confirm = NewConfirmModel("Quit?", func() tea.Msg {
-				return quitMsg{}
-			})
+			prompt := "Quit?"
+			if m.dirty {
+				prompt = "You have unsaved changes. Quit anyway?"
+			}
+			m.confirm = NewConfirmModel(prompt, func() tea.Msg { return quitMsg{} })
 			m.state = viewConfirm
 			return m, nil
 		}
@@ -700,22 +707,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.openHelp()
 
 	case CloseHelpMsg:
-		m.state = m.helpReturnState
-		switch m.state {
-		case viewDetail:
-			return m, m.detail.startTOTPTick()
-		case viewEditor:
-			return m, m.editor.Init()
-		case viewSettings:
-			return m, m.settings.Init()
-		case viewPathInput:
-			return m, m.pathInput.Init()
-		case viewGroupInput:
-			return m, m.groupInput.Init()
-		case viewPassword:
-			return m, m.password.Init()
-		case viewPresetPicker:
-			return m, m.presetPicker.Init()
+		if m.state == viewHelp {
+			m.state = m.helpReturnState
 		}
 		return m, nil
 
@@ -927,6 +920,13 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg { return RefreshMsg{} }
 
 	case CancelEditMsg:
+		if m.state == viewConfirm && m.quitReturn != nil {
+			previous := m.quitReturn
+			m.state, m.returnState, m.confirm = previous.state, previous.returnState, previous.confirm
+			m.help, m.helpReturnState = previous.help, previous.helpReturnState
+			m.quitReturn = nil
+			return m, nil
+		}
 		if m.returnState != 0 {
 			m.state = m.returnState
 			m.returnState = 0
@@ -997,6 +997,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
 		m.unlock.err = fmt.Errorf("locked due to inactivity")
 		m.state = viewUnlock
+		m.quitReturn = nil
 		return m, m.unlock.Init()
 	}
 
@@ -1031,9 +1032,53 @@ func (m AppModel) openHelp() (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
+	states := []viewState{m.state}
+	// Input belongs only to the active view. Other messages also go to the
+	// screens under overlays, keeping their timers and dimensions current.
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.KeyReleaseMsg, tea.MouseMsg, tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
+	default:
+		seen := map[viewState]bool{m.state: true}
+		add := func(state viewState) {
+			if !seen[state] {
+				seen[state] = true
+				states = append(states, state)
+			}
+		}
+		for i := 0; i < len(states); i++ {
+			switch states[i] {
+			case viewHelp:
+				add(m.helpReturnState)
+			case viewConfirm:
+				if m.quitReturn == nil {
+					add(m.returnState)
+				} else {
+					add(m.quitReturn.state)
+					if m.quitReturn.state == viewHelp {
+						add(m.quitReturn.helpReturnState)
+					}
+					if m.quitReturn.state == viewConfirm || m.quitReturn.state == viewHelp && m.quitReturn.helpReturnState == viewConfirm {
+						add(m.quitReturn.returnState)
+					}
+				}
+			case viewPresetPicker:
+				add(viewEditor)
+			}
+		}
+	}
+	var commands []tea.Cmd
+	for _, state := range states {
+		updated, cmd := m.updateView(state, msg)
+		m = updated.(AppModel)
+		commands = append(commands, cmd)
+	}
+	return m, tea.Batch(commands...)
+}
+
+func (m AppModel) updateView(state viewState, msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Delegate to active view
 	var cmd tea.Cmd
-	switch m.state {
+	switch state {
 	case viewUnlock:
 		var updated tea.Model
 		updated, cmd = m.unlock.Update(msg)
@@ -1159,14 +1204,16 @@ func (m AppModel) statusBar() string {
 	if m.dirty {
 		parts = append(parts, statusBarModifiedStyle.Render("[modified]"))
 	}
-	filename := sanitizeDisplay(filepath.Base(m.filePath))
-	parts = append(parts, ansi.Truncate(filename, max(1, budget/3), "…"))
-	if m.statusText == "" {
-		parts = append(parts, fmt.Sprintf("%d entries", m.entryCount))
-		if m.undoStack.length() > 0 {
-			parts = append(parts, helpStyle.Render(fmt.Sprintf("ctrl+z: undo (%d)", m.undoStack.length())))
-		}
+	if m.undoStack.length() > 0 {
+		parts = append(parts, helpStyle.Render(fmt.Sprintf("ctrl+z: undo (%d)", m.undoStack.length())))
 	}
+	filename := sanitizeDisplay(filepath.Base(m.filePath))
+	count := fmt.Sprintf("%d entries", m.entryCount)
+	filenameBudget := max(1, budget-lipgloss.Width(strings.Join(parts, "  "))-len(count)-4)
+	if m.statusText != "" {
+		filenameBudget = max(1, min(filenameBudget, budget/4))
+	}
+	parts = append(parts, ansi.Truncate(filename, filenameBudget, "…"), count)
 	if m.statusText != "" {
 		parts = append(parts, helpStyle.Render("F1: details"))
 		remaining := max(0, budget-lipgloss.Width(strings.Join(parts, "  "))-4)

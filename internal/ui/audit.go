@@ -85,11 +85,17 @@ func (m AuditModel) visibleHeight() int {
 }
 
 func (m AuditModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.update(msg)
+	next := updated.(AuditModel)
+	next.cursor, next.offset = followList(next.cursor, next.offset, len(next.lines), next.visibleHeight())
+	return next, cmd
+}
+
+func (m AuditModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -124,10 +130,6 @@ func (m *AuditModel) moveDown() {
 	for i := m.cursor + 1; i < len(m.lines); i++ {
 		if !m.lines[i].isHeader {
 			m.cursor = i
-			vis := m.visibleHeight()
-			if m.cursor >= m.offset+vis {
-				m.offset = m.cursor - vis + 1
-			}
 			return
 		}
 	}
@@ -137,9 +139,6 @@ func (m *AuditModel) moveUp() {
 	for i := m.cursor - 1; i >= 0; i-- {
 		if !m.lines[i].isHeader {
 			m.cursor = i
-			if m.cursor < m.offset {
-				m.offset = m.cursor
-			}
 			return
 		}
 	}
@@ -147,7 +146,6 @@ func (m *AuditModel) moveUp() {
 
 func (m AuditModel) View() tea.View {
 	var b strings.Builder
-	m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Password Audit "))

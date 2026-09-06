@@ -427,12 +427,18 @@ func (m *BrowserModel) applySearch() {
 }
 
 func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	updated, cmd := m.update(msg)
+	next := updated.(BrowserModel)
+	next.cursor, next.offset = followList(next.cursor, next.offset, len(next.items), next.visibleHeight())
+	return next, cmd
+}
+
+func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		sizeInput(&m.searchInput, msg.Width)
-		m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 		return m, nil
 
 	case RefreshMsg:
@@ -506,13 +512,6 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = 0
 			}
 		}
-		// Adjust scroll offset so cursor is visible
-		vis := m.visibleHeight()
-		if m.cursor < m.offset {
-			m.offset = m.cursor
-		} else if m.cursor >= m.offset+vis {
-			m.offset = m.cursor - vis + 1
-		}
 
 		return m, nil
 
@@ -550,17 +549,10 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tea.MouseWheelUp:
 				if m.cursor > 0 {
 					m.cursor--
-					if m.cursor < m.offset {
-						m.offset = m.cursor
-					}
 				}
 			case tea.MouseWheelDown:
 				if m.cursor < len(m.items)-1 {
 					m.cursor++
-					vis := m.visibleHeight()
-					if m.cursor >= m.offset+vis {
-						m.offset = m.cursor - vis + 1
-					}
 				}
 			}
 		}
@@ -631,18 +623,11 @@ func (m BrowserModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", m.keys.NavUp:
 			if m.cursor > 0 {
 				m.cursor--
-				if m.cursor < m.offset {
-					m.offset = m.cursor
-				}
 			}
 
 		case "down", m.keys.NavDown:
 			if m.cursor < len(m.items)-1 {
 				m.cursor++
-				vis := m.visibleHeight()
-				if m.cursor >= m.offset+vis {
-					m.offset = m.cursor - vis + 1
-				}
 			}
 
 		case "enter", m.keys.Open, "right":
@@ -947,7 +932,6 @@ func (m *BrowserModel) updateSearchInput(msg tea.Msg) tea.Cmd {
 
 func (m BrowserModel) View() tea.View {
 	var b strings.Builder
-	m.offset = followField(m.offset, fieldRows{m.cursor, m.cursor}, m.visibleHeight())
 
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" keetui "))

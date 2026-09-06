@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/rmarchei/keetui/internal/keepass"
 )
@@ -34,6 +33,7 @@ func (m StatsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.offset = clampOffset(m.body(), bodyHeight(m.height, m.footer()), m.offset)
 		return m, nil
 
 	case tea.KeyPressMsg:
@@ -47,7 +47,7 @@ func (m StatsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "j", "down", "k", "up", "pgdown", "pgup", "home", "end":
 			_, height := viewSize(m.width, m.height)
 			visible := max(1, bodyHeight(height, m.footer()))
-			limit := max(0, lipgloss.Height(m.body())-visible)
+			limit := scrollLimit(m.body(), visible)
 			switch msg.String() {
 			case "j", "down":
 				m.offset++
