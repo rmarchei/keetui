@@ -63,7 +63,7 @@ func TestLayoutSettingsEveryFieldReachable(t *testing.T) {
 			if !strings.Contains(plain, settingLabels[m.focused]+":") {
 				t.Fatalf("%v: focused setting %q hidden", size, settingLabels[m.focused])
 			}
-			if !strings.Contains(plain, "enter/ctrl+s: save") || !strings.Contains(plain, "F1: help") {
+			if !strings.Contains(plain, "ctrl+s: save") || !strings.Contains(plain, "F1: help") {
 				t.Fatalf("%v: settings footer hidden", size)
 			}
 			updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
@@ -71,7 +71,7 @@ func TestLayoutSettingsEveryFieldReachable(t *testing.T) {
 		}
 		updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 		m = updated.(SettingsModel)
-		if !strings.Contains(ansi.Strip(m.View().Content), "Backup on save:") {
+		if !strings.Contains(ansi.Strip(m.View().Content), "Keybindings:") {
 			t.Fatal("reverse wrap did not scroll to the last setting")
 		}
 	}

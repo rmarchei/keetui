@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 )
 
@@ -270,6 +272,10 @@ func (kb KeyBindings) Validate() error {
 	addReserved(browser, "esc", "back")
 	addReserved(browser, "left", "back")
 	addReserved(browser, "?", "")
+	addReserved(browser, "f1", "")
+	addReserved(browser, "ctrl+c", "")
+	addReserved(browser, "ctrl+z", "")
+	addReserved(browser, "ctrl+s", "save")
 	addReserved(detail, "j", "")
 	addReserved(detail, "k", "")
 	addReserved(detail, "enter", "")
@@ -277,6 +283,11 @@ func (kb KeyBindings) Validate() error {
 	addReserved(detail, "left", "back")
 	addReserved(detail, "q", "quit")
 	addReserved(detail, "ctrl+c", "")
+	addReserved(detail, "f1", "")
+	addReserved(detail, "?", "")
+	addReserved(detail, "up", "")
+	addReserved(detail, "down", "")
+	addReserved(detail, "ctrl+z", "")
 
 	var dupes []string
 	for key, names := range browser {
@@ -291,9 +302,39 @@ func (kb KeyBindings) Validate() error {
 	}
 
 	if len(dupes) > 0 {
+		sort.Strings(dupes)
 		return fmt.Errorf("duplicate keybindings: %s", strings.Join(dupes, "; "))
 	}
 	return nil
+}
+
+// Binding describes one configurable action. JSON field names are stable IDs
+// shared by the config file and the key-recording settings editor.
+type Binding struct {
+	ID, Label, Key string
+}
+
+func (kb KeyBindings) Bindings() []Binding {
+	value := reflect.ValueOf(kb)
+	typ := value.Type()
+	bindings := make([]Binding, 0, value.NumField())
+	for i := 0; i < value.NumField(); i++ {
+		id := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]
+		bindings = append(bindings, Binding{ID: id, Label: strings.ReplaceAll(id, "_", " "), Key: value.Field(i).String()})
+	}
+	return bindings
+}
+
+func (kb KeyBindings) WithBinding(id, key string) (KeyBindings, error) {
+	value := reflect.ValueOf(&kb).Elem()
+	typ := value.Type()
+	for i := 0; i < value.NumField(); i++ {
+		if strings.Split(typ.Field(i).Tag.Get("json"), ",")[0] == id {
+			value.Field(i).SetString(key)
+			return kb, nil
+		}
+	}
+	return kb, fmt.Errorf("unknown keybinding %q", id)
 }
 
 // String returns a human-readable table of all keybindings.

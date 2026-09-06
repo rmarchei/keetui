@@ -26,6 +26,7 @@ const (
 	settingTheme
 	settingConfirmQuit
 	settingBackupOnSave
+	settingKeyBindings
 	settingCount
 )
 
@@ -42,21 +43,23 @@ var settingLabels = [settingCount]string{
 	"Theme",
 	"Confirm on quit",
 	"Backup on save",
+	"Keybindings",
 }
 
 var settingDescriptions = [settingCount]string{
 	"Seconds before clipboard is cleared after copying (0: disable, min: 15)",
 	"Minutes of inactivity before database is locked (0: disable, min: 5)",
 	"Default length for generated passwords (min: 8)",
-	"Show password strength indicator (1: on, 0: off)",
-	"Include uppercase letters in generated passwords (1: on, 0: off)",
-	"Include lowercase letters in generated passwords (1: on, 0: off)",
-	"Include digits in generated passwords (1: on, 0: off)",
-	"Include symbols in generated passwords (1: on, 0: off)",
-	"Default preset: PIN, Alphanumeric, Strong, Passphrase, Custom",
-	"Color theme: dark, light, high-contrast",
-	"Always confirm before quitting (1: on, 0: off)",
-	"Create .kdbx.bak backup before each save (1: on, 0: off)",
+	"Show password strength indicator",
+	"Include uppercase letters in generated passwords",
+	"Include lowercase letters in generated passwords",
+	"Include digits in generated passwords",
+	"Include symbols in generated passwords",
+	"Choose the default password generation preset",
+	"Choose the color theme",
+	"Confirm before quitting, even without unsaved changes",
+	"Create a .kdbx.bak backup before each save",
+	"Record shortcuts by pressing keys; conflicts are checked immediately",
 }
 
 // ShowSettingsMsg requests showing the settings view.
@@ -69,14 +72,22 @@ type ConfigSavedMsg struct {
 
 // SettingsModel handles viewing and editing application settings.
 type SettingsModel struct {
-	inputs  [settingCount]textinput.Model
-	focused int
-	cfg     config.Config
-	width   int
-	height  int
-	status  string
-	isError bool
-	offset  int
+	inputs       [settingCount]textinput.Model
+	focused      int
+	cfg          config.Config
+	width        int
+	height       int
+	status       string
+	isError      bool
+	offset       int
+	fieldErrors  map[int]string
+	picking      bool
+	choice       int
+	editingKeys  bool
+	recording    bool
+	bindings     config.KeyBindings
+	bindingIndex int
+	bindingError string
 }
 
 func NewSettingsModel(cfg config.Config) SettingsModel {
@@ -131,9 +142,10 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 	inputs[0].Focus()
 
 	return SettingsModel{
-		inputs:  inputs,
-		focused: 0,
-		cfg:     cfg,
+		inputs:   inputs,
+		focused:  0,
+		cfg:      cfg,
+		bindings: cfg.Keys(),
 	}
 }
 
@@ -149,6 +161,12 @@ func (m SettingsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m SettingsModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.editingKeys {
+		return m.updateBindings(msg)
+	}
+	if m.picking {
+		return m.updatePicker(msg)
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -163,26 +181,45 @@ func (m SettingsModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyPressMsg:
+		m.status, m.isError = "", false
 		switch msg.String() {
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "esc":
 			return m, func() tea.Msg { return BackToBrowserMsg{} }
 		case "tab", "down":
-			m.inputs[m.focused].Blur()
-			m.focused = (m.focused + 1) % settingCount
-			m.inputs[m.focused].Focus()
-			return m, nil
+			return m.moveFocus(1), textinput.Blink
 		case "shift+tab", "up":
-			m.inputs[m.focused].Blur()
-			m.focused = (m.focused - 1 + settingCount) % settingCount
-			m.inputs[m.focused].Focus()
-			return m, nil
-		case "ctrl+s", "enter":
+			return m.moveFocus(-1), textinput.Blink
+		case "ctrl+s":
 			return m.save()
+		case "space", "enter":
+			if isToggleSetting(m.focused) {
+				value := "1"
+				if m.inputs[m.focused].Value() == "1" {
+					value = "0"
+				}
+				m.inputs[m.focused].SetValue(value)
+				return m, nil
+			}
+			if len(m.choices()) > 0 {
+				m.picking = true
+				m.choice = max(0, slices.Index(m.choices(), m.inputs[m.focused].Value()))
+				return m, nil
+			}
+			if m.focused == settingKeyBindings {
+				m.editingKeys = true
+				return m, nil
+			}
+			if msg.String() == "enter" {
+				return m.save()
+			}
 		}
 	}
 
+	if isToggleSetting(m.focused) || len(m.choices()) > 0 || m.focused == settingKeyBindings {
+		return m, nil
+	}
 	// Update focused input
 	var cmd tea.Cmd
 	m.inputs[m.focused], cmd = m.inputs[m.focused].Update(msg)
@@ -190,140 +227,76 @@ func (m SettingsModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m SettingsModel) save() (tea.Model, tea.Cmd) {
-	clipSec, err := strconv.Atoi(strings.TrimSpace(m.inputs[settingClipboardClear].Value()))
-	if err != nil || clipSec < 0 {
-		m.status = "Invalid clipboard clear seconds (must be 0 or a positive number)"
-		m.isError = true
-		return m, nil
-	}
-	if clipSec != 0 && clipSec < 15 {
-		m.status = "Clipboard clear must be 0 (disabled) or at least 15 seconds"
-		m.isError = true
-		return m, nil
-	}
-
-	lockMin, err := strconv.Atoi(strings.TrimSpace(m.inputs[settingAutoLock].Value()))
-	if err != nil || lockMin < 0 {
-		m.status = "Invalid auto-lock minutes (must be 0 or a positive number)"
-		m.isError = true
-		return m, nil
-	}
-	if lockMin != 0 && lockMin < 5 {
-		m.status = "Auto-lock must be 0 (disabled) or at least 5 minutes"
-		m.isError = true
-		return m, nil
-	}
-
-	pwLen, err := strconv.Atoi(strings.TrimSpace(m.inputs[settingPasswordLength].Value()))
-	if err != nil || pwLen < 1 {
-		m.status = "Invalid password length (must be a positive number)"
-		m.isError = true
-		return m, nil
-	}
-	if pwLen < 8 {
-		m.status = "Password length must be at least 8"
-		m.isError = true
-		return m, nil
-	}
-
-	strengthVal := strings.TrimSpace(m.inputs[settingPasswordStrength].Value())
-	if strengthVal != "0" && strengthVal != "1" {
-		m.status = "Password strength must be 1 (on) or 0 (off)"
-		m.isError = true
-		return m, nil
-	}
-
-	// Parse charset toggles
-	parseBoolSetting := func(idx int, name string) (bool, bool) {
-		v := strings.TrimSpace(m.inputs[idx].Value())
-		if v != "0" && v != "1" {
-			m.status = fmt.Sprintf("%s must be 1 (on) or 0 (off)", name)
-			m.isError = true
-			return false, false
+	cfg, errs := m.draftConfig()
+	for i := range settingCount {
+		if problem := errs[i]; problem != "" {
+			m.editingKeys = i == settingKeyBindings
+			m.inputs[m.focused].Blur()
+			m.focused = i
+			m.inputs[i].Focus()
+			m.status, m.isError = problem, true
+			m.syncLayout()
+			return m, nil
 		}
-		return v == "1", true
 	}
-
-	upper, ok := parseBoolSetting(settingPWUppercase, "Uppercase")
-	if !ok {
+	if err := cfg.Save(); err != nil {
+		m.status, m.isError = fmt.Sprintf("Error saving config: %s", err), true
 		return m, nil
 	}
-	lower, ok := parseBoolSetting(settingPWLowercase, "Lowercase")
-	if !ok {
-		return m, nil
+	ApplyTheme(GetTheme(cfg.Theme()))
+	m.cfg = cfg
+	return m, func() tea.Msg { return ConfigSavedMsg{Cfg: cfg} }
+}
+
+// draftConfig validates without writing or changing the live configuration.
+func (m SettingsModel) draftConfig() (config.Config, map[int]string) {
+	cfg := m.cfg
+	errs := make(map[int]string)
+	number := func(i, minimum int, allowZero bool) int {
+		n, err := strconv.Atoi(strings.TrimSpace(m.inputs[i].Value()))
+		if err != nil || n < minimum && (!allowZero || n != 0) {
+			errs[i] = fmt.Sprintf("Must be at least %d", minimum)
+			if allowZero {
+				errs[i] += " or 0 to disable"
+			}
+		}
+		return n
 	}
-	digits, ok := parseBoolSetting(settingPWDigits, "Digits")
-	if !ok {
-		return m, nil
+	cfg.ClipboardClearSeconds = number(settingClipboardClear, 15, true)
+	cfg.AutoLockMinutes = number(settingAutoLock, 5, true)
+	cfg.PasswordLength = number(settingPasswordLength, 8, false)
+	toggle := func(i int) bool {
+		v := m.inputs[i].Value()
+		if v != "0" && v != "1" {
+			errs[i] = "Choose On or Off"
+		}
+		return v == "1"
 	}
-	symbols, ok := parseBoolSetting(settingPWSymbols, "Symbols")
-	if !ok {
-		return m, nil
+	ptr := func(v bool) *bool { return &v }
+	cfg.ShowPasswordStrength = toggle(settingPasswordStrength)
+	cfg.PasswordUppercase = ptr(toggle(settingPWUppercase))
+	cfg.PasswordLowercase = ptr(toggle(settingPWLowercase))
+	cfg.PasswordDigits = ptr(toggle(settingPWDigits))
+	cfg.PasswordSymbols = ptr(toggle(settingPWSymbols))
+	cfg.ConfirmQuit = ptr(toggle(settingConfirmQuit))
+	cfg.BackupOnSave = ptr(toggle(settingBackupOnSave))
+	if !*cfg.PasswordUppercase && !*cfg.PasswordLowercase && !*cfg.PasswordDigits && !*cfg.PasswordSymbols {
+		errs[settingPWSymbols] = "At least one character set must be enabled"
 	}
-
-	if !upper && !lower && !digits && !symbols {
-		m.status = "At least one character set must be enabled"
-		m.isError = true
-		return m, nil
+	cfg.DefaultPreset = m.inputs[settingDefaultPreset].Value()
+	if !slices.Contains(PresetNames, cfg.DefaultPreset) {
+		errs[settingDefaultPreset] = "Choose a preset from the list"
 	}
-
-	presetName := strings.TrimSpace(m.inputs[settingDefaultPreset].Value())
-	validPreset := slices.Contains(PresetNames, presetName)
-	if !validPreset {
-		m.status = "Default preset must be one of: PIN, Alphanumeric, Strong, Passphrase, Custom"
-		m.isError = true
-		return m, nil
+	cfg.ThemeName = m.inputs[settingTheme].Value()
+	if !slices.Contains(ThemeNames(), cfg.ThemeName) {
+		errs[settingTheme] = "Choose a theme from the list"
 	}
-
-	themeName := strings.TrimSpace(m.inputs[settingTheme].Value())
-	validTheme := slices.Contains(ThemeNames(), themeName)
-	if !validTheme {
-		m.status = "Theme must be one of: dark, light, high-contrast"
-		m.isError = true
-		return m, nil
+	if err := m.bindings.Validate(); err != nil {
+		errs[settingKeyBindings] = err.Error()
 	}
-
-	confirmQuit, ok := parseBoolSetting(settingConfirmQuit, "Confirm on quit")
-	if !ok {
-		return m, nil
-	}
-
-	backupOnSave, ok := parseBoolSetting(settingBackupOnSave, "Backup on save")
-	if !ok {
-		return m, nil
-	}
-
-	boolPtr := func(b bool) *bool { return &b }
-
-	// Start from the existing config so fields the settings form does not
-	// manage (custom keybindings, any future additions) survive the save.
-	newCfg := m.cfg
-	newCfg.ClipboardClearSeconds = clipSec
-	newCfg.AutoLockMinutes = lockMin
-	newCfg.PasswordLength = pwLen
-	newCfg.ShowPasswordStrength = strengthVal == "1"
-	newCfg.PasswordUppercase = boolPtr(upper)
-	newCfg.PasswordLowercase = boolPtr(lower)
-	newCfg.PasswordDigits = boolPtr(digits)
-	newCfg.PasswordSymbols = boolPtr(symbols)
-	newCfg.DefaultPreset = presetName
-	newCfg.ThemeName = themeName
-	newCfg.ConfirmQuit = boolPtr(confirmQuit)
-	newCfg.BackupOnSave = boolPtr(backupOnSave)
-
-	if err := newCfg.Save(); err != nil {
-		m.status = fmt.Sprintf("Error saving config: %s", err)
-		m.isError = true
-		return m, nil
-	}
-
-	ApplyTheme(GetTheme(themeName))
-	m.cfg = newCfg
-	m.inputs[settingClipboardClear].SetValue(strconv.Itoa(clipSec))
-	m.inputs[settingAutoLock].SetValue(strconv.Itoa(lockMin))
-	m.inputs[settingPasswordLength].SetValue(strconv.Itoa(pwLen))
-
-	return m, func() tea.Msg { return ConfigSavedMsg{Cfg: newCfg} }
+	bindings := m.bindings
+	cfg.KeyBindingsPtr = &bindings
+	return cfg, errs
 }
 
 func (m *SettingsModel) syncLayout() {
@@ -331,6 +304,7 @@ func (m *SettingsModel) syncLayout() {
 	for i := range m.inputs {
 		sizeInput(&m.inputs[i], width)
 	}
+	_, m.fieldErrors = m.draftConfig()
 	_, rows := m.body()
 	m.offset = followField(m.offset, rows[m.focused], bodyHeight(height, m.footer()))
 }
@@ -350,9 +324,33 @@ func (m SettingsModel) body() (string, []fieldRows) {
 
 	for i := range m.inputs {
 		start := strings.Count(b.String(), "\n")
-		b.WriteString(m.inputs[i].View())
+		if isToggleSetting(i) || i == settingDefaultPreset || i == settingTheme || i == settingKeyBindings {
+			value := m.inputs[i].Value()
+			switch {
+			case isToggleSetting(i):
+				value = "[ ] Off"
+				if m.inputs[i].Value() == "1" {
+					value = "[✓] On"
+				}
+			case i == settingKeyBindings:
+				value = "[ Edit… ]"
+			default:
+				value = "[ " + value + " ▾ ]"
+			}
+			style := valueStyle
+			if i == m.focused {
+				style = focusedStyle.Bold(true)
+			}
+			line := labelStyle.Width(0).Render("  "+settingLabels[i]+": ") + style.Render(value)
+			b.WriteString(wrapContent(line, width))
+		} else {
+			b.WriteString(m.inputs[i].View())
+		}
 		b.WriteString("\n")
 		fmt.Fprintf(&b, "%s\n", wrapContent(hiddenStyle.Render("  "+settingDescriptions[i]), width))
+		if problem := m.fieldErrors[i]; problem != "" {
+			fmt.Fprintf(&b, "%s\n", wrapContent(errorMsgStyle.Render(problem), width))
+		}
 		rows = append(rows, fieldRows{start, strings.Count(b.String(), "\n") - 1})
 		if i < settingCount-1 {
 			b.WriteString("\n")
@@ -372,12 +370,18 @@ func (m SettingsModel) footer() string {
 			fmt.Fprintf(&b, "%s\n", wrapContent(successStyle.Render(sanitizeDisplay(m.status)), width))
 		}
 	}
-	b.WriteString(renderHints(width, "enter/ctrl+s: save", "esc: back", "F1: help", "tab/shift+tab: navigate"))
+	b.WriteString(renderHints(width, "ctrl+s: save", "esc: back", "F1: help", "space/enter: change", "tab/shift+tab: navigate"))
 	return b.String()
 }
 
 func (m SettingsModel) View() tea.View {
 	m.syncLayout()
+	if m.editingKeys {
+		return tea.NewView(m.bindingsView())
+	}
+	if m.picking {
+		return tea.NewView(m.pickerView())
+	}
 	body, _ := m.body()
 	return tea.NewView(screen(body, m.footer(), m.width, m.height, m.offset))
 }

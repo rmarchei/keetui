@@ -244,6 +244,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// F1 works in forms without stealing printable characters from inputs.
 	// Capture a long status message before normal activity clears it.
+	if _, key := msg.(tea.KeyPressMsg); key && m.state == viewSettings && m.settings.recording {
+		m.lastActivity = time.Now()
+		m.statusText = ""
+		return m.updateActive(msg)
+	}
 	if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "f1" && m.state != viewUnlock && m.state != viewHelp {
 		m.lastActivity = time.Now()
 		return m.openHelp()

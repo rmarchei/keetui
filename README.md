@@ -263,7 +263,7 @@ Settings are stored in `~/.config/keetui/config.json`:
 
 Pressing `q` opens a confirmation with **No** selected. Press `y` to quit,
 or `n`/`Esc` to return. To disable it, press `c` in the browser and set
-**Confirm on quit** to `0`, or set `"confirm_quit": false` in the config.
+**Confirm on quit** to Off with `Space`, or set `"confirm_quit": false` in the config.
 Existing explicit `false` settings remain respected; unsaved changes always
 require confirmation regardless of this setting.
 
@@ -274,6 +274,11 @@ keetui -config > ~/.config/keetui/config.json
 ```
 
 Settings can also be edited from the TUI (press `c` in the browser).
+Use `Space` to toggle booleans or open the preset/theme picker, and `Ctrl+S`
+to save. Numeric errors appear beside the field as you type. Choose
+**Keybindings** to record a shortcut by pressing it; `Esc` cancels recording,
+and `Backspace` restores that action's default. Conflicting or reserved keys
+are rejected. Changes remain a draft until you save.
 
 ### Keybindings
 
