@@ -172,7 +172,7 @@ func (m AuditModel) View() tea.View {
 			} else {
 				cursor := "  "
 				if i == m.cursor {
-					cursor = "> "
+					cursor = selectionCursor
 				}
 				title := sanitizeDisplay(line.entry.Entry.Title)
 				if title == "" {

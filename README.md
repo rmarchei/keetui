@@ -136,8 +136,9 @@ All keybindings shown below are defaults and can be customized via the config fi
 Screens adapt to the terminal size. Settings and entry forms scroll to keep the
 focused field visible; use `Tab` / `Shift+Tab` to move between fields. Shortcut
 hints use up to two rows, showing essential actions when space is limited.
-Press `F1` in any unlocked screen for the full help (and the full current status
-message); `Esc` / `F1` returns without losing form edits. `?` also opens help in
+Press `F1` in any unlocked screen for context-specific help (and the full current
+status message). `Tab` / left / right switches help sections; wider terminals
+show shortcuts in two columns. `Esc` / `F1` returns without losing form edits. `?` also opens help in
 the browser and entry detail, but remains ordinary text inside inputs.
 Use `PageUp` / `PageDown` to read long unlock errors, and `j` / `k` or
 `PageUp` / `PageDown` to scroll database statistics.
@@ -184,10 +185,14 @@ Use `PageUp` / `PageDown` to read long unlock errors, and `j` / `k` or
 | `2` | Copy password to clipboard |
 | `3` | Copy URL to clipboard |
 | `4` | Copy TOTP code to clipboard |
-| `5` | Check password against HIBP breaches |
+| `b` | Check password against HIBP breaches |
 | `Q` | Display selected field as QR code |
 | `?` | Keyboard shortcut help |
 | `Esc` | Back to browser |
+
+Copy shortcuts are `1`–`4`; `Enter` copies the selected field, named in the
+footer. Breach checking is a separate action on `b`. Existing explicit
+`hibp_check` overrides (including `5`) remain respected.
 
 ### Editor
 

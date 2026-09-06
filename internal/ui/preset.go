@@ -361,7 +361,7 @@ func (m PresetPickerModel) viewList() string {
 	for i, p := range m.presets {
 		cursor := "  "
 		if i == m.cursor {
-			cursor = selectedItemStyle.Render("> ")
+			cursor = selectedItemStyle.Render(selectionCursor)
 		}
 
 		marker := "  "
@@ -422,7 +422,7 @@ func (m PresetPickerModel) viewCustom() string {
 
 		focus := "  "
 		if m.customFocus == i+1 {
-			focus = selectedItemStyle.Render("> ")
+			focus = selectedItemStyle.Render(selectionCursor)
 			check = selectedItemStyle.Render(check)
 		}
 

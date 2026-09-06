@@ -119,7 +119,7 @@ func (m HistoryModel) View() tea.View {
 			h := m.history[i]
 			cursor := "  "
 			if i == m.cursor {
-				cursor = "> "
+				cursor = selectionCursor
 			}
 
 			dateStr := ""

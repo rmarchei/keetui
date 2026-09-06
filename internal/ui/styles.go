@@ -2,6 +2,8 @@ package ui
 
 import "charm.land/lipgloss/v2"
 
+const selectionCursor = "▸ "
+
 var (
 	// Colors
 	primaryColor   = lipgloss.Color("#7D56F4")

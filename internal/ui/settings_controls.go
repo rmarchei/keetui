@@ -63,7 +63,7 @@ func (m SettingsModel) pickerView() string {
 	for i, choice := range m.choices() {
 		cursor, style := "  ", valueStyle
 		if i == m.choice {
-			cursor, style = "▸ ", focusedStyle.Bold(true)
+			cursor, style = selectionCursor, focusedStyle.Bold(true)
 		}
 		fmt.Fprintf(&b, "%s%s\n", cursor, style.Render(choice))
 	}
@@ -146,7 +146,7 @@ func (m SettingsModel) bindingsView() string {
 		row := strings.Count(b.String(), "\n")
 		cursor, style := "  ", valueStyle
 		if i == m.bindingIndex {
-			cursor, style = "▸ ", focusedStyle.Bold(true)
+			cursor, style = selectionCursor, focusedStyle.Bold(true)
 		}
 		key := binding.Key
 		if i == m.bindingIndex && m.recording {

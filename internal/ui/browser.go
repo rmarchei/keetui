@@ -989,14 +989,14 @@ func (m BrowserModel) View() tea.View {
 			item := m.items[i]
 			cursor := "  "
 			if i == m.cursor {
-				cursor = "> "
+				cursor = selectionCursor
 			}
 
 			var line string
 			if item.isGroup {
-				icon := groupStyle.Render("[+] ")
+				icon := groupStyle.Render("◇   ")
 				if m.db.IsRecycleBin(item.group.UUID) {
-					icon = groupStyle.Render("[x] ")
+					icon = groupStyle.Render("♲   ")
 				}
 				name := item.name()
 				count := countEntries(item.group)

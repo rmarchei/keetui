@@ -88,7 +88,7 @@ func DefaultKeyBindings() KeyBindings {
 		CopyPassword:   "2",
 		CopyURL:        "3",
 		CopyTOTP:       "4",
-		HIBPCheck:      "5",
+		HIBPCheck:      "b",
 		ShowQR:         "Q",
 		ShowHistory:    "H",
 

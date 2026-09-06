@@ -169,13 +169,13 @@ func TestDetailHIBPTrigger(t *testing.T) {
 	m := NewDetailModel(entry, config.Default())
 	m.SetSize(80, 24)
 
-	updated, cmd := m.Update(tea.KeyPressMsg{Code: '5', Text: string('5')})
+	updated, cmd := m.Update(textKey("b"))
 	m = updated.(DetailModel)
 	if cmd == nil {
-		t.Fatal("5 key should produce a command for HIBP check")
+		t.Fatal("b key should produce a command for HIBP check")
 	}
 	if !m.hibpChecking {
-		t.Error("hibpChecking should be true after pressing 5")
+		t.Error("hibpChecking should be true after pressing b")
 	}
 }
 

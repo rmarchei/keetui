@@ -464,21 +464,25 @@ func (m DetailModel) footerView() string {
 
 	var help string
 	if m.readOnly {
-		help = fmt.Sprintf("  j/k: select  enter: copy  %s: QR  %s: toggle pw  %s: url",
+		help = fmt.Sprintf("  j/k: select  %s: QR  %s: toggle pw  %s: url",
 			m.keys.ShowQR, m.keys.TogglePassword, m.keys.OpenURL)
 		if m.entry.HistoryCount > 0 {
 			help += fmt.Sprintf("  %s: history", m.keys.ShowHistory)
 		}
-		help += fmt.Sprintf("  %s: HIBP  esc: back  %s: quit", m.keys.HIBPCheck, m.keys.Quit)
+		help += fmt.Sprintf("  esc: back  %s: quit", m.keys.Quit)
 	} else {
-		help = fmt.Sprintf("  j/k: select  enter: copy  %s: QR  %s: toggle pw  %s: edit  %s: url  %s: attach",
+		help = fmt.Sprintf("  j/k: select  %s: QR  %s: toggle pw  %s: edit  %s: url  %s: attach",
 			m.keys.ShowQR, m.keys.TogglePassword, m.keys.Edit, m.keys.OpenURL, m.keys.Attachments)
 		if m.entry.HistoryCount > 0 {
 			help += fmt.Sprintf("  %s: history", m.keys.ShowHistory)
 		}
-		help += fmt.Sprintf("  %s: HIBP  esc: back  %s: quit", m.keys.HIBPCheck, m.keys.Quit)
+		help += fmt.Sprintf("  esc: back  %s: quit", m.keys.Quit)
 	}
-	return renderHints(m.width, append([]string{"?: help", "esc: back", strings.TrimSpace(fieldPrefix)}, strings.Split(strings.TrimSpace(help), "  ")...)...)
+	copyHint := "enter: copy field"
+	if m.selectedField < len(fields) {
+		copyHint = "enter: copy " + truncateString(sanitizeDisplay(fields[m.selectedField].label), max(1, m.width-12))
+	}
+	return renderHints(m.width, append([]string{copyHint, "?: help", "esc: back", m.keys.HIBPCheck + ": check breaches", strings.TrimSpace(fieldPrefix)}, strings.Split(strings.TrimSpace(help), "  ")...)...)
 }
 
 // truncateString truncates to terminal cells, preserving wide graphemes.
@@ -509,7 +513,7 @@ func (m DetailModel) buildContent() string {
 	cursor := func() string {
 		if fieldIdx == m.selectedField {
 			fieldIdx++
-			return selectedItemStyle.Render("▸ ")
+			return selectedItemStyle.Render(selectionCursor)
 		}
 		fieldIdx++
 		return "  "
@@ -630,7 +634,7 @@ func (m DetailModel) buildContent() string {
 			cursor := "  "
 			nameStyle := valueStyle
 			if m.attachMode && i == m.attachIdx {
-				cursor = "> "
+				cursor = selectionCursor
 				nameStyle = selectedItemStyle
 			}
 			fmt.Fprintf(&b, "  %s%s (%s)\n",

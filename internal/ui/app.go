@@ -1009,10 +1009,23 @@ func (m AppModel) openHelp() (tea.Model, tea.Cmd) {
 	}
 	m.helpReturnState = m.state
 	m.help = NewHelpModel(m.cfg.Keys(), m.width, m.viewHeight())
+	switch m.state {
+	case viewDetail, viewHistory:
+		m.help.section = helpDetail
+	case viewEditor, viewPresetPicker:
+		m.help.section = helpEditor
+	case viewSettings, viewPathInput, viewPassword, viewGroupInput:
+		m.help.section = helpSettings
+	case viewBrowser:
+		if m.browser.inRecycleBin() {
+			m.help.section = helpRecycleBin
+		}
+	}
 	if m.statusText != "" {
 		m.help.message = sanitizeDisplay(m.statusText)
-		m.help.resize()
+		m.help.section = helpMessage
 	}
+	m.help.resize()
 	m.state = viewHelp
 	return m, nil
 }
