@@ -4,6 +4,9 @@ import (
 	"math"
 	"strings"
 	"unicode"
+	"unicode/utf8"
+
+	"github.com/trustelem/zxcvbn"
 )
 
 // StrengthLevel represents a password strength rating.
@@ -17,16 +20,23 @@ const (
 	StrengthExcellent StrengthLevel = 4
 )
 
-// StrengthResult holds the output of a password strength evaluation.
+// Limit expensive pattern matching, without modifying the stored password.
+// The UI explicitly labels estimates made from a prefix.
+const maxStrengthRunes = 100
+
+// StrengthResult contains an offline guessability estimate, not a measurement
+// of entropy. Character classes are descriptive and do not increase the score.
 type StrengthResult struct {
-	Score     StrengthLevel
-	Label     string
-	Entropy   float64 // bits of entropy
-	Length    int
-	HasUpper  bool
-	HasLower  bool
-	HasDigit  bool
-	HasSymbol bool
+	Score          StrengthLevel
+	Label          string
+	GuessBits      float64 // log2 of estimated guesses; not generation entropy
+	Length         int
+	AnalyzedLength int
+	Unavailable    bool
+	HasUpper       bool
+	HasLower       bool
+	HasDigit       bool
+	HasSymbol      bool
 }
 
 // String returns the human-readable label.
@@ -47,47 +57,60 @@ func (s StrengthLevel) String() string {
 	}
 }
 
-// EvaluatePasswordStrength estimates the strength of a password based on
-// its length, character class diversity, and common weakness patterns.
+// EvaluatePasswordStrength recognizes dictionary words, leet substitutions,
+// keyboard walks, dates, sequences and repeats using zxcvbn. Passwords stay
+// local; neither matching sequences nor passwords are retained in the result.
+// The existing conservative rating thresholds apply to estimated guess bits,
+// not zxcvbn's more permissive online-attack score.
 func EvaluatePasswordStrength(password string) StrengthResult {
+	result := StrengthResult{Score: StrengthWeak, Label: "Weak"}
 	if password == "" {
-		return StrengthResult{Score: StrengthWeak, Label: "Weak", Entropy: 0}
+		return result
 	}
-
-	entropy, classes := calculateEntropy(password)
-
-	// Diceware-style passphrases have known combinatorial entropy; the
-	// char-pool estimate overstates them ~3x (a 6-word passphrase would
-	// show ~170 bits instead of its real ~60).
-	if pe, ok := passphraseEntropy(password); ok {
-		entropy = pe
-	} else {
-		// Apply penalties for common patterns
-		entropy -= patternPenalty(password)
-		if entropy < 0 {
-			entropy = 0
+	result.Length = utf8.RuneCountInString(password)
+	for _, r := range password {
+		switch {
+		case unicode.IsLower(r):
+			result.HasLower = true
+		case unicode.IsUpper(r):
+			result.HasUpper = true
+		case unicode.IsDigit(r):
+			result.HasDigit = true
+		default:
+			result.HasSymbol = true
 		}
 	}
-
-	score := entropyToScore(entropy)
-
-	return StrengthResult{
-		Score:     score,
-		Label:     score.String(),
-		Entropy:   math.Round(entropy*10) / 10,
-		Length:    len([]rune(password)),
-		HasUpper:  classes.upper,
-		HasLower:  classes.lower,
-		HasDigit:  classes.digit,
-		HasSymbol: classes.symbol,
+	if !utf8.ValidString(password) {
+		result.Label = "Not rated"
+		result.Unavailable = true
+		return result
 	}
+	result.AnalyzedLength = min(result.Length, maxStrengthRunes)
+	count := 0
+	for i := range password {
+		if count == maxStrengthRunes {
+			password = password[:i]
+			break
+		}
+		count++
+	}
+	guesses := zxcvbn.PasswordStrength(password, nil).Guesses
+	bits := math.Log2(max(1, guesses))
+
+	// Knowing the generator's small word list gives an attacker an additional
+	// strategy. Use its search space only as a ceiling: recognizing the shape
+	// of a passphrase cannot prove the words were chosen independently.
+	if ceiling, ok := passphraseGuessCeiling(password); ok {
+		bits = min(bits, ceiling)
+	}
+
+	result.Score = guessBitsToScore(bits)
+	result.Label = result.Score.String()
+	result.GuessBits = math.Round(bits*10) / 10
+	return result
 }
 
-type charClasses struct {
-	lower, upper, digit, symbol bool
-}
-
-// dicewareWordSet indexes the passphrase word list for membership checks.
+// dicewareWordSet indexes the generator's word list for membership checks.
 var dicewareWordSet = func() map[string]bool {
 	s := make(map[string]bool, len(dicewareWordList))
 	for _, w := range dicewareWordList {
@@ -96,10 +119,7 @@ var dicewareWordSet = func() map[string]bool {
 	return s
 }()
 
-// passphraseEntropy returns the combinatorial entropy of a diceware-style
-// passphrase — three or more words from the built-in list joined by
-// non-letter separators — and true when the password has that shape.
-func passphraseEntropy(password string) (float64, bool) {
+func passphraseGuessCeiling(password string) (float64, bool) {
 	words := strings.FieldsFunc(password, func(r rune) bool {
 		return !unicode.IsLetter(r)
 	})
@@ -114,133 +134,15 @@ func passphraseEntropy(password string) (float64, bool) {
 	return float64(len(words)) * math.Log2(float64(len(dicewareWordList))), true
 }
 
-// calculateEntropy estimates the bits of entropy in a password based on
-// the character pool size and length.
-func calculateEntropy(password string) (float64, charClasses) {
-	var cc charClasses
-	var hasUnicode bool
-	poolSize := 0
-
-	for _, r := range password {
-		switch {
-		case unicode.IsLower(r) && r < 128:
-			cc.lower = true
-		case unicode.IsUpper(r) && r < 128:
-			cc.upper = true
-		case unicode.IsDigit(r) && r < 128:
-			cc.digit = true
-		case r < 128:
-			cc.symbol = true
-		default:
-			hasUnicode = true
-		}
-	}
-
-	if cc.lower {
-		poolSize += 26
-	}
-	if cc.upper {
-		poolSize += 26
-	}
-	if cc.digit {
-		poolSize += 10
-	}
-	if cc.symbol {
-		poolSize += 32
-	}
-	if hasUnicode {
-		poolSize += 100
-	}
-
-	if poolSize == 0 {
-		poolSize = 1
-	}
-
-	return float64(len([]rune(password))) * math.Log2(float64(poolSize)), cc
-}
-
-// patternPenalty reduces entropy for passwords with common weaknesses.
-func patternPenalty(password string) float64 {
-	penalty := 0.0
-	lower := strings.ToLower(password)
-
-	// Penalty for common passwords/patterns
-	commonPatterns := []string{
-		"password", "123456", "qwerty", "abc123", "letmein",
-		"admin", "welcome", "monkey", "master", "dragon",
-		"login", "princess", "football", "shadow", "sunshine",
-		"trustno1", "iloveyou", "batman", "access", "hello",
-	}
-	for _, pattern := range commonPatterns {
-		if strings.Contains(lower, pattern) {
-			penalty += 15
-			break
-		}
-	}
-
-	// Penalty for sequential characters (abc, 123, etc.)
-	seqCount := 0
-	runes := []rune(password)
-	for i := 1; i < len(runes); i++ {
-		if runes[i] == runes[i-1]+1 {
-			seqCount++
-		}
-	}
-	if seqCount > 2 {
-		penalty += float64(seqCount) * 2
-	}
-
-	// Penalty for repeated characters (aaa, 111, etc.)
-	repCount := 0
-	for i := 1; i < len(runes); i++ {
-		if runes[i] == runes[i-1] {
-			repCount++
-		}
-	}
-	if repCount > 2 {
-		penalty += float64(repCount) * 2
-	}
-
-	// Penalty for all same character class
-	allSame := true
-	if len(runes) > 0 {
-		first := charClass(runes[0])
-		for _, r := range runes[1:] {
-			if charClass(r) != first {
-				allSame = false
-				break
-			}
-		}
-	}
-	if allSame && len(runes) > 0 {
-		penalty += 10
-	}
-
-	return penalty
-}
-
-func charClass(r rune) int {
+func guessBitsToScore(bits float64) StrengthLevel {
 	switch {
-	case unicode.IsLower(r):
-		return 0
-	case unicode.IsUpper(r):
-		return 1
-	case unicode.IsDigit(r):
-		return 2
-	default:
-		return 3
-	}
-}
-
-func entropyToScore(entropy float64) StrengthLevel {
-	switch {
-	case entropy < 28:
+	case bits < 28:
 		return StrengthWeak
-	case entropy < 36:
+	case bits < 36:
 		return StrengthFair
-	case entropy < 60:
+	case bits < 60:
 		return StrengthGood
-	case entropy < 80:
+	case bits < 80:
 		return StrengthStrong
 	default:
 		return StrengthExcellent

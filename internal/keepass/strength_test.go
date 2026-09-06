@@ -1,7 +1,12 @@
 package keepass
 
 import (
+	"fmt"
+	"math"
+	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 func TestEvaluatePasswordStrengthEmpty(t *testing.T) {
@@ -9,8 +14,8 @@ func TestEvaluatePasswordStrengthEmpty(t *testing.T) {
 	if result.Score != StrengthWeak {
 		t.Errorf("empty password score = %d, want %d (Weak)", result.Score, StrengthWeak)
 	}
-	if result.Entropy != 0 {
-		t.Errorf("empty password entropy = %f, want 0", result.Entropy)
+	if result.GuessBits != 0 {
+		t.Errorf("empty password guess bits = %f, want 0", result.GuessBits)
 	}
 }
 
@@ -88,12 +93,12 @@ func TestEvaluatePasswordStrengthCharClasses(t *testing.T) {
 	}
 }
 
-func TestEntropyToScoreBoundaries(t *testing.T) {
+func TestGuessBitsToScoreBoundaries(t *testing.T) {
 	// Verify the exact boundaries: <28 Weak, <36 Fair, <60 Good, <80 Strong, >=80 Excellent
 	tests := []struct {
-		name    string
-		entropy float64
-		want    StrengthLevel
+		name      string
+		guessBits float64
+		want      StrengthLevel
 	}{
 		{"0 bits", 0, StrengthWeak},
 		{"27.9 bits", 27.9, StrengthWeak},
@@ -108,31 +113,31 @@ func TestEntropyToScoreBoundaries(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := entropyToScore(tt.entropy)
+			got := guessBitsToScore(tt.guessBits)
 			if got != tt.want {
-				t.Errorf("entropyToScore(%v) = %v (%s), want %v (%s)",
-					tt.entropy, got, got.String(), tt.want, tt.want.String())
+				t.Errorf("guessBitsToScore(%v) = %v (%s), want %v (%s)",
+					tt.guessBits, got, got.String(), tt.want, tt.want.String())
 			}
 		})
 	}
 }
 
 func TestSequentialAndRepeatedPenalties(t *testing.T) {
-	// Sequential: "abcdef" has 5 sequential pairs, penalty = 5*2 = 10
+	// A sequence and a repeated character must be easier to guess.
 	seqResult := EvaluatePasswordStrength("abcdef")
 	// Same length, no sequences: "afbgch"
 	noSeqResult := EvaluatePasswordStrength("afbgch")
-	if seqResult.Entropy >= noSeqResult.Entropy {
-		t.Errorf("sequential 'abcdef' entropy (%v) should be less than non-sequential 'afbgch' (%v)",
-			seqResult.Entropy, noSeqResult.Entropy)
+	if seqResult.GuessBits >= noSeqResult.GuessBits {
+		t.Errorf("sequential 'abcdef' guess bits (%v) should be less than non-sequential 'afbgch' (%v)",
+			seqResult.GuessBits, noSeqResult.GuessBits)
 	}
 
-	// Repeated: "aaaaaa" has 5 repeat pairs (>2), penalty = 5*2 = 10
+	// Repeated characters.
 	repResult := EvaluatePasswordStrength("aaaaaa")
 	noRepResult := EvaluatePasswordStrength("afbgch")
-	if repResult.Entropy >= noRepResult.Entropy {
-		t.Errorf("repeated 'aaaaaa' entropy (%v) should be less than 'afbgch' (%v)",
-			repResult.Entropy, noRepResult.Entropy)
+	if repResult.GuessBits >= noRepResult.GuessBits {
+		t.Errorf("repeated 'aaaaaa' guess bits (%v) should be less than 'afbgch' (%v)",
+			repResult.GuessBits, noRepResult.GuessBits)
 	}
 }
 
@@ -154,24 +159,78 @@ func TestStrengthLevelString(t *testing.T) {
 	}
 }
 
-func TestPassphraseEntropyIsCombinatorial(t *testing.T) {
-	pp, err := GeneratePassphrase(6, "-")
-	if err != nil {
-		t.Fatalf("GeneratePassphrase: %v", err)
+func TestPassphraseGuessCeiling(t *testing.T) {
+	// Fixed samples keep this regression independent of random word selection.
+	result := EvaluatePasswordStrength(strings.Join(dicewareWordList[:6], "-"))
+	ceiling := 6 * math.Log2(float64(len(dicewareWordList)))
+	if result.GuessBits > ceiling+0.1 {
+		t.Errorf("guess bits = %.1f, exceeds generator search space %.1f", result.GuessBits, ceiling)
 	}
-	r := EvaluatePasswordStrength(pp)
-	// Real entropy is 6 * log2(len(list)) ≈ 60 bits; the char-pool model
-	// used to report ~170.
-	if r.Entropy > 70 {
-		t.Errorf("entropy = %.1f bits, want ~60 (combinatorial), not char-pool inflated", r.Entropy)
+	repeated := EvaluatePasswordStrength("apple-apple-apple-apple-apple-apple")
+	if repeated.Score != StrengthWeak || repeated.GuessBits >= result.GuessBits {
+		t.Fatalf("repeated words must not inherit random-passphrase strength: %+v", repeated)
 	}
-	if r.Entropy < 50 {
-		t.Errorf("entropy = %.1f bits, unexpectedly low for a 6-word passphrase", r.Entropy)
-	}
+}
 
-	// Non-passphrase passwords keep the char-pool estimate.
-	r = EvaluatePasswordStrength("Xk9#mQ2$vL7@")
-	if r.Entropy < 70 {
-		t.Errorf("random password entropy = %.1f, expected char-pool estimate", r.Entropy)
+func TestPredictablePasswordsStayWeak(t *testing.T) {
+	for _, password := range []string{
+		"PASS-e1-v2", "P@ssw0rd!", "qwertyuiop",
+		"12/12/1990", "abcabcabcabc", "password123", "🌈🌈🌈🌈",
+	} {
+		t.Run(password, func(t *testing.T) {
+			result := EvaluatePasswordStrength(password)
+			if result.Score != StrengthWeak {
+				t.Errorf("predictable password rated %+v", result)
+			}
+		})
 	}
+}
+
+func TestStrengthBoundsAndUnicode(t *testing.T) {
+	for _, password := range []string{"é", "🔑aB2!", "密碼密碼密碼", "pässwörd123", strings.Repeat("🌈", 5000)} {
+		result := EvaluatePasswordStrength(password)
+		if result.Length != utf8.RuneCountInString(password) || result.AnalyzedLength > maxStrengthRunes {
+			t.Fatalf("incorrect length accounting: %+v", result)
+		}
+		if math.IsNaN(result.GuessBits) || math.IsInf(result.GuessBits, 0) || result.GuessBits < 0 {
+			t.Fatalf("invalid estimate: %+v", result)
+		}
+	}
+	prefix := strings.Repeat("a", maxStrengthRunes)
+	long := EvaluatePasswordStrength(prefix + "K9!random-looking-suffix")
+	if long.GuessBits != EvaluatePasswordStrength(prefix).GuessBits || long.AnalyzedLength != maxStrengthRunes {
+		t.Fatalf("long password should explicitly rate only its prefix: %+v", long)
+	}
+	if result := EvaluatePasswordStrength(string([]byte{0xff, 0x80})); !result.Unavailable {
+		t.Fatal("invalid UTF-8 should be unrated, not assigned an estimate")
+	}
+}
+
+func BenchmarkEvaluatePasswordStrength(b *testing.B) {
+	for _, password := range []string{"PASS-e1-v2", "Xk9#mQ2$vL7@", strings.Repeat("abC9!?", 20)} {
+		b.Run(fmt.Sprintf("length-%d", len(password)), func(b *testing.B) {
+			for b.Loop() {
+				EvaluatePasswordStrength(password)
+			}
+		})
+	}
+}
+
+func FuzzEvaluatePasswordStrength(f *testing.F) {
+	for _, password := range []string{"PASS-e1-v2", "é", "🌈🌈🌈", "密碼密碼密碼", "İpassword", "\xff", strings.Repeat("abc", 40)} {
+		f.Add(password)
+	}
+	f.Fuzz(func(t *testing.T, password string) {
+		done := make(chan StrengthResult, 1)
+		go func() { done <- EvaluatePasswordStrength(password) }()
+		var result StrengthResult
+		select {
+		case result = <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("scorer did not finish for %q", password)
+		}
+		if math.IsNaN(result.GuessBits) || math.IsInf(result.GuessBits, 0) || result.GuessBits < 0 {
+			t.Fatalf("invalid estimate: %+v", result)
+		}
+	})
 }

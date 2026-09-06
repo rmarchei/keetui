@@ -21,7 +21,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Mouse support -- click to select fields and entries, scroll wheel navigation
 - Open entry URL in system browser
 - Password generator with preset picker (PIN, Alphanumeric, Strong, Passphrase, Like current, Custom)
-- Password strength indicator with character class breakdown and HIBP breach check
+- Offline, pattern-aware password strength estimates and optional HIBP breach checks
 - Create, edit, and delete entries and groups
 - Rename groups
 - Duplicate entries
@@ -231,6 +231,22 @@ keetui reads TOTP secrets from entries using two common conventions:
 When viewing an entry with a TOTP secret, a live 6-digit code is displayed with a visual countdown bar. The code refreshes automatically every second.
 
 ## Configuration
+
+### Password strength
+
+The meter uses [zxcvbn](https://github.com/trustelem/zxcvbn) to estimate how
+many guesses a password might take, accounting for common words, substitutions,
+dates, keyboard walks, and repeats. `~28 guess bits` means roughly 2^28 estimated
+guesses, **not** 28 bits of proven entropy. Ratings remain conservative: Weak
+below 28 guess bits, Fair below 36, Good below 60, Strong below 80, then Excellent.
+Dictionary coverage is mainly English; this is guidance, not a security guarantee.
+
+Scoring happens entirely offline. HIBP remains a separate, explicitly requested
+network check. To bound computation, passwords longer than 100 characters are
+rated on their first 100 characters and the meter labels that limitation;
+storage and copying always use the complete password.
+
+### Settings file
 
 Settings are stored in `~/.config/keetui/config.json`:
 

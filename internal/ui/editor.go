@@ -61,6 +61,7 @@ type EditorModel struct {
 	revealSeq     int  // incremented on each keystroke that triggers auto-reveal
 	persistReveal bool // true when ctrl+r was used to persistently show password
 	offset        int
+	strength      keepass.StrengthResult // recomputed only when the password changes
 }
 
 type customFieldInput struct {
@@ -137,6 +138,7 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 
 	m.inputs[0].Focus()
 	setInputTextStyle(&m.inputs[0], focusedStyle)
+	m.refreshStrength()
 
 	return m
 }
@@ -173,6 +175,9 @@ func (m EditorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.syncLayout()
 	updated, cmd := m.update(msg)
 	next := updated.(EditorModel)
+	if next.inputs[fieldPassword].Value() != m.inputs[fieldPassword].Value() {
+		next.refreshStrength()
+	}
 	next.syncLayout()
 	return next, cmd
 }
@@ -500,9 +505,16 @@ func (m EditorModel) save() (tea.Model, tea.Cmd) {
 // reveals it briefly. Returns a command to schedule re-masking.
 func (m *EditorModel) SetGeneratedPassword(pw string) tea.Cmd {
 	m.inputs[fieldPassword].SetValue(pw)
+	m.refreshStrength()
 	m.inputs[fieldPassword].EchoMode = textinput.EchoNormal
 	m.generated = true
 	return m.scheduleAutoMask(fieldPassword, 2*time.Second)
+}
+
+func (m *EditorModel) refreshStrength() {
+	if m.cfg.ShowPasswordStrength {
+		m.strength = keepass.EvaluatePasswordStrength(m.inputs[fieldPassword].Value())
+	}
 }
 
 func (m *EditorModel) syncLayout() {
@@ -549,8 +561,7 @@ func (m EditorModel) body() (string, []fieldRows) {
 			// Show password strength with character class breakdown
 			pw := m.inputs[fieldPassword].Value()
 			if pw != "" {
-				strength := keepass.EvaluatePasswordStrength(pw)
-				annotation := renderStrengthDetail(strength)
+				annotation := renderStrengthDetail(m.strength)
 				if lipgloss.Width(m.inputs[i].View())+2+lipgloss.Width(annotation) <= width {
 					b.WriteString("  ")
 				} else {

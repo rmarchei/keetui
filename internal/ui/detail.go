@@ -1052,7 +1052,13 @@ func (m DetailModel) View() tea.View {
 
 // renderStrength returns a styled strength label.
 func renderStrength(s keepass.StrengthResult) string {
-	label := fmt.Sprintf("[%s %.0f bits]", s.Label, s.Entropy)
+	if s.Unavailable {
+		return warnStyle.Render("[Not rated: invalid text]")
+	}
+	label := fmt.Sprintf("[%s ~%.0f guess bits]", s.Label, s.GuessBits)
+	if s.AnalyzedLength < s.Length {
+		label = fmt.Sprintf("[%s ~%.0f guess bits; first %d chars]", s.Label, s.GuessBits, s.AnalyzedLength)
+	}
 	switch s.Score {
 	case keepass.StrengthWeak:
 		return errorMsgStyle.Render(label)
@@ -1068,7 +1074,7 @@ func renderStrength(s keepass.StrengthResult) string {
 }
 
 // renderStrengthDetail returns the strength label plus a character class breakdown.
-// Missing classes are highlighted to guide the user.
+// Classes describe the password; they do not award strength points.
 func renderStrengthDetail(s keepass.StrengthResult) string {
 	base := renderStrength(s)
 
