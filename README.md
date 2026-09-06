@@ -329,6 +329,7 @@ git config core.hooksPath .githooks
 
 - **Clipboard auto-clear**: Copied passwords and TOTP codes are automatically cleared from the clipboard (configurable, default 15s)
 - **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered
+- **Live security status**: The status bar shows `clip:15s` until clipboard clearing and `lock:4:59` until auto-lock. The lock countdown is highlighted in its final 30 seconds; normal input resets inactivity. Copying again restarts the clipboard timer, even for the same value. `off` means a protection is disabled (`C:`/`L:` are compact labels on very narrow terminals). Clearing is best-effort, especially over OSC 52; a different clipboard value is left untouched when it can be read.
 - **Password generator**: Generates random passwords via `crypto/rand` with configurable character sets (uppercase, lowercase, digits, symbols)
 - **Backup on save**: When enabled, the original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback (disabled by default; enable via `backup_on_save` setting)
 - **Read-only mode**: Open with `--read-only` to browse a database without risk of accidental modification

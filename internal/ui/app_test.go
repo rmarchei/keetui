@@ -50,6 +50,7 @@ func createTestApp(t *testing.T) AppModel {
 
 	cfg := config.Default()
 	m := NewApp(dbPath, "", cfg)
+	m.clipboard = &testClipboard{}
 	m.db = db
 	m.browser = NewBrowserModel(db)
 	m.state = viewBrowser

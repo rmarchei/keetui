@@ -12,8 +12,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -41,7 +39,7 @@ const (
 
 // clipboardClearMsg signals that the clipboard should be cleared.
 type clipboardClearMsg struct {
-	expected string // the value we expect to still be on the clipboard
+	gen int // a new copy invalidates even a timer for the same value
 }
 
 // autoLockMsg signals that the database should be locked due to inactivity.
@@ -152,6 +150,14 @@ type AppModel struct {
 	readOnly        bool      // when true, all mutations are blocked
 	statusText      string    // transient status message for status bar
 	statusError     bool      // true if status message is an error
+
+	autoLockCheckAt     time.Time // next armed check (may be deferred by a save/retry)
+	clipboardGen        int
+	clipboardClearAt    time.Time
+	securityNow         time.Time // display clock, updated by input and a single 1s tick
+	securityTickGen     int
+	securityTickPending bool
+	clipboard           clipboardAccess // nil uses the OS backend; tests inject an isolated clipboard
 }
 
 // NewApp creates the application starting at the unlock screen.
@@ -165,6 +171,7 @@ func NewApp(filePath, keyFilePath string, cfg config.Config, readOnly ...bool) A
 		state:        viewUnlock,
 		unlock:       NewUnlockModel(filePath, keyFilePath),
 		lastActivity: time.Now(),
+		securityNow:  time.Now(),
 		filePath:     filePath,
 		keyFilePath:  keyFilePath,
 		cfg:          cfg,
@@ -185,28 +192,42 @@ func (m *AppModel) scheduleAutoLock() tea.Cmd {
 
 func (m *AppModel) scheduleAutoLockIn(d time.Duration) tea.Cmd {
 	m.autoLockGen++ // invalidate any pending tick, even when disabling
+	m.autoLockCheckAt = time.Time{}
 	if d <= 0 {
-		return nil
+		return m.ensureSecurityTick()
 	}
+	m.securityNow = time.Now()
+	m.autoLockCheckAt = m.securityNow.Add(d)
 	gen := m.autoLockGen
-	return tea.Tick(d, func(t time.Time) tea.Msg {
+	return tea.Batch(tea.Tick(d, func(t time.Time) tea.Msg {
 		return autoLockMsg{gen: gen}
-	})
+	}), m.ensureSecurityTick())
 }
 
-func (m AppModel) scheduleClearClipboard(copiedValue string) tea.Cmd {
+func (m *AppModel) scheduleClearClipboard() tea.Cmd {
+	m.clipboardGen++
+	m.clipboardClearAt = time.Time{}
 	d := m.cfg.ClipboardClearDuration()
 	if d == 0 {
-		return nil
+		return m.ensureSecurityTick()
 	}
-	return tea.Tick(d, func(t time.Time) tea.Msg {
-		return clipboardClearMsg{expected: copiedValue}
-	})
+	m.securityNow = time.Now()
+	m.clipboardClearAt = m.securityNow.Add(d)
+	gen := m.clipboardGen
+	return tea.Batch(tea.Tick(d, func(t time.Time) tea.Msg {
+		return clipboardClearMsg{gen: gen}
+	}), m.ensureSecurityTick())
 }
 
 func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, tick := msg.(securityTickMsg); !tick {
+		m.securityNow = time.Now()
+	}
 	updated, cmd := m.update(msg)
 	next := updated.(AppModel)
+	if !next.needsSecurityTick() {
+		next.stopSecurityTick()
+	}
 	// A new/returning screen needs dimensions immediately, even when the
 	// terminal has not emitted another WindowSizeMsg.
 	if next.state != m.state {
@@ -221,6 +242,23 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if tick, ok := msg.(securityTickMsg); ok {
+		if tick.gen != m.securityTickGen || !m.securityTickPending {
+			return m, nil
+		}
+		m.securityTickPending = false
+		// Timer messages can sit behind slow clipboard I/O or rendering. Use
+		// processing time too, so a delayed tick never rewinds the countdown.
+		now := time.Now()
+		if tick.at.After(now) {
+			now = tick.at
+		}
+		if now.After(m.securityNow) {
+			m.securityNow = now
+		}
+		cmd := m.ensureSecurityTick()
+		return m, cmd
+	}
 	// Handle window size globally
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = wsm.Width
@@ -241,10 +279,13 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// tree would race with the encoding goroutine. Auto-lock ticks are
 	// deferred instead of dropped so the timer stays armed.
 	if m.saving {
-		switch msg.(type) {
+		switch msg := msg.(type) {
 		case tea.KeyPressMsg, tea.MouseMsg, tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
 			return m, nil
 		case autoLockMsg:
+			if msg.gen != m.autoLockGen {
+				return m, nil
+			}
 			cmd := m.scheduleAutoLock()
 			return m, cmd
 		}
@@ -253,12 +294,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// F1 works in forms without stealing printable characters from inputs.
 	// Capture a long status message before normal activity clears it.
 	if _, key := msg.(tea.KeyPressMsg); key && m.state == viewSettings && m.settings.recording {
-		m.lastActivity = time.Now()
+		m.recordActivity()
 		m.statusText = ""
 		return m.updateActive(msg)
 	}
 	if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "f1" && m.state != viewUnlock && m.state != viewHelp {
-		m.lastActivity = time.Now()
+		m.recordActivity()
 		return m.openHelp()
 	}
 
@@ -266,7 +307,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.state != viewUnlock {
 		switch msg.(type) {
 		case tea.KeyPressMsg, tea.MouseMsg, tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
-			m.lastActivity = time.Now()
+			m.recordActivity()
 			m.statusText = "" // clear transient status on interaction
 		}
 	}
@@ -750,7 +791,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Styles captured at construction time don't see ApplyTheme's
 		// global updates; re-pull them on the long-lived browser model.
 		setInputPromptStyle(&m.browser.searchInput, focusedStyle)
-		m.lastActivity = time.Now()
+		m.recordActivity()
 		m.state = viewBrowser
 		autoLockCmd := m.scheduleAutoLock()
 		return m, tea.Batch(
@@ -940,27 +981,33 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CopyToClipboardMsg:
-		if err := copyToClipboard(msg.Value); err != nil {
+		if err := m.clipboardBackend().write(msg.Value); err != nil {
 			return m, statusCmd(fmt.Sprintf("Clipboard error: %s", err), true)
 		}
 		m.lastCopied = msg.Value
+		clearCmd := m.scheduleClearClipboard()
 		return m, tea.Batch(
 			statusCmd(fmt.Sprintf("Copied %s!", msg.Field), false),
-			m.scheduleClearClipboard(msg.Value),
+			clearCmd,
 		)
 
 	case clipboardClearMsg:
-		current, err := readClipboard()
+		if msg.gen != m.clipboardGen || m.clipboardClearAt.IsZero() {
+			return m, nil
+		}
+		current, err := m.clipboardBackend().read()
+		expected := m.lastCopied
+		m.forgetCopiedValue()
 		if err != nil {
 			// Can't read clipboard (e.g. over SSH) — clear anyway so OSC 52 clear is sent.
-			clearClipboard()
-		} else if current == msg.expected {
-			clearClipboard()
+			m.clipboardBackend().clear()
+		} else if current == expected {
+			m.clipboardBackend().clear()
+		} else {
+			return m, statusCmd("Clipboard changed; left untouched", false)
 		}
-		if m.lastCopied == msg.expected {
-			m.lastCopied = ""
-		}
-		return m, nil
+		// OSC 52 has no acknowledgement; do not claim a verified erase.
+		return m, statusCmd("Clipboard clear requested", false)
 
 	case OpenURLMsg:
 		if err := openURL(msg.URL); err != nil {
@@ -973,6 +1020,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		d := m.cfg.AutoLockDuration()
+		if d <= 0 {
+			return m, nil
+		}
 		if idle := time.Since(m.lastActivity); idle < d {
 			// Activity happened since the timer was armed; wait out the rest.
 			cmd := m.scheduleAutoLockIn(d - idle)
@@ -990,8 +1040,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.dirty = false
 		}
-		clearClipboard()
-		m.lastCopied = ""
+		m.clipboardBackend().clear()
+		m.forgetCopiedValue()
+		m.autoLockCheckAt = time.Time{}
 		m.db = nil
 		m.undoStack.clear()
 		m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
@@ -1191,44 +1242,6 @@ func (m *AppModel) refreshEntryCount() {
 	}
 }
 
-func (m AppModel) statusBar() string {
-	width, _ := viewSize(m.width, m.height)
-	budget := max(0, width-2) // status style's horizontal padding
-	var parts []string
-	if m.readOnly {
-		parts = append(parts, statusBarModifiedStyle.Render("[read-only]"))
-	}
-	if m.db != nil && m.db.SuspectCorruption() {
-		parts = append(parts, errorMsgStyle.Render("[corrupted?]"))
-	}
-	if m.dirty {
-		parts = append(parts, statusBarModifiedStyle.Render("[modified]"))
-	}
-	if m.undoStack.length() > 0 {
-		parts = append(parts, helpStyle.Render(fmt.Sprintf("ctrl+z: undo (%d)", m.undoStack.length())))
-	}
-	filename := sanitizeDisplay(filepath.Base(m.filePath))
-	count := fmt.Sprintf("%d entries", m.entryCount)
-	filenameBudget := max(1, budget-lipgloss.Width(strings.Join(parts, "  "))-len(count)-4)
-	if m.statusText != "" {
-		filenameBudget = max(1, min(filenameBudget, budget/4))
-	}
-	parts = append(parts, ansi.Truncate(filename, filenameBudget, "…"), count)
-	if m.statusText != "" {
-		parts = append(parts, helpStyle.Render("F1: details"))
-		remaining := max(0, budget-lipgloss.Width(strings.Join(parts, "  "))-4)
-		message := ansi.Truncate(sanitizeDisplay(m.statusText), remaining, "…")
-		if m.statusError {
-			parts = append(parts, errorMsgStyle.Render(message))
-		} else {
-			parts = append(parts, successStyle.Render(message))
-		}
-	}
-	content := strings.Join(parts, "  ")
-	content = ansi.Truncate(content, budget, "…")
-	return fitFrame(statusBarBgStyle.Width(width).Render(content), width, 1)
-}
-
 func (m AppModel) viewHeight() int {
 	if m.state == viewUnlock {
 		return m.height
@@ -1320,7 +1333,7 @@ func (m AppModel) handleDatabaseOpenResult(msg databaseOpenResultMsg) (tea.Model
 	m.browser.width = m.width
 	m.browser.height = m.viewHeight()
 	m.state = viewBrowser
-	m.lastActivity = time.Now()
+	m.recordActivity()
 	m.refreshEntryCount()
 	m.undoStack.clear()
 	autoLockCmd := m.scheduleAutoLock()
@@ -1454,10 +1467,10 @@ func (m AppModel) clearClipboardOnQuit() {
 	if m.lastCopied == "" {
 		return
 	}
-	if current, err := readClipboard(); err == nil && current != m.lastCopied {
+	if current, err := m.clipboardBackend().read(); err == nil && current != m.lastCopied {
 		return
 	}
-	clearClipboard()
+	m.clipboardBackend().clear()
 }
 
 func statusCmd(text string, isError bool) tea.Cmd {

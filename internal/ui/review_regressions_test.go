@@ -157,7 +157,7 @@ func TestStatusKeepsUndoAndCountWithMessage(t *testing.T) {
 	m.statusText = strings.Repeat("Entry updated ", 30)
 	bar := m.statusBar()
 	assertFrame(t, bar, 80, 1)
-	for _, want := range []string{"ctrl+z: undo", "3 entries", "F1: details", "Entry"} {
+	for _, want := range []string{"ctrl+z: undo", "3 entries", "F1", "Entry"} {
 		if !strings.Contains(ansi.Strip(bar), want) {
 			t.Fatalf("status hides %q: %q", want, ansi.Strip(bar))
 		}
