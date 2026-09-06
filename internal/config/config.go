@@ -247,17 +247,15 @@ func Load() (Config, error) {
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		// json.Unmarshal may have partially populated cfg before failing
-		// (type errors); return clean defaults so behavior matches the
-		// caller's "using defaults" warning.
+		// (type errors); return clean defaults instead of a partial decode.
 		return Default(), fmt.Errorf("invalid config %s: %w", configPath(), err)
 	}
 	cfg.Sanitize()
-	if err := cfg.Keys().Validate(); err != nil {
-		// Conflicting bindings can silently shadow destructive actions
-		// (e.g. "restore" bound to the delete key); fall back to default
-		// keybindings and surface the problem.
-		cfg.KeyBindingsPtr = nil
-		return cfg, fmt.Errorf("config %s: %w (using default keybindings)", configPath(), err)
+	if cfg.KeyBindingsPtr != nil {
+		cfg.KeyBindingsPtr, err = repairBindings(*cfg.KeyBindingsPtr)
+		if err != nil {
+			return cfg, fmt.Errorf("config %s: %w", configPath(), err)
+		}
 	}
 	return cfg, nil
 }

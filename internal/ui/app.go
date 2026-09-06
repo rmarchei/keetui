@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net/url"
@@ -8,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -158,6 +160,9 @@ type AppModel struct {
 	securityTickGen     int
 	securityTickPending bool
 	clipboard           clipboardAccess // nil uses the OS backend; tests inject an isolated clipboard
+	healthScanGen       int
+	healthScanView      viewState
+	healthScanCancel    context.CancelFunc
 }
 
 // NewApp creates the application starting at the unlock screen.
@@ -225,6 +230,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	updated, cmd := m.update(msg)
 	next := updated.(AppModel)
+	if next.healthScanCancel != nil && (next.db == nil || !slices.Contains(next.overlayStates(), next.healthScanView)) {
+		next.cancelHealthScan()
+	}
 	if !next.needsSecurityTick() {
 		next.stopSecurityTick()
 	}
@@ -356,10 +364,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.clearClipboardOnQuit()
+		m.cancelHealthScan()
 		return m, tea.Quit
 
 	case quitMsg:
 		m.clearClipboardOnQuit()
+		m.cancelHealthScan()
 		return m, tea.Quit
 
 	case DatabaseOpenedMsg:
@@ -430,6 +440,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.groupInput.Init()
 
 	case DeleteEntryMsg:
+		m.returnState = viewBrowser
 		m.confirm = NewConfirmModel(fmt.Sprintf("Delete entry '%s'?", msg.Name), func() tea.Msg {
 			return confirmDeleteEntryMsg{UUID: msg.EntryUUID}
 		})
@@ -437,6 +448,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case DeleteGroupMsg:
+		m.returnState = viewBrowser
 		m.confirm = NewConfirmModel(fmt.Sprintf("Delete group '%s' and all its contents?", msg.Name), func() tea.Msg {
 			return confirmDeleteGroupMsg{UUID: msg.GroupUUID}
 		})
@@ -539,6 +551,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case PermanentlyDeleteEntryMsg:
+		m.returnState = viewBrowser
 		m.confirm = NewConfirmModel(fmt.Sprintf("Permanently delete entry '%s'?", msg.Name), func() tea.Msg {
 			return confirmPermanentDeleteEntryMsg{UUID: msg.EntryUUID}
 		})
@@ -546,6 +559,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case PermanentlyDeleteGroupMsg:
+		m.returnState = viewBrowser
 		m.confirm = NewConfirmModel(fmt.Sprintf("Permanently delete group '%s' and all its contents?", msg.Name), func() tea.Msg {
 			return confirmPermanentDeleteGroupMsg{UUID: msg.GroupUUID}
 		})
@@ -613,6 +627,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case EmptyRecycleBinMsg:
+		m.returnState = viewBrowser
 		m.confirm = NewConfirmModel("Empty the recycle bin? This cannot be undone.", func() tea.Msg {
 			return confirmEmptyRecycleBinMsg{}
 		})
@@ -737,11 +752,20 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, statusCmd("Master password changed (use 's' to save to file)", false)
 
 	case ShowAuditMsg:
-		result := m.db.Audit()
-		m.audit = NewAuditModel(result)
-		m.audit.width = m.width
-		m.audit.height = m.viewHeight()
-		m.state = viewAudit
+		return m.startHealthScan(viewAudit)
+
+	case healthScanResultMsg:
+		if m.healthScanCancel == nil || msg.gen != m.healthScanGen || m.db == nil {
+			return m, nil
+		}
+		m.cancelHealthScan()
+		if msg.view == viewStats {
+			m.stats = NewStatsModel(msg.stats)
+			m.stats.width, m.stats.height = m.width, m.viewHeight()
+		} else {
+			m.audit = NewAuditModel(msg.audit)
+			m.audit.width, m.audit.height = m.width, m.viewHeight()
+		}
 		return m, nil
 
 	case ShowHelpMsg:
@@ -754,9 +778,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ShowStatsMsg:
-		m.stats = NewStatsModel(m.db.Stats())
-		m.state = viewStats
-		return m, nil
+		return m.startHealthScan(viewStats)
 
 	case ShowSettingsMsg:
 		m.settings = NewSettingsModel(m.cfg)
@@ -785,6 +807,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ConfigSavedMsg:
 		m.cfg = msg.Cfg
+		m.browser.keys = m.cfg.Keys()
 		if m.db != nil {
 			m.db.BackupOnSave = m.cfg.BackupEnabled()
 		}
@@ -1077,6 +1100,10 @@ func (m AppModel) openHelp() (tea.Model, tea.Cmd) {
 		m.help.message = sanitizeDisplay(m.statusText)
 		m.help.section = helpMessage
 	}
+	if m.state == viewSettings && m.settings.saveError != "" {
+		m.help.message = sanitizeDisplay(m.settings.saveError)
+		m.help.section = helpMessage
+	}
 	m.help.resize()
 	m.state = viewHelp
 	return m, nil
@@ -1089,33 +1116,7 @@ func (m AppModel) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.KeyReleaseMsg, tea.MouseMsg, tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
 	default:
-		seen := map[viewState]bool{m.state: true}
-		add := func(state viewState) {
-			if !seen[state] {
-				seen[state] = true
-				states = append(states, state)
-			}
-		}
-		for i := 0; i < len(states); i++ {
-			switch states[i] {
-			case viewHelp:
-				add(m.helpReturnState)
-			case viewConfirm:
-				if m.quitReturn == nil {
-					add(m.returnState)
-				} else {
-					add(m.quitReturn.state)
-					if m.quitReturn.state == viewHelp {
-						add(m.quitReturn.helpReturnState)
-					}
-					if m.quitReturn.state == viewConfirm || m.quitReturn.state == viewHelp && m.quitReturn.helpReturnState == viewConfirm {
-						add(m.quitReturn.returnState)
-					}
-				}
-			case viewPresetPicker:
-				add(viewEditor)
-			}
-		}
+		states = m.overlayStates()
 	}
 	var commands []tea.Cmd
 	for _, state := range states {
@@ -1124,6 +1125,39 @@ func (m AppModel) updateActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 		commands = append(commands, cmd)
 	}
 	return m, tea.Batch(commands...)
+}
+
+// overlayStates includes the active screen and every screen underneath it.
+func (m AppModel) overlayStates() []viewState {
+	states := []viewState{m.state}
+	seen := map[viewState]bool{m.state: true}
+	add := func(state viewState) {
+		if !seen[state] {
+			seen[state] = true
+			states = append(states, state)
+		}
+	}
+	for i := 0; i < len(states); i++ {
+		switch states[i] {
+		case viewHelp:
+			add(m.helpReturnState)
+		case viewConfirm:
+			if m.quitReturn == nil {
+				add(m.returnState)
+			} else {
+				add(m.quitReturn.state)
+				if m.quitReturn.state == viewHelp {
+					add(m.quitReturn.helpReturnState)
+				}
+				if m.quitReturn.state == viewConfirm || m.quitReturn.state == viewHelp && m.quitReturn.helpReturnState == viewConfirm {
+					add(m.quitReturn.returnState)
+				}
+			}
+		case viewPresetPicker:
+			add(viewEditor)
+		}
+	}
+	return states
 }
 
 func (m AppModel) updateView(state viewState, msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1238,7 +1272,7 @@ func (m AppModel) viewContent() string {
 
 func (m *AppModel) refreshEntryCount() {
 	if m.db != nil {
-		m.entryCount = m.db.Stats().TotalEntries
+		m.entryCount = m.db.EntryCount()
 	}
 }
 

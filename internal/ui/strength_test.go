@@ -13,7 +13,7 @@ import (
 
 func TestStrengthLabelsEstimatesAndLimits(t *testing.T) {
 	for _, sample := range []struct{ password, want string }{
-		{"PASS-e1-v2", "Weak ~28 guess bits"},
+		{"PASS-e1-v2", "Good ~28 guess bits"},
 		{strings.Repeat("a", 101), "first 100 chars"},
 		{string([]byte{0xff}), "Not rated: invalid text"},
 	} {
@@ -25,7 +25,7 @@ func TestStrengthLabelsEstimatesAndLimits(t *testing.T) {
 
 func TestEditorRefreshesStrengthOnlyOnPasswordChange(t *testing.T) {
 	m := NewEditorModel(&keepass.Entry{Password: "PASS-e1-v2"}, gokeepasslib.UUID{}, config.Default())
-	if m.strength.Score != keepass.StrengthWeak {
+	if m.strength != keepass.EvaluatePasswordStrength("PASS-e1-v2") {
 		t.Fatal("initial strength not evaluated")
 	}
 	m.SetGeneratedPassword("Xk9#mQ2$vL7@")

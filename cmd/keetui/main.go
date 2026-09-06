@@ -167,7 +167,7 @@ func main() {
 
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: %s (using defaults)\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: %s\n", err)
 	}
 
 	// Handle non-interactive commands (export, import, merge, upgrade)

@@ -178,6 +178,8 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - Help is an overlay: `CloseHelpMsg` restores the previous screen, including unsaved form input. `F1` is safe inside inputs; do not steal printable `?`. Forward non-input messages to the underlying views so blink, secret re-mask, TOTP, and resize updates continue without restarting timers. Quit prompts preserve any pending confirmation and its return context.
 - Store clamped scroll offsets during updates, using the same bounds as rendering; do not repair scrolling only in a value-receiver `View`. Track form rows incrementally and keep mouse hit-testing aligned with the rendered window.
 - Security countdowns use one generation-guarded display tick, independent of the clear/lock timers. Display ticks must not count as activity or erase status messages. Clipboard timers use generations so copying the same value again cannot be cleared by an earlier timer; clipboard tests use an injected backend, never the desktop clipboard.
+- Entry counts must not score passwords. Stats/audit workers analyze a detached `HealthSnapshot`, never the mutable live DB. Cancel scans when leaving their view or locking/quitting, keep them alive under overlays, and reject stale results by generation.
+- Save keybindings as sparse overrides and refresh the browser's cached keys after settings changes. Loading repairs only conflicting overrides; navigation must not dismiss a failed settings-save warning (full details remain in F1 help).
 - Cross-view communication uses typed message structs (e.g., `type FooMsg struct{}`)
 - Styles are centralized in `internal/ui/styles.go`, themes in `internal/ui/themes.go`
 - Always run `gofmt -w .` before committing (enforced by pre-commit hook)

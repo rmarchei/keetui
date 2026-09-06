@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -207,6 +208,24 @@ func (kb KeyBindings) Merge(defaults KeyBindings) KeyBindings {
 // Validate checks for duplicate bindings within the same context.
 // Returns an error listing duplicates, or nil if no conflicts found.
 func (kb KeyBindings) Validate() error {
+	conflicts := kb.conflicts()
+	if len(conflicts) == 0 {
+		return nil
+	}
+	var descriptions []string
+	for _, conflict := range conflicts {
+		descriptions = append(descriptions, fmt.Sprintf("%s: %q bound to %v", conflict.context, conflict.key, conflict.actions))
+	}
+	sort.Strings(descriptions)
+	return fmt.Errorf("duplicate keybindings: %s", strings.Join(descriptions, "; "))
+}
+
+type bindingConflict struct {
+	context, key string
+	actions      []string
+}
+
+func (kb KeyBindings) conflicts() []bindingConflict {
 	// Browser context keys
 	browser := map[string][]string{}
 	addKey := func(m map[string][]string, key, name string) {
@@ -289,23 +308,88 @@ func (kb KeyBindings) Validate() error {
 	addReserved(detail, "down", "")
 	addReserved(detail, "ctrl+z", "")
 
-	var dupes []string
+	var conflicts []bindingConflict
 	for key, names := range browser {
 		if len(names) > 1 {
-			dupes = append(dupes, fmt.Sprintf("browser: %q bound to %v", key, names))
+			conflicts = append(conflicts, bindingConflict{"browser", key, names})
 		}
 	}
 	for key, names := range detail {
 		if len(names) > 1 {
-			dupes = append(dupes, fmt.Sprintf("detail: %q bound to %v", key, names))
+			conflicts = append(conflicts, bindingConflict{"detail", key, names})
 		}
 	}
 
-	if len(dupes) > 0 {
-		sort.Strings(dupes)
-		return fmt.Errorf("duplicate keybindings: %s", strings.Join(dupes, "; "))
+	return conflicts
+}
+
+// Overrides omits inherited defaults so saving settings does not pin them.
+func (kb KeyBindings) Overrides() *KeyBindings {
+	defaults := DefaultKeyBindings().Bindings()
+	var overrides KeyBindings
+	for i, binding := range kb.Bindings() {
+		if binding.Key != defaults[i].Key {
+			overrides, _ = overrides.WithBinding(binding.ID, binding.Key)
+		}
 	}
-	return nil
+	if overrides == (KeyBindings{}) {
+		return nil
+	}
+	return &overrides
+}
+
+// repairBindings retains unrelated overrides, including valid swaps. Reset
+// only overrides involved in conflicts, iterating if a reset exposes another
+// conflict with a default. It never rewrites the user's file during loading.
+func repairBindings(overrides KeyBindings) (*KeyBindings, error) {
+	defaults := DefaultKeyBindings()
+	var changes []string
+	// Preserve a formerly valid detail shortcut on b by retaining the old
+	// implicit HIBP key when 5 is still available.
+	if overrides.HIBPCheck == "" {
+		legacy := overrides
+		legacy.HIBPCheck = "5"
+		legacyAvailable := true
+		for _, conflict := range legacy.Merge(defaults).conflicts() {
+			if slices.Contains(conflict.actions, "hibp_check") {
+				legacyAvailable = false
+			}
+		}
+		for _, conflict := range overrides.Merge(defaults).conflicts() {
+			if conflict.context == "detail" && conflict.key == defaults.HIBPCheck && len(conflict.actions) == 2 && legacyAvailable {
+				overrides = legacy
+				changes = append(changes, "retained legacy hibp_check shortcut 5")
+				break
+			}
+		}
+	}
+	for {
+		conflicts := overrides.Merge(defaults).conflicts()
+		if len(conflicts) == 0 {
+			break
+		}
+		reset := make(map[string]bool)
+		for _, conflict := range conflicts {
+			for _, action := range conflict.actions {
+				reset[action] = true
+			}
+		}
+		for _, binding := range overrides.Bindings() {
+			if binding.Key != "" && reset[binding.ID] {
+				overrides, _ = overrides.WithBinding(binding.ID, "")
+				changes = append(changes, "reset conflicting "+binding.ID)
+			}
+		}
+	}
+	var result *KeyBindings
+	if overrides != (KeyBindings{}) {
+		result = &overrides
+	}
+	if len(changes) > 0 {
+		sort.Strings(changes)
+		return result, fmt.Errorf("keybindings adjusted: %s", strings.Join(changes, "; "))
+	}
+	return result, nil
 }
 
 // Binding describes one configurable action. JSON field names are stable IDs

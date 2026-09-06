@@ -94,21 +94,21 @@ func TestEvaluatePasswordStrengthCharClasses(t *testing.T) {
 }
 
 func TestGuessBitsToScoreBoundaries(t *testing.T) {
-	// Verify the exact boundaries: <28 Weak, <36 Fair, <60 Good, <80 Strong, >=80 Excellent
+	// Labels follow estimated guesses, not character-pool entropy.
 	tests := []struct {
 		name      string
 		guessBits float64
 		want      StrengthLevel
 	}{
 		{"0 bits", 0, StrengthWeak},
-		{"27.9 bits", 27.9, StrengthWeak},
-		{"28 bits", 28, StrengthFair},
-		{"35.9 bits", 35.9, StrengthFair},
-		{"36 bits", 36, StrengthGood},
-		{"59.9 bits", 59.9, StrengthGood},
-		{"60 bits", 60, StrengthStrong},
-		{"79.9 bits", 79.9, StrengthStrong},
-		{"80 bits", 80, StrengthExcellent},
+		{"below million", 6*math.Log2(10) - 0.01, StrengthWeak},
+		{"million", 6 * math.Log2(10), StrengthFair},
+		{"below hundred million", 8*math.Log2(10) - 0.01, StrengthFair},
+		{"hundred million", 8 * math.Log2(10), StrengthGood},
+		{"below trillion", 12*math.Log2(10) - 0.01, StrengthGood},
+		{"trillion", 12 * math.Log2(10), StrengthStrong},
+		{"below ten quadrillion", 16*math.Log2(10) - 0.01, StrengthStrong},
+		{"ten quadrillion", 16 * math.Log2(10), StrengthExcellent},
 		{"100 bits", 100, StrengthExcellent},
 	}
 	for _, tt := range tests {
@@ -167,14 +167,14 @@ func TestPassphraseGuessCeiling(t *testing.T) {
 		t.Errorf("guess bits = %.1f, exceeds generator search space %.1f", result.GuessBits, ceiling)
 	}
 	repeated := EvaluatePasswordStrength("apple-apple-apple-apple-apple-apple")
-	if repeated.Score != StrengthWeak || repeated.GuessBits >= result.GuessBits {
+	if repeated.Score > StrengthFair || repeated.GuessBits >= result.GuessBits {
 		t.Fatalf("repeated words must not inherit random-passphrase strength: %+v", repeated)
 	}
 }
 
 func TestPredictablePasswordsStayWeak(t *testing.T) {
 	for _, password := range []string{
-		"PASS-e1-v2", "P@ssw0rd!", "qwertyuiop",
+		"P@ssw0rd!", "qwertyuiop",
 		"12/12/1990", "abcabcabcabc", "password123", "🌈🌈🌈🌈",
 	} {
 		t.Run(password, func(t *testing.T) {
@@ -183,6 +183,15 @@ func TestPredictablePasswordsStayWeak(t *testing.T) {
 				t.Errorf("predictable password rated %+v", result)
 			}
 		})
+	}
+}
+
+func TestGuessScaleDoesNotFlagUnmatchedEightCharactersAsWeak(t *testing.T) {
+	for _, password := range []string{"Xk9#mQ2$", "vR7!zN4@", "PASS-e1-v2"} {
+		r := EvaluatePasswordStrength(password)
+		if r.Score != StrengthGood || r.GuessBits < 26 || r.GuessBits > 29 {
+			t.Errorf("unexpected guess-based rating for %q: %+v", password, r)
+		}
 	}
 }
 

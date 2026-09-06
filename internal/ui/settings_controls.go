@@ -68,6 +68,7 @@ func (m SettingsModel) pickerView() string {
 		fmt.Fprintf(&b, "%s%s\n", cursor, style.Render(choice))
 	}
 	footer := renderHints(width, "enter/space: select", "esc: cancel", "↑/↓: choose")
+	footer = m.withSaveError(footer)
 	offset := followField(0, fieldRows{2 + m.choice, 2 + m.choice}, bodyHeight(height, footer))
 	return screen(b.String(), footer, width, height, offset)
 }
@@ -79,6 +80,9 @@ func (m SettingsModel) updateBindings(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		key := msg.String()
 		if m.recording {
+			if key == "backspace" || key == "delete" {
+				return m.resetBinding(), nil
+			}
 			if key == "esc" {
 				m.recording, m.bindingError = false, ""
 				return m, nil
@@ -115,35 +119,43 @@ func (m SettingsModel) updateBindings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter", "space":
 			m.recording, m.bindingError = true, ""
 		case "backspace", "delete":
-			binding := m.bindings.Bindings()[m.bindingIndex]
-			defaults := config.DefaultKeyBindings().Bindings()
-			for _, def := range defaults {
-				if def.ID != binding.ID {
-					continue
-				}
-				next, err := m.bindings.WithBinding(binding.ID, def.Key)
-				if err == nil {
-					err = next.Validate()
-				}
-				if err != nil {
-					m.bindingError = err.Error()
-				} else {
-					m.bindings, m.bindingError = next, ""
-				}
-				break
-			}
+			return m.resetBinding(), nil
 		}
 	}
 	return m, nil
 }
 
+func (m SettingsModel) resetBinding() SettingsModel {
+	binding := m.bindings.Bindings()[m.bindingIndex]
+	def := config.DefaultKeyBindings().Bindings()[m.bindingIndex]
+	next, _ := m.bindings.WithBinding(binding.ID, def.Key)
+	if err := next.Validate(); err != nil {
+		m.bindingError = err.Error()
+	} else {
+		m.bindings, m.bindingError, m.recording = next, "", false
+	}
+	return m
+}
+
+func (m SettingsModel) withSaveError(footer string) string {
+	if m.saveError == "" {
+		return footer
+	}
+	width, _ := viewSize(m.width, m.height)
+	message := "Settings not saved"
+	if !m.recording {
+		message += " — F1: details"
+	}
+	return wrapContent(errorMsgStyle.Render(message), width) + "\n" + footer
+}
+
 func (m SettingsModel) bindingsView() string {
 	width, height := viewSize(m.width, m.height)
-	var b strings.Builder
+	var b lineBuilder
 	b.WriteString(titleStyle.Render(" Keybindings ") + "\n\n")
 	rows := make([]fieldRows, 0, len(m.bindings.Bindings()))
 	for i, binding := range m.bindings.Bindings() {
-		row := strings.Count(b.String(), "\n")
+		row := b.row
 		cursor, style := "  ", valueStyle
 		if i == m.bindingIndex {
 			cursor, style = selectionCursor, focusedStyle.Bold(true)
@@ -154,11 +166,11 @@ func (m SettingsModel) bindingsView() string {
 		}
 		line := cursor + binding.Label + ": " + style.Render(sanitizeDisplay(key))
 		b.WriteString(wrapContent(line, width) + "\n")
-		rows = append(rows, fieldRows{row, strings.Count(b.String(), "\n") - 1})
+		rows = append(rows, fieldRows{row, b.row - 1})
 	}
 	footer := renderHints(width, "enter: record key", "esc: back", "ctrl+s: save", "↑/↓: choose", "backspace: default")
 	if m.recording {
-		footer = renderHints(width, "press shortcut to assign", "esc: cancel recording")
+		footer = renderHints(width, "press shortcut to assign", "esc: cancel recording", "backspace: default")
 	}
 	if m.bindingError != "" {
 		problem := wrapContent(errorMsgStyle.Render(m.bindingError), width)
@@ -167,6 +179,7 @@ func (m SettingsModel) bindingsView() string {
 		}
 		footer = problem + "\n" + footer
 	}
+	footer = m.withSaveError(footer)
 	available := max(1, height-lipgloss.Height(footer))
 	offset := followField(0, rows[m.bindingIndex], available)
 	return screen(b.String(), footer, width, height, offset)

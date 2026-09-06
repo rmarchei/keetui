@@ -237,14 +237,18 @@ When viewing an entry with a TOTP secret, a live 6-digit code is displayed with 
 The meter uses [zxcvbn](https://github.com/trustelem/zxcvbn) to estimate how
 many guesses a password might take, accounting for common words, substitutions,
 dates, keyboard walks, and repeats. `~28 guess bits` means roughly 2^28 estimated
-guesses, **not** 28 bits of proven entropy. Ratings remain conservative: Weak
-below 28 guess bits, Fair below 36, Good below 60, Strong below 80, then Excellent.
+guesses, **not** 28 bits of proven entropy. Labels use estimated guess counts:
+Weak below 10^6, Fair below 10^8, Good below 10^12, Strong below 10^16, then
+Excellent (boundaries around 20, 27, 40 and 53 guess bits). These are keetui's
+rating bands, not zxcvbn's online-attack score. The audit flags Weak passwords;
+a higher rating does not guarantee resistance to offline cracking.
 Dictionary coverage is mainly English; this is guidance, not a security guarantee.
 
 Scoring happens entirely offline. HIBP remains a separate, explicitly requested
 network check. To bound computation, passwords longer than 100 characters are
 rated on their first 100 characters and the meter labels that limitation;
-storage and copying always use the complete password.
+storage and copying always use the complete password. Statistics and audits
+analyze a snapshot in the background; leaving the view cancels the scan.
 
 ### Settings file
 

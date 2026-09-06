@@ -11,10 +11,11 @@ import (
 
 // StatsModel shows database statistics.
 type StatsModel struct {
-	stats  keepass.DBStats
-	width  int
-	height int
-	offset int
+	loading bool
+	stats   keepass.DBStats
+	width   int
+	height  int
+	offset  int
 }
 
 // ShowStatsMsg requests showing database stats.
@@ -76,6 +77,10 @@ func (m StatsModel) body() string {
 	b.WriteString("\n")
 	b.WriteString(titleStyle.Render(" Database Info "))
 	b.WriteString("\n\n")
+	if m.loading {
+		b.WriteString(helpStyle.Render("  Analyzing passwords…"))
+		return wrapContent(b.String(), width)
+	}
 
 	fmt.Fprintf(&b, "  %s %s\n",
 		labelStyle.Render("File:"),

@@ -60,8 +60,8 @@ func (s StrengthLevel) String() string {
 // EvaluatePasswordStrength recognizes dictionary words, leet substitutions,
 // keyboard walks, dates, sequences and repeats using zxcvbn. Passwords stay
 // local; neither matching sequences nor passwords are retained in the result.
-// The existing conservative rating thresholds apply to estimated guess bits,
-// not zxcvbn's more permissive online-attack score.
+// Labels use a guess-count scale, not the previous character-pool entropy
+// thresholds or zxcvbn's online-attack score.
 func EvaluatePasswordStrength(password string) StrengthResult {
 	result := StrengthResult{Score: StrengthWeak, Label: "Weak"}
 	if password == "" {
@@ -135,14 +135,17 @@ func passphraseGuessCeiling(password string) (float64, bool) {
 }
 
 func guessBitsToScore(bits float64) StrengthLevel {
+	// zxcvbn uses 10 guesses per unmatched character, regardless of charset.
+	// Rate on that scale: <1e6 Weak, <1e8 Fair, <1e12 Good, <1e16 Strong.
+	// These labels are guidance, not claims about entropy or cracking time.
 	switch {
-	case bits < 28:
+	case bits < 6*math.Log2(10):
 		return StrengthWeak
-	case bits < 36:
+	case bits < 8*math.Log2(10):
 		return StrengthFair
-	case bits < 60:
+	case bits < 12*math.Log2(10):
 		return StrengthGood
-	case bits < 80:
+	case bits < 16*math.Log2(10):
 		return StrengthStrong
 	default:
 		return StrengthExcellent

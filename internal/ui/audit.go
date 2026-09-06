@@ -25,12 +25,13 @@ type auditLine struct {
 
 // AuditModel shows a comprehensive password audit.
 type AuditModel struct {
-	result keepass.AuditResult
-	lines  []auditLine
-	cursor int
-	offset int
-	width  int
-	height int
+	loading bool
+	result  keepass.AuditResult
+	lines   []auditLine
+	cursor  int
+	offset  int
+	width   int
+	height  int
 }
 
 func NewAuditModel(result keepass.AuditResult) AuditModel {
@@ -145,6 +146,10 @@ func (m *AuditModel) moveUp() {
 }
 
 func (m AuditModel) View() tea.View {
+	if m.loading {
+		body := "\n" + titleStyle.Render(" Password Audit ") + "\n\n" + helpStyle.Render("  Analyzing passwords…")
+		return tea.NewView(screen(wrapContent(body, m.width), m.footer(), m.width, m.height, 0))
+	}
 	var b strings.Builder
 
 	b.WriteString("\n")

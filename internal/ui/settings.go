@@ -79,6 +79,7 @@ type SettingsModel struct {
 	height       int
 	status       string
 	isError      bool
+	saveError    string // persists until a successful save, including in sub-editors
 	offset       int
 	fieldErrors  map[int]string
 	picking      bool
@@ -141,12 +142,14 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 
 	inputs[0].Focus()
 
-	return SettingsModel{
+	m := SettingsModel{
 		inputs:   inputs,
 		focused:  0,
 		cfg:      cfg,
 		bindings: cfg.Keys(),
 	}
+	m.syncLayout()
+	return m
 }
 
 func (m SettingsModel) Init() tea.Cmd {
@@ -240,11 +243,12 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		}
 	}
 	if err := cfg.Save(); err != nil {
-		m.status, m.isError = fmt.Sprintf("Error saving config: %s", err), true
+		m.saveError = fmt.Sprintf("Settings not saved: %s", err)
 		return m, nil
 	}
 	ApplyTheme(GetTheme(cfg.Theme()))
 	m.cfg = cfg
+	m.saveError, m.status, m.isError = "", "", false
 	return m, func() tea.Msg { return ConfigSavedMsg{Cfg: cfg} }
 }
 
@@ -294,8 +298,7 @@ func (m SettingsModel) draftConfig() (config.Config, map[int]string) {
 	if err := m.bindings.Validate(); err != nil {
 		errs[settingKeyBindings] = err.Error()
 	}
-	bindings := m.bindings
-	cfg.KeyBindingsPtr = &bindings
+	cfg.KeyBindingsPtr = m.bindings.Overrides()
 	return cfg, errs
 }
 
@@ -305,12 +308,13 @@ func (m *SettingsModel) syncLayout() {
 		sizeInput(&m.inputs[i], width)
 	}
 	_, m.fieldErrors = m.draftConfig()
-	_, rows := m.body()
-	m.offset = followField(m.offset, rows[m.focused], bodyHeight(height, m.footer()))
+	body, rows := m.body()
+	available := bodyHeight(height, m.footer())
+	m.offset = clampOffset(body, available, followField(m.offset, rows[m.focused], available))
 }
 
 func (m SettingsModel) body() (string, []fieldRows) {
-	var b strings.Builder
+	var b lineBuilder
 	var rows []fieldRows
 	width, _ := viewSize(m.width, m.height)
 
@@ -318,12 +322,12 @@ func (m SettingsModel) body() (string, []fieldRows) {
 	b.WriteString(titleStyle.Render(" Settings "))
 	b.WriteString("\n\n")
 
-	fmt.Fprintf(&b, "  %s %s\n\n",
+	b.WriteString(fmt.Sprintf("  %s %s\n\n",
 		helpStyle.Render("Config file:"),
-		pathLabel(config.Path(), max(1, width-15)))
+		pathLabel(config.Path(), max(1, width-15))))
 
 	for i := range m.inputs {
-		start := strings.Count(b.String(), "\n")
+		start := b.row
 		if isToggleSetting(i) || i == settingDefaultPreset || i == settingTheme || i == settingKeyBindings {
 			value := m.inputs[i].Value()
 			switch {
@@ -347,11 +351,11 @@ func (m SettingsModel) body() (string, []fieldRows) {
 			b.WriteString(m.inputs[i].View())
 		}
 		b.WriteString("\n")
-		fmt.Fprintf(&b, "%s\n", wrapContent(hiddenStyle.Render("  "+settingDescriptions[i]), width))
+		b.WriteString(wrapContent(hiddenStyle.Render("  "+settingDescriptions[i]), width) + "\n")
 		if problem := m.fieldErrors[i]; problem != "" {
-			fmt.Fprintf(&b, "%s\n", wrapContent(errorMsgStyle.Render(problem), width))
+			b.WriteString(wrapContent(errorMsgStyle.Render(problem), width) + "\n")
 		}
-		rows = append(rows, fieldRows{start, strings.Count(b.String(), "\n") - 1})
+		rows = append(rows, fieldRows{start, b.row - 1})
 		if i < settingCount-1 {
 			b.WriteString("\n")
 		}
@@ -371,11 +375,10 @@ func (m SettingsModel) footer() string {
 		}
 	}
 	b.WriteString(renderHints(width, "ctrl+s: save", "esc: back", "F1: help", "space/enter: change", "tab/shift+tab: navigate"))
-	return b.String()
+	return m.withSaveError(b.String())
 }
 
 func (m SettingsModel) View() tea.View {
-	m.syncLayout()
 	if m.editingKeys {
 		return tea.NewView(m.bindingsView())
 	}

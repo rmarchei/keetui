@@ -1,6 +1,7 @@
 package keepass
 
 import (
+	"context"
 	"os"
 
 	"github.com/tobischo/gokeepasslib/v3"
@@ -21,12 +22,21 @@ type DBStats struct {
 
 // Stats computes statistics about the database.
 func (d *DB) Stats() DBStats {
+	stats, _ := d.HealthSnapshot().Stats(context.Background())
+	return stats
+}
+
+// Stats scores an immutable snapshot; cancellation is checked between entries.
+func (s HealthSnapshot) Stats(ctx context.Context) (DBStats, error) {
+	if err := ctx.Err(); err != nil {
+		return DBStats{}, err
+	}
 	stats := DBStats{
-		FilePath:      d.Path,
-		FormatVersion: d.FormatVersion(),
+		FilePath:      s.path,
+		FormatVersion: s.format,
 	}
 
-	if info, err := os.Stat(d.Path); err == nil {
+	if info, err := os.Stat(s.path); err == nil {
 		stats.FileSize = info.Size()
 	}
 
@@ -34,15 +44,16 @@ func (d *DB) Stats() DBStats {
 	// entries should not count against password hygiene. The zero UUID
 	// (bin disabled) matches no real group.
 	var rbUUID gokeepasslib.UUID
-	if d.RecycleBinEnabled() {
-		rbUUID = d.RecycleBinUUID()
+	if s.recycleBinEnabled {
+		rbUUID = s.recycleBinUUID
 	}
-	root := d.RootGroup()
-	countGroupStats(&root, rbUUID, &stats)
+	if err := countGroupStats(ctx, &s.root, rbUUID, &stats); err != nil {
+		return DBStats{}, err
+	}
 
 	// Detect reused passwords
 	passwordCounts := make(map[string]int)
-	collectPasswords(&root, rbUUID, passwordCounts)
+	collectPasswords(&s.root, rbUUID, passwordCounts)
 	for pw, count := range passwordCounts {
 		if pw == "" {
 			continue
@@ -52,15 +63,24 @@ func (d *DB) Stats() DBStats {
 		}
 	}
 
-	return stats
+	if err := ctx.Err(); err != nil {
+		return DBStats{}, err
+	}
+	return stats, nil
 }
 
-func countGroupStats(g *Group, rbUUID gokeepasslib.UUID, stats *DBStats) {
+func countGroupStats(ctx context.Context, g *Group, rbUUID gokeepasslib.UUID, stats *DBStats) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if g.UUID == rbUUID {
-		return
+		return nil
 	}
 	stats.TotalGroups++
 	for _, e := range g.Entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		stats.TotalEntries++
 		if e.Password == "" {
 			stats.EmptyPasswords++
@@ -75,8 +95,11 @@ func countGroupStats(g *Group, rbUUID gokeepasslib.UUID, stats *DBStats) {
 		}
 	}
 	for i := range g.Groups {
-		countGroupStats(&g.Groups[i], rbUUID, stats)
+		if err := countGroupStats(ctx, &g.Groups[i], rbUUID, stats); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func collectPasswords(g *Group, rbUUID gokeepasslib.UUID, counts map[string]int) {

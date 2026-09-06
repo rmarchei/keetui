@@ -218,7 +218,7 @@ type CopyToClipboardMsg struct {
 func NewDetailModel(entry keepass.Entry, cfg config.Config) DetailModel {
 	pi := newTextInput()
 	pi.Prompt = "  File path: "
-	setInputPromptStyle(&pi, labelStyle)
+	setInputPromptStyle(&pi, labelStyle.UnsetWidth())
 	pi.SetWidth(50)
 	pi.Placeholder = "/path/to/file"
 
