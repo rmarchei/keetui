@@ -70,3 +70,35 @@ func TestKeyBindingsOverridesAreSparse(t *testing.T) {
 		t.Fatalf("unexpected overrides: %+v", got)
 	}
 }
+
+func TestRepairBindingsUsesHistoricalDefaultsGenerically(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		input   KeyBindings
+		history []KeyBindings
+		want    KeyBindings
+	}{
+		{"another action", KeyBindings{Delete: "i", ShowQR: "V"}, []KeyBindings{{ShowStats: "Z"}}, KeyBindings{Delete: "i", ShowStats: "Z", ShowQR: "V"}},
+		{"multiple changes", KeyBindings{Delete: "i", CopyUsername: "b"}, []KeyBindings{{ShowStats: "Z", HIBPCheck: "5"}}, KeyBindings{Delete: "i", ShowStats: "Z", CopyUsername: "b", HIBPCheck: "5"}},
+		{"reserved historical key", KeyBindings{Delete: "i"}, []KeyBindings{{ShowStats: "f1"}, {ShowStats: "Z"}}, KeyBindings{Delete: "i", ShowStats: "Z"}},
+		{"occupied historical key", KeyBindings{Delete: "i", NewEntry: "Z"}, []KeyBindings{{ShowStats: "Z"}}, KeyBindings{NewEntry: "Z"}},
+		{"explicit choice must not migrate", KeyBindings{Delete: "i", ShowStats: "i"}, []KeyBindings{{ShowStats: "Z"}}, KeyBindings{}},
+		{"no history", KeyBindings{Delete: "i", ShowQR: "V"}, nil, KeyBindings{ShowQR: "V"}},
+		{"later reset conflicts with restored key", KeyBindings{Delete: "i", NewEntry: "f1"}, []KeyBindings{{ShowStats: "n"}}, KeyBindings{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			actual, warning := repairBindingsWithHistory(tc.input, tc.history)
+			if warning == nil {
+				t.Fatal("repair should explain adjustments")
+			}
+			cfg := Default()
+			cfg.KeyBindingsPtr = actual
+			if got := cfg.Keys(); got != tc.want.Merge(DefaultKeyBindings()) {
+				t.Fatalf("unexpected repair: %+v", got)
+			}
+			if err := cfg.Keys().Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

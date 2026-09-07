@@ -338,29 +338,29 @@ func (kb KeyBindings) Overrides() *KeyBindings {
 	return &overrides
 }
 
+// Previous defaults, newest first. Omitted fields did not change. Keep this
+// history as data so conflict repair is independent of particular actions.
+var previousKeyDefaults = []KeyBindings{
+	{HIBPCheck: "5"},
+}
+
 // repairBindings retains unrelated overrides, including valid swaps. Reset
 // only overrides involved in conflicts, iterating if a reset exposes another
 // conflict with a default. It never rewrites the user's file during loading.
 func repairBindings(overrides KeyBindings) (*KeyBindings, error) {
+	return repairBindingsWithHistory(overrides, previousKeyDefaults)
+}
+
+func repairBindingsWithHistory(overrides KeyBindings, history []KeyBindings) (*KeyBindings, error) {
 	defaults := DefaultKeyBindings()
 	var changes []string
-	// Preserve a formerly valid detail shortcut on b by retaining the old
-	// implicit HIBP key when 5 is still available.
-	if overrides.HIBPCheck == "" {
-		legacy := overrides
-		legacy.HIBPCheck = "5"
-		legacyAvailable := true
-		for _, conflict := range legacy.Merge(defaults).conflicts() {
-			if slices.Contains(conflict.actions, "hibp_check") {
-				legacyAvailable = false
-			}
-		}
-		for _, conflict := range overrides.Merge(defaults).conflicts() {
-			if conflict.context == "detail" && conflict.key == defaults.HIBPCheck && len(conflict.actions) == 2 && legacyAvailable {
-				overrides = legacy
-				changes = append(changes, "retained legacy hibp_check shortcut 5")
-				break
-			}
+	// Only implicit defaults may migrate, and each action gets at most one
+	// migration. Later resets can expose conflicts with a historical key;
+	// do not oscillate between restoring it and resetting it again.
+	inherited := make(map[string]bool)
+	for _, binding := range overrides.Bindings() {
+		if binding.Key == "" {
+			inherited[binding.ID] = true
 		}
 	}
 	for {
@@ -373,6 +373,34 @@ func repairBindings(overrides KeyBindings) (*KeyBindings, error) {
 			for _, action := range conflict.actions {
 				reset[action] = true
 			}
+		}
+		// Try a free historical default before discarding an explicit user
+		// shortcut. Validate its action in every context, allowing unrelated
+		// conflicts to be repaired by later iterations.
+		restored := false
+		for _, previous := range history {
+			for _, binding := range previous.Bindings() {
+				if binding.Key == "" || !inherited[binding.ID] || !reset[binding.ID] {
+					continue
+				}
+				candidate, _ := overrides.WithBinding(binding.ID, binding.Key)
+				if slices.ContainsFunc(candidate.Merge(defaults).conflicts(), func(c bindingConflict) bool {
+					return slices.Contains(c.actions, binding.ID)
+				}) {
+					continue
+				}
+				overrides = candidate
+				delete(inherited, binding.ID)
+				changes = append(changes, "retained legacy "+binding.ID+" shortcut "+binding.Key)
+				restored = true
+				break
+			}
+			if restored {
+				break
+			}
+		}
+		if restored {
+			continue
 		}
 		for _, binding := range overrides.Bindings() {
 			if binding.Key != "" && reset[binding.ID] {
