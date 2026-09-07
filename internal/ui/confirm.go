@@ -10,18 +10,22 @@ import (
 
 // ConfirmModel shows a yes/no confirmation prompt.
 type ConfirmModel struct {
-	message   string
-	onConfirm tea.Cmd
-	selected  bool // false = No, true = Yes
-	width     int
-	height    int
+	returnState viewState // owned by this dialog, including when a quit prompt replaces it
+	message     string
+	onConfirm   tea.Cmd
+	selected    bool // false = No, true = Yes
+	width       int
+	height      int
 }
 
-func NewConfirmModel(message string, onConfirm tea.Cmd) ConfirmModel {
+// The return target is required: creating a dialog cannot accidentally reuse
+// a previous dialog's target or default to the retired unlock screen.
+func NewConfirmModel(returnState viewState, message string, onConfirm tea.Cmd) ConfirmModel {
 	return ConfirmModel{
-		message:   message,
-		onConfirm: onConfirm,
-		selected:  false,
+		returnState: returnState,
+		message:     message,
+		onConfirm:   onConfirm,
+		selected:    false,
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 
 func TestConfirmYesKey(t *testing.T) {
 	confirmed := false
-	m := NewConfirmModel("Delete?", func() tea.Msg {
+	m := NewConfirmModel(viewBrowser, "Delete?", func() tea.Msg {
 		confirmed = true
 		return nil
 	})
@@ -25,7 +25,7 @@ func TestConfirmYesKey(t *testing.T) {
 }
 
 func TestConfirmNoKey(t *testing.T) {
-	m := NewConfirmModel("Delete?", func() tea.Msg { return nil })
+	m := NewConfirmModel(viewBrowser, "Delete?", func() tea.Msg { return nil })
 	m.width, m.height = 80, 24
 
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'n', Text: string('n')})
@@ -39,7 +39,7 @@ func TestConfirmNoKey(t *testing.T) {
 }
 
 func TestConfirmToggle(t *testing.T) {
-	m := NewConfirmModel("Delete?", func() tea.Msg { return nil })
+	m := NewConfirmModel(viewBrowser, "Delete?", func() tea.Msg { return nil })
 	m.width, m.height = 80, 24
 
 	if m.selected {
@@ -63,7 +63,7 @@ func TestConfirmToggle(t *testing.T) {
 
 func TestConfirmEnter(t *testing.T) {
 	// Enter with No selected
-	m := NewConfirmModel("Delete?", func() tea.Msg { return nil })
+	m := NewConfirmModel(viewBrowser, "Delete?", func() tea.Msg { return nil })
 	m.width, m.height = 80, 24
 
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -76,7 +76,7 @@ func TestConfirmEnter(t *testing.T) {
 	}
 
 	// Enter with Yes selected
-	m = NewConfirmModel("Delete?", func() tea.Msg { return nil })
+	m = NewConfirmModel(viewBrowser, "Delete?", func() tea.Msg { return nil })
 	m.selected = true
 	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
@@ -85,7 +85,7 @@ func TestConfirmEnter(t *testing.T) {
 }
 
 func TestConfirmEsc(t *testing.T) {
-	m := NewConfirmModel("Delete?", func() tea.Msg { return nil })
+	m := NewConfirmModel(viewBrowser, "Delete?", func() tea.Msg { return nil })
 	m.width, m.height = 80, 24
 
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
@@ -99,7 +99,7 @@ func TestConfirmEsc(t *testing.T) {
 }
 
 func TestConfirmView(t *testing.T) {
-	m := NewConfirmModel("Are you sure?", func() tea.Msg { return nil })
+	m := NewConfirmModel(viewBrowser, "Are you sure?", func() tea.Msg { return nil })
 	m.width, m.height = 80, 24
 
 	view := m.View().Content

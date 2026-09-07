@@ -108,7 +108,7 @@ func TestBackspaceResetsWhileRecording(t *testing.T) {
 }
 
 func TestRecordingUsableSpecialKeys(t *testing.T) {
-	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyTab}, {Code: tea.KeySpace}, {Code: tea.KeyPgUp}, {Code: tea.KeyHome}, {Code: tea.KeyInsert}, {Code: tea.KeyF2}} {
+	for _, key := range recordableNavigationKeys() {
 		m := NewSettingsModel(config.Default())
 		for i, binding := range m.bindings.Bindings() {
 			if binding.ID == "show_settings" {
@@ -129,6 +129,77 @@ func TestRecordingUsableSpecialKeys(t *testing.T) {
 		if _, ok := cmd().(ShowSettingsMsg); !ok {
 			t.Fatalf("%s is shadowed", key.String())
 		}
+	}
+}
+
+func recordableNavigationKeys() []tea.KeyPressMsg {
+	return []tea.KeyPressMsg{
+		{Code: tea.KeyTab}, {Code: tea.KeySpace}, {Code: tea.KeyPgUp}, {Code: tea.KeyHome}, {Code: tea.KeyInsert},
+		{Code: tea.KeyF2}, {Code: tea.KeyF3}, {Code: tea.KeyF4}, {Code: tea.KeyF5}, {Code: tea.KeyF6},
+		{Code: tea.KeyF7}, {Code: tea.KeyF8}, {Code: tea.KeyF9}, {Code: tea.KeyF10}, {Code: tea.KeyF11}, {Code: tea.KeyF12},
+	}
+}
+
+func TestBrowserBindingsNeverDispatchInsideSettings(t *testing.T) {
+	for _, key := range recordableNavigationKeys() {
+		t.Run(key.String(), func(t *testing.T) {
+			m := createTestApp(t)
+			m.cfg.KeyBindingsPtr = &config.KeyBindings{Delete: key.String()}
+			m.browser.keys = m.cfg.Keys()
+			for i, item := range m.browser.items {
+				if !item.isGroup {
+					m.browser.cursor = i
+					break
+				}
+			}
+			_, cmd := m.Update(key)
+			if cmd == nil {
+				t.Fatal("browser did not recognize its shortcut")
+			}
+			if _, ok := cmd().(DeleteEntryMsg); !ok {
+				t.Fatal("browser shortcut did not request deletion")
+			}
+			for _, mode := range []string{"form", "picker", "bindings"} {
+				m.state = viewSettings
+				m.settings = NewSettingsModel(m.cfg)
+				m.settings.focused = settingPasswordStrength
+				switch mode {
+				case "picker":
+					m.settings.focused, m.settings.picking = settingDefaultPreset, true
+				case "bindings":
+					m.settings.editingKeys = true
+				}
+				updated, cmd := m.Update(key)
+				if cmd != nil {
+					// Deliver the immediate message (e.g. blink initialization),
+					// but do not launch the resulting background timer chain.
+					updated, _ = updated.Update(cmd())
+				}
+				m = updated.(AppModel)
+				if m.state != viewSettings || m.dirty || m.db.EntryCount() != 2 {
+					t.Fatalf("browser binding escaped %s settings", mode)
+				}
+				if key.Code == tea.KeyTab {
+					switch mode {
+					case "form":
+						if m.settings.focused != settingPasswordStrength+1 {
+							t.Fatal("tab no longer moves focus")
+						}
+					case "picker":
+						if m.settings.choice != 1 {
+							t.Fatal("tab no longer moves the picker")
+						}
+					case "bindings":
+						if m.settings.bindingIndex != 1 {
+							t.Fatal("tab no longer moves through bindings")
+						}
+					}
+				}
+				if key.Code == tea.KeySpace && mode == "form" && m.settings.inputs[settingPasswordStrength].Value() != "0" {
+					t.Fatal("space no longer toggles settings")
+				}
+			}
+		})
 	}
 }
 

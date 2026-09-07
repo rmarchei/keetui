@@ -17,11 +17,11 @@ func TestBrowserConfirmationsForwardBackgroundMessages(t *testing.T) {
 	} {
 		m := createTestApp(t)
 		// A previously used returnState must not leak into a new dialog.
-		m.returnState = viewDetail
+		m.confirm = NewConfirmModel(viewDetail, "Previous dialog", nil)
 		updated, _ := m.Update(request)
 		m = updated.(AppModel)
-		if m.returnState != viewBrowser {
-			t.Fatalf("%T returns to %v", request, m.returnState)
+		if m.confirm.returnState != viewBrowser {
+			t.Fatalf("%T returns to %v", request, m.confirm.returnState)
 		}
 		root := m.db.RootGroup()
 		if _, err := m.db.AddEntry(root.UUID, keepass.Entry{Title: "background refresh"}); err != nil {

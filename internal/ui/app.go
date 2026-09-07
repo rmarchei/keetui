@@ -23,7 +23,8 @@ import (
 type viewState int
 
 const (
-	viewUnlock viewState = iota
+	viewNone viewState = iota // no return target; never a renderable screen
+	viewUnlock
 	viewBrowser
 	viewDetail
 	viewEditor
@@ -110,10 +111,10 @@ type quitMsg struct{}
 // Preserve the complete overlay context when a quit prompt temporarily
 // replaces another confirmation (possibly underneath help).
 type quitContext struct {
-	state, returnState viewState
-	confirm            ConfirmModel
-	help               HelpModel
-	helpReturnState    viewState
+	state           viewState
+	confirm         ConfirmModel
+	help            HelpModel
+	helpReturnState viewState
 }
 
 // AppModel is the top-level model coordinating all views.
@@ -144,7 +145,6 @@ type AppModel struct {
 	dirty           bool      // true when in-memory changes haven't been saved
 	saving          bool      // true while a save runs in the background; input is gated
 	lastCopied      string    // most recent keetui-copied clipboard value not yet cleared
-	returnState     viewState // view to return to after confirm dialog
 	helpReturnState viewState // help must not overwrite a pending confirmation
 	quitReturn      *quitContext
 	entryCount      int       // cached entry count for status bar
@@ -289,7 +289,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.saving {
 		switch msg := msg.(type) {
 		case tea.KeyPressMsg, tea.MouseMsg, tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
-			return m, nil
+			return m.saveBusy()
 		case autoLockMsg:
 			if msg.gen != m.autoLockGen {
 				return m, nil
@@ -349,17 +349,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.dirty || m.cfg.ConfirmOnQuit() {
 			m.quitReturn = &quitContext{
-				state: m.state, returnState: m.returnState, confirm: m.confirm,
+				state: m.state, confirm: m.confirm,
 				help: m.help, helpReturnState: m.helpReturnState,
-			}
-			if m.state != viewConfirm {
-				m.returnState = m.state
 			}
 			prompt := "Quit?"
 			if m.dirty {
 				prompt = "You have unsaved changes. Quit anyway?"
 			}
-			m.confirm = NewConfirmModel(prompt, func() tea.Msg { return quitMsg{} })
+			m.confirm = NewConfirmModel(m.state, prompt, func() tea.Msg { return quitMsg{} })
 			m.state = viewConfirm
 			return m, nil
 		}
@@ -440,16 +437,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.groupInput.Init()
 
 	case DeleteEntryMsg:
-		m.returnState = viewBrowser
-		m.confirm = NewConfirmModel(fmt.Sprintf("Delete entry '%s'?", msg.Name), func() tea.Msg {
+		m.confirm = NewConfirmModel(viewBrowser, fmt.Sprintf("Delete entry '%s'?", msg.Name), func() tea.Msg {
 			return confirmDeleteEntryMsg{UUID: msg.EntryUUID}
 		})
 		m.state = viewConfirm
 		return m, nil
 
 	case DeleteGroupMsg:
-		m.returnState = viewBrowser
-		m.confirm = NewConfirmModel(fmt.Sprintf("Delete group '%s' and all its contents?", msg.Name), func() tea.Msg {
+		m.confirm = NewConfirmModel(viewBrowser, fmt.Sprintf("Delete group '%s' and all its contents?", msg.Name), func() tea.Msg {
 			return confirmDeleteGroupMsg{UUID: msg.GroupUUID}
 		})
 		m.state = viewConfirm
@@ -551,16 +546,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case PermanentlyDeleteEntryMsg:
-		m.returnState = viewBrowser
-		m.confirm = NewConfirmModel(fmt.Sprintf("Permanently delete entry '%s'?", msg.Name), func() tea.Msg {
+		m.confirm = NewConfirmModel(viewBrowser, fmt.Sprintf("Permanently delete entry '%s'?", msg.Name), func() tea.Msg {
 			return confirmPermanentDeleteEntryMsg{UUID: msg.EntryUUID}
 		})
 		m.state = viewConfirm
 		return m, nil
 
 	case PermanentlyDeleteGroupMsg:
-		m.returnState = viewBrowser
-		m.confirm = NewConfirmModel(fmt.Sprintf("Permanently delete group '%s' and all its contents?", msg.Name), func() tea.Msg {
+		m.confirm = NewConfirmModel(viewBrowser, fmt.Sprintf("Permanently delete group '%s' and all its contents?", msg.Name), func() tea.Msg {
 			return confirmPermanentDeleteGroupMsg{UUID: msg.GroupUUID}
 		})
 		m.state = viewConfirm
@@ -627,8 +620,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case EmptyRecycleBinMsg:
-		m.returnState = viewBrowser
-		m.confirm = NewConfirmModel("Empty the recycle bin? This cannot be undone.", func() tea.Msg {
+		m.confirm = NewConfirmModel(viewBrowser, "Empty the recycle bin? This cannot be undone.", func() tea.Msg {
 			return confirmEmptyRecycleBinMsg{}
 		})
 		m.state = viewConfirm
@@ -859,10 +851,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Name:      msg.Name,
 				DestPath:  destPath,
 			}
-			m.confirm = NewConfirmModel(fmt.Sprintf("Overwrite existing file %q?", destPath), func() tea.Msg {
+			m.confirm = NewConfirmModel(viewDetail, fmt.Sprintf("Overwrite existing file %q?", destPath), func() tea.Msg {
 				return resolved
 			})
-			m.returnState = viewDetail
 			m.state = viewConfirm
 			return m, nil
 		}
@@ -872,7 +863,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, statusCmd(fmt.Sprintf("Attachment saved to %s", destPath), false)
 
 	case confirmExtractAttachmentMsg:
-		m.returnState = 0
 		m.state = viewDetail
 		tick := m.detail.startTOTPTick()
 		if err := m.db.ExtractAttachment(msg.EntryUUID, msg.Name, msg.DestPath); err != nil {
@@ -881,15 +871,13 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(statusCmd(fmt.Sprintf("Attachment saved to %s", msg.DestPath), false), tick)
 
 	case DeleteAttachmentMsg:
-		m.confirm = NewConfirmModel(fmt.Sprintf("Delete attachment %q?", msg.Name), func() tea.Msg {
+		m.confirm = NewConfirmModel(viewDetail, fmt.Sprintf("Delete attachment %q?", msg.Name), func() tea.Msg {
 			return confirmDeleteAttachmentMsg(msg)
 		})
-		m.returnState = viewDetail
 		m.state = viewConfirm
 		return m, nil
 
 	case confirmDeleteAttachmentMsg:
-		m.returnState = 0
 		if m.readOnly {
 			m.state = viewDetail
 			tick := m.detail.startTOTPTick()
@@ -962,10 +950,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// The target is a different existing file: confirm before
 				// clobbering it (it could be another vault).
 				resolved := confirmSaveAsMsg(msg)
-				m.confirm = NewConfirmModel(fmt.Sprintf("Overwrite existing file %q?", target), func() tea.Msg {
+				m.confirm = NewConfirmModel(viewBrowser, fmt.Sprintf("Overwrite existing file %q?", target), func() tea.Msg {
 					return resolved
 				})
-				m.returnState = viewBrowser
 				m.state = viewConfirm
 				return m, nil
 			}
@@ -973,7 +960,6 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleSaveAs(msg.Path, msg.Upgrade)
 
 	case confirmSaveAsMsg:
-		m.returnState = 0
 		return m.handleSaveAs(msg.Path, msg.Upgrade)
 
 	case saveResultMsg:
@@ -986,14 +972,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CancelEditMsg:
 		if m.state == viewConfirm && m.quitReturn != nil {
 			previous := m.quitReturn
-			m.state, m.returnState, m.confirm = previous.state, previous.returnState, previous.confirm
+			m.state, m.confirm = previous.state, previous.confirm
 			m.help, m.helpReturnState = previous.help, previous.helpReturnState
 			m.quitReturn = nil
 			return m, nil
 		}
-		if m.returnState != 0 {
-			m.state = m.returnState
-			m.returnState = 0
+		if m.state == viewConfirm && m.confirm.returnState != viewNone {
+			m.state = m.confirm.returnState
+			m.confirm = ConfirmModel{}
 		} else {
 			m.state = viewBrowser
 		}
@@ -1132,6 +1118,9 @@ func (m AppModel) overlayStates() []viewState {
 	states := []viewState{m.state}
 	seen := map[viewState]bool{m.state: true}
 	add := func(state viewState) {
+		if state == viewNone {
+			return
+		}
 		if !seen[state] {
 			seen[state] = true
 			states = append(states, state)
@@ -1143,14 +1132,14 @@ func (m AppModel) overlayStates() []viewState {
 			add(m.helpReturnState)
 		case viewConfirm:
 			if m.quitReturn == nil {
-				add(m.returnState)
+				add(m.confirm.returnState)
 			} else {
 				add(m.quitReturn.state)
 				if m.quitReturn.state == viewHelp {
 					add(m.quitReturn.helpReturnState)
 				}
 				if m.quitReturn.state == viewConfirm || m.quitReturn.state == viewHelp && m.quitReturn.helpReturnState == viewConfirm {
-					add(m.quitReturn.returnState)
+					add(m.quitReturn.confirm.returnState)
 				}
 			}
 		case viewPresetPicker:
@@ -1492,6 +1481,13 @@ func (m AppModel) handleSaveResult(msg saveResultMsg) (tea.Model, tea.Cmd) {
 		text = fmt.Sprintf("Upgraded to KDBX 4 and saved as %s", filepath.Base(msg.path))
 	}
 	return m, statusCmd(text, false)
+}
+
+// Input stays gated until encryption finishes. Set feedback synchronously so
+// ignored shortcuts (including stats/audit) cannot look like a silent no-op.
+func (m AppModel) saveBusy() (tea.Model, tea.Cmd) {
+	m.statusText, m.statusError = "Saving… please wait", false
+	return m, nil
 }
 
 // clearClipboardOnQuit clears the clipboard if a keetui copy is still

@@ -80,6 +80,9 @@ func (m SettingsModel) updateBindings(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		key := msg.String()
 		if m.recording {
+			// Navigation keys are valid browser/detail shortcuts. Recording
+			// captures them intentionally; outside recording, settings owns
+			// its input and never dispatches these keys to the browser.
 			if key == "backspace" || key == "delete" {
 				return m.resetBinding(), nil
 			}

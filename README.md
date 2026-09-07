@@ -303,7 +303,9 @@ Use `Space` to toggle booleans or open the preset/theme picker, and `Ctrl+S`
 to save. Numeric errors appear beside the field as you type. Choose
 **Keybindings** to record a shortcut by pressing it; `Esc` cancels recording,
 and `Backspace` restores that action's default. Conflicting or reserved keys
-are rejected. Changes remain a draft until you save.
+are rejected. While recording, navigation keys such as `Tab` and function keys
+such as `F2` can be assigned to browser/detail actions; outside recording,
+settings keeps its own navigation controls. Changes remain a draft until you save.
 
 ### Keybindings
 

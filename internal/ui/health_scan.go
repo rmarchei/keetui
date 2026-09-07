@@ -24,8 +24,11 @@ func (m *AppModel) cancelHealthScan() {
 }
 
 func (m AppModel) startHealthScan(view viewState) (tea.Model, tea.Cmd) {
-	if m.db == nil || m.saving {
+	if m.db == nil {
 		return m, nil
+	}
+	if m.saving {
+		return m.saveBusy()
 	}
 	m.cancelHealthScan()
 	ctx, cancel := context.WithCancel(context.Background())

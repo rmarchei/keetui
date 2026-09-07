@@ -284,7 +284,7 @@ func TestLayoutAllScreensFitOnResize(t *testing.T) {
 		{"save as", NewPathInputModel(path, "KDBX 3.1 (AES)", true)},
 		{"group", NewGroupInputModel(gokeepasslib.UUID{}, "")},
 		{"password", NewPasswordModel()},
-		{"confirm", NewConfirmModel("Quit?", nil)},
+		{"confirm", NewConfirmModel(viewBrowser, "Quit?", nil)},
 		{"history", NewHistoryModel(entry.Title, history)},
 		{"audit", NewAuditModel(audit)},
 		{"help", NewHelpModel(config.DefaultKeyBindings(), 80, 23)},
@@ -378,7 +378,7 @@ func TestLayoutHelpKeepsPendingConfirmation(t *testing.T) {
 	m = updated.(AppModel)
 	updated, _ = m.Update(CloseHelpMsg{})
 	m = updated.(AppModel)
-	if m.state != viewConfirm || m.returnState != viewSettings {
+	if m.state != viewConfirm || m.confirm.returnState != viewSettings {
 		t.Fatal("help overwrote the confirmation return state")
 	}
 	updated, cmd := m.Update(textKey("n"))

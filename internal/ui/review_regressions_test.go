@@ -34,8 +34,8 @@ func TestQuitFromHelpRestoresPendingConfirmation(t *testing.T) {
 	for _, key := range []tea.KeyPressMsg{textKey("q"), {Code: 'c', Mod: tea.ModCtrl}} {
 		m := createTestApp(t)
 		m.editor = NewEditorModel(nil, gokeepasslib.UUID{}, m.cfg)
-		m.state, m.returnState = viewConfirm, viewEditor
-		m.confirm = NewConfirmModel("Original confirmation", func() tea.Msg { return StatusMsg{Text: "original action"} })
+		m.state = viewConfirm
+		m.confirm = NewConfirmModel(viewEditor, "Original confirmation", func() tea.Msg { return StatusMsg{Text: "original action"} })
 		updated, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 		updated, _ = updated.Update(tea.KeyPressMsg{Code: tea.KeyF1})
 		updated, cmd := updated.Update(key)
@@ -52,7 +52,7 @@ func TestQuitFromHelpRestoresPendingConfirmation(t *testing.T) {
 		}
 		updated, _ = m.Update(CloseHelpMsg{})
 		m = updated.(AppModel)
-		if m.state != viewConfirm || m.confirm.message != "Original confirmation" || m.returnState != viewEditor {
+		if m.state != viewConfirm || m.confirm.message != "Original confirmation" || m.confirm.returnState != viewEditor {
 			t.Fatal("original confirmation was lost or replaced by a stale quit prompt")
 		}
 		if msg := m.confirm.onConfirm().(StatusMsg); msg.Text != "original action" {
@@ -67,8 +67,8 @@ func TestQuitFromHelpRestoresPendingConfirmation(t *testing.T) {
 
 func TestReplacingConfirmationKeepsTerminalSize(t *testing.T) {
 	m := createTestApp(t)
-	m.state, m.returnState = viewConfirm, viewSettings
-	m.confirm = NewConfirmModel("Original", nil)
+	m.state = viewConfirm
+	m.confirm = NewConfirmModel(viewSettings, "Original", nil)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 110, Height: 18})
 	updated, _ = updated.Update(RequestQuitMsg{})
 	m = updated.(AppModel)
@@ -77,7 +77,7 @@ func TestReplacingConfirmationKeepsTerminalSize(t *testing.T) {
 	}
 	updated, _ = m.Update(CancelEditMsg{})
 	m = updated.(AppModel)
-	if m.state != viewConfirm || m.confirm.message != "Original" || m.returnState != viewSettings {
+	if m.state != viewConfirm || m.confirm.message != "Original" || m.confirm.returnState != viewSettings {
 		t.Fatal("canceling quit lost original dialog")
 	}
 }

@@ -510,7 +510,7 @@ func TestAppCancelEditReturnsToReturnState(t *testing.T) {
 
 	// Set up a return state (like going to confirm from detail)
 	m.state = viewConfirm
-	m.returnState = viewDetail
+	m.confirm = NewConfirmModel(viewDetail, "Confirm", nil)
 
 	updated, _ := m.Update(CancelEditMsg{})
 	m = updated.(AppModel)
@@ -518,8 +518,8 @@ func TestAppCancelEditReturnsToReturnState(t *testing.T) {
 	if m.state != viewDetail {
 		t.Errorf("state = %d, want viewDetail (returnState)", m.state)
 	}
-	if m.returnState != 0 {
-		t.Errorf("returnState = %d, want 0 (cleared)", m.returnState)
+	if m.confirm.returnState != viewNone {
+		t.Errorf("returnState = %d, want viewNone (cleared)", m.confirm.returnState)
 	}
 }
 
@@ -660,7 +660,7 @@ func TestExtractAttachmentOverwriteConfirmation(t *testing.T) {
 }
 
 func TestConfirmCtrlCRequestsQuit(t *testing.T) {
-	c := NewConfirmModel("Delete?", nil)
+	c := NewConfirmModel(viewBrowser, "Delete?", nil)
 	_, cmd := c.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("ctrl+c should produce a command")
