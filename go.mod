@@ -7,7 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.9
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/boombuler/barcode v1.1.0
-	github.com/charmbracelet/x/ansi v0.11.8
+	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/pquerna/otp v1.5.0
 	github.com/tobischo/gokeepasslib/v3 v3.7.0
 	github.com/trustelem/zxcvbn v1.0.2-0.20211210161922-475ca3b81504
