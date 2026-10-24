@@ -54,10 +54,13 @@ type undoStack struct {
 	actions []undoAction
 }
 
+// Dropped and popped slots are cleared: the backing array would otherwise
+// keep their deleted entries, with passwords and attachments, reachable.
 func (s *undoStack) push(a undoAction) {
 	s.actions = append(s.actions, a)
-	if len(s.actions) > maxUndoStack {
-		s.actions = s.actions[len(s.actions)-maxUndoStack:]
+	if n := len(s.actions) - maxUndoStack; n > 0 {
+		clear(s.actions[:n])
+		s.actions = s.actions[n:]
 	}
 }
 
@@ -65,8 +68,10 @@ func (s *undoStack) pop() (undoAction, bool) {
 	if len(s.actions) == 0 {
 		return undoAction{}, false
 	}
-	a := s.actions[len(s.actions)-1]
-	s.actions = s.actions[:len(s.actions)-1]
+	last := len(s.actions) - 1
+	a := s.actions[last]
+	s.actions[last] = undoAction{}
+	s.actions = s.actions[:last]
 	return a, true
 }
 

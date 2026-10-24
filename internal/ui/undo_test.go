@@ -1,9 +1,14 @@
 package ui
 
 import (
+	"runtime"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/tobischo/gokeepasslib/v3"
+
+	"github.com/rmarchei/keetui/internal/keepass"
 )
 
 func TestUndoStackPushPop(t *testing.T) {
@@ -154,4 +159,33 @@ func TestUndoStackActionTypes(t *testing.T) {
 			t.Errorf("actionType = %d, want %d", a.actionType, types[i])
 		}
 	}
+}
+
+// Actions dropped past maxUndoStack and popped ones must not stay reachable
+// through the stack's backing array: they hold copies of deleted entries,
+// with their passwords and attachments.
+func TestUndoStackReleasesDroppedAndPoppedActions(t *testing.T) {
+	var s undoStack
+	var released atomic.Int32
+	for range maxUndoStack + 5 {
+		snapshot := &keepass.EntrySnapshot{}
+		runtime.AddCleanup(snapshot, func(released *atomic.Int32) { released.Add(1) }, &released)
+		s.push(undoAction{actionType: undoDeleteEntry, entrySnapshot: snapshot})
+	}
+	if _, ok := s.pop(); !ok {
+		t.Fatal("pop should return true")
+	}
+
+	const want = 6 // the five oldest actions and the popped one
+	for deadline := time.Now().Add(5 * time.Second); released.Load() < want && time.Now().Before(deadline); {
+		runtime.GC()
+		time.Sleep(time.Millisecond)
+	}
+	if got := released.Load(); got != want {
+		t.Errorf("%d dropped or popped actions were released, want %d", got, want)
+	}
+	if s.length() != maxUndoStack-1 {
+		t.Errorf("length = %d, want %d", s.length(), maxUndoStack-1)
+	}
+	runtime.KeepAlive(&s)
 }
