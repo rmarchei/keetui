@@ -157,6 +157,13 @@ func TestKeewebCompatibility(t *testing.T) {
 						}
 					}
 					path := filepath.Join(t.TempDir(), "saved.kdbx")
+					// Saves must not reuse the randomness of KeeWeb's header either.
+					// Converting replaces the KDBX 3.1 fields, so an upgrade only
+					// compares its own saves.
+					var seen []headerRandomness
+					if operation != "upgrade" {
+						seen = append(seen, randomnessOf(db))
+					}
 					for range 2 {
 						if err := db.SaveAs(path); err != nil {
 							t.Fatalf("save KeeWeb fixture: %v", err)
@@ -171,6 +178,9 @@ func TestKeewebCompatibility(t *testing.T) {
 							t.Error("unexpected database format after saving")
 						}
 						assertKeewebFixture(t, reopened, fixture, operation == "delete")
+						got := randomnessOf(reopened)
+						assertFreshRandomness(t, got, seen...)
+						seen = append(seen, got)
 					}
 				})
 			}

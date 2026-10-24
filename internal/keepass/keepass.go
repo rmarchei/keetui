@@ -2,6 +2,7 @@
 package keepass
 
 import (
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net/url"
@@ -419,6 +420,12 @@ func (d *DB) SaveAs(path string) error {
 		d.Database.Content.Meta.Binaries = nil
 	}
 
+	// Refresh before locking: the inner stream key must not change while
+	// protected values are masked with it.
+	if err := refreshRandomHeaderFields(d.Database); err != nil {
+		return fmt.Errorf("refresh header randomness: %w", err)
+	}
+
 	// Lock before encoding: the encoder's internal Unlock→Lock cycle assumes
 	// entries are locked. Since we keep them unlocked in memory, we must lock
 	// first so the encoder's Unlock correctly decrypts them.
@@ -473,6 +480,36 @@ func (d *DB) SaveAs(path string) error {
 	}
 
 	success = true
+	return nil
+}
+
+// refreshRandomHeaderFields draws new values for the random fields of the
+// database headers, as KeePass does on every save: master seed, encryption IV,
+// KDF salt (KDBX 4) or transform seed (KDBX 3.1), inner random stream key and,
+// for KDBX 3.1, stream start bytes. gokeepasslib only generates them along with
+// a new header, so every save would otherwise reuse the header's values, such
+// as those read from the file: two versions of the file (e.g. the database and
+// its .bak) would then share a ChaCha20 keystream or a CBC-encrypted prefix.
+// Each value keeps its length, and the KDF cost parameters stay unchanged.
+//
+// Locked protected values are masked with the inner stream key, so this may
+// only be called while they are unlocked.
+func refreshRandomHeaderFields(db *gokeepasslib.Database) error {
+	fh := db.Header.FileHeaders
+	fields := [][]byte{fh.MasterSeed, fh.EncryptionIV}
+	if db.Header.IsKdbx4() {
+		if fh.KdfParameters == nil || db.Content.InnerHeader == nil {
+			return fmt.Errorf("KDBX 4 database without KDF parameters or inner header")
+		}
+		fields = append(fields, fh.KdfParameters.Salt[:], db.Content.InnerHeader.InnerRandomStreamKey)
+	} else {
+		fields = append(fields, fh.TransformSeed, fh.ProtectedStreamKey, fh.StreamStartBytes)
+	}
+	for _, field := range fields {
+		// Refill in place to keep the length. crypto/rand.Read cannot fail:
+		// it aborts the program instead of returning an error.
+		_, _ = rand.Read(field)
+	}
 	return nil
 }
 
