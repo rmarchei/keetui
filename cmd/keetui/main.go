@@ -275,7 +275,22 @@ func main() {
 
 	app := ui.NewApp(dbPath, *keyFile, cfg, *readOnly)
 	p := tea.NewProgram(app)
-	if _, err := p.Run(); err != nil {
+	// Bubble Tea does not handle SIGHUP (terminal closed, SSH dropped), which
+	// would otherwise kill the process with a password on the clipboard.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		if _, ok := <-hup; ok {
+			p.Quit()
+		}
+	}()
+	_, err = p.Run()
+	signal.Stop(hup)
+	close(hup)
+	// SIGTERM, SIGINT and recovered panics end Run without the model's quit
+	// handling, so release the clipboard here as well.
+	ui.ReleaseClipboard()
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

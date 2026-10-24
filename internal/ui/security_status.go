@@ -51,7 +51,7 @@ func (m *AppModel) stopSecurityTick() {
 func (m *AppModel) forgetCopiedValue() {
 	m.clipboardGen++
 	m.clipboardClearAt = time.Time{}
-	m.lastCopied = ""
+	m.clipboardHeld = false
 }
 
 func (m AppModel) autoLockDeadline() time.Time {
@@ -91,7 +91,7 @@ func (m AppModel) securityStatus(width int) string {
 	var parts []string
 	if !m.clipboardClearAt.IsZero() {
 		parts = append(parts, valueStyle.Render(clipLabel+countdown(m.clipboardClearAt, now)))
-	} else if m.lastCopied != "" {
+	} else if m.clipboardHeld {
 		parts = append(parts, warnStyle.Padding(0).Render(clipLabel+"off"))
 	}
 	if m.cfg.AutoLockDuration() == 0 {
@@ -107,23 +107,9 @@ func (m AppModel) securityStatus(width int) string {
 	return strings.Join(parts, " ")
 }
 
-// Keep clipboard I/O injectable so timer regressions never access the user's
-// real clipboard. A nil backend retains the existing platform/OSC 52 behavior.
-type clipboardAccess interface {
-	write(string) error
-	read() (string, error)
-	clear()
-}
-
-type systemClipboard struct{}
-
-func (systemClipboard) write(value string) error { return copyToClipboard(value) }
-func (systemClipboard) read() (string, error)    { return readClipboard() }
-func (systemClipboard) clear()                   { clearClipboard() }
-
 func (m AppModel) clipboardBackend() clipboardAccess {
 	if m.clipboard != nil {
 		return m.clipboard
 	}
-	return systemClipboard{}
+	return platformClipboard()
 }

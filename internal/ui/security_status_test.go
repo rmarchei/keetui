@@ -13,25 +13,43 @@ import (
 
 // No test reads, overwrites, or clears the desktop clipboard.
 type testClipboard struct {
-	value             string
-	writeErr, readErr error
-	reads, clears     int
+	value         string // simulated clipboard contents
+	copied        string // keetui's outstanding copy
+	held          bool
+	terminalOnly  bool // an OSC 52-only session: clears cannot be verified
+	writeErr      error
+	opts          copyOptions
+	reads, clears int
 }
 
-func (c *testClipboard) write(value string) error {
+func (c *testClipboard) copy(value string, opts copyOptions) (copyResult, error) {
 	if c.writeErr != nil {
-		return c.writeErr
+		return copyResult{}, c.writeErr
 	}
-	c.value = value
-	return nil
+	c.value, c.copied, c.held, c.opts = value, value, true, opts
+	if c.terminalOnly {
+		return copyResult{terminal: true}, nil
+	}
+	return copyResult{native: true, marked: true}, nil
 }
 
-func (c *testClipboard) read() (string, error) {
+func (c *testClipboard) release() (clearOutcome, error) {
+	if !c.held {
+		return clearNothing, nil
+	}
+	c.held = false
+	if c.terminalOnly {
+		c.clears++
+		return clearRequested, nil
+	}
 	c.reads++
-	return c.value, c.readErr
+	if c.value != c.copied {
+		return clearChanged, nil
+	}
+	c.value = ""
+	c.clears++
+	return clearDone, nil
 }
-
-func (c *testClipboard) clear() { c.value = ""; c.clears++ }
 
 func copyForCountdown(t *testing.T, m AppModel, value string) AppModel {
 	t.Helper()
@@ -96,12 +114,12 @@ func TestRepeatedCopyInvalidatesOldClearEvenForSameValue(t *testing.T) {
 		clipboard := m.clipboard.(*testClipboard)
 		updated, cmd := m.Update(clipboardClearMsg{gen: oldClear})
 		m = updated.(AppModel)
-		if cmd != nil || clipboard.reads != 0 || clipboard.clears != 0 || m.lastCopied != value || m.clipboardClearAt.IsZero() {
+		if cmd != nil || clipboard.reads != 0 || clipboard.clears != 0 || clipboard.value != value || m.clipboardClearAt.IsZero() {
 			t.Fatal("old clear timer affected the newer copy")
 		}
 		updated, cmd = m.Update(clipboardClearMsg{gen: m.clipboardGen})
 		m = updated.(AppModel)
-		if cmd == nil || clipboard.clears != 1 || m.lastCopied != "" || !m.clipboardClearAt.IsZero() {
+		if cmd == nil || clipboard.clears != 1 || clipboard.value != "" || m.clipboardHeld || !m.clipboardClearAt.IsZero() {
 			t.Fatal("current clear did not clear and reset the countdown")
 		}
 	}
@@ -123,7 +141,7 @@ func TestClipboardChangesAndFailures(t *testing.T) {
 	deadline, gen := m.clipboardClearAt, m.clipboardGen
 	clipboard.writeErr = errors.New("unavailable")
 	m = copyForCountdown(t, m, "second")
-	if m.clipboardGen != gen || m.clipboardClearAt != deadline || m.lastCopied != "first" {
+	if m.clipboardGen != gen || m.clipboardClearAt != deadline || clipboard.copied != "first" {
 		t.Fatal("failed copy reset a live timer")
 	}
 	clipboard.value = "copied outside keetui"
@@ -133,8 +151,8 @@ func TestClipboardChangesAndFailures(t *testing.T) {
 		t.Fatal("clear timer overwrote a different clipboard value")
 	}
 	clipboard.writeErr = nil
+	clipboard.terminalOnly = true
 	m = copyForCountdown(t, m, "third")
-	clipboard.readErr = errors.New("OSC 52 only")
 	updated, _ = m.Update(clipboardClearMsg{gen: m.clipboardGen})
 	if clipboard.clears != 1 || !updated.(AppModel).clipboardClearAt.IsZero() {
 		t.Fatal("unreadable remote clipboard did not receive best-effort clear")
@@ -217,7 +235,7 @@ func TestLockInvalidatesClipboardAndDisplayTimers(t *testing.T) {
 	updated, _ := m.Update(autoLockMsg{gen: m.autoLockGen})
 	m = updated.(AppModel)
 	clipboard := m.clipboard.(*testClipboard)
-	if m.state != viewUnlock || m.securityTickPending || !m.clipboardClearAt.IsZero() || m.lastCopied != "" {
+	if m.state != viewUnlock || m.securityTickPending || !m.clipboardClearAt.IsZero() || m.clipboardHeld {
 		t.Fatal("lock did not reset countdown state")
 	}
 	clears := clipboard.clears

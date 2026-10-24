@@ -18,6 +18,8 @@ keetui/
 │   │   ├── config_test.go
 │   │   ├── keybindings.go       # Keybinding definitions and customization
 │   │   └── keybindings_test.go
+│   ├── pasteboard/
+│   │   └── pasteboard_darwin.go # In-process macOS pasteboard (purego): markers, changeCount
 │   ├── keepass/
 │   │   ├── keepass.go           # KeePass DB operations (open, save, CRUD)
 │   │   ├── keepass_test.go
@@ -35,6 +37,7 @@ keetui/
 │       ├── app.go               # Top-level app model, view orchestration
 │       ├── audit.go             # Security audit results view
 │       ├── browser.go           # Group/entry list browser with navigation
+│       ├── clipboard*.go        # Clipboard routing, ownership, macOS/Linux backends
 │       ├── confirm.go           # Yes/no confirmation dialog
 │       ├── detail.go            # Read-only entry detail view
 │       ├── editor.go            # Entry create/edit form
@@ -74,6 +77,7 @@ keetui/
 | `charm.land/lipgloss/v2` | Terminal styling |
 | `github.com/pquerna/otp` | TOTP/2FA code generation |
 | `github.com/boombuler/barcode` | QR code generation |
+| `github.com/ebitengine/purego` | AppKit calls without cgo (macOS pasteboard) |
 
 ## Architecture
 
@@ -152,6 +156,7 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `clipboard_clear_seconds` | 15 | Seconds before clipboard is cleared after copying (0: disable, min: 15) |
+| `clipboard_osc52` | `"auto"` | Terminal clipboard (OSC 52): `auto` (only without a local clipboard), `always`, `never` |
 | `auto_lock_minutes` | 5 | Minutes of inactivity before database is locked (0: disable, min: 5) |
 | `password_length` | 20 | Default length for generated passwords (min: 8) |
 | `show_password_strength` | true | Show password strength indicator in detail and editor views |
@@ -179,7 +184,7 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - Help is an overlay: `CloseHelpMsg` restores the previous screen, including unsaved form input. `F1` is safe inside inputs; do not steal printable `?`. Forward non-input messages to the underlying views so blink, secret re-mask, TOTP, and resize updates continue without restarting timers. Quit prompts preserve any pending confirmation and its return context.
 - Construct confirmations with an explicit return target; the target belongs to `ConfirmModel`, not shared app state. `viewNone` is zero and is not an overlay parent. Keep input gated during encryption and show wait feedback for blocked input rather than reading the changing database.
 - Store clamped scroll offsets during updates, using the same bounds as rendering; do not repair scrolling only in a value-receiver `View`. Track form rows incrementally and keep mouse hit-testing aligned with the rendered window.
-- Security countdowns use one generation-guarded display tick, independent of the clear/lock timers. Display ticks must not count as activity or erase status messages. Clipboard timers use generations so copying the same value again cannot be cleared by an earlier timer; clipboard tests use an injected backend, never the desktop clipboard.
+- Security countdowns use one generation-guarded display tick, independent of the clear/lock timers. Display ticks must not count as activity or erase status messages. Clipboard timers use generations so copying the same value again cannot be cleared by an earlier timer; clipboard tests use an injected backend, never the desktop clipboard (`internal/ui` TestMain installs a refusing process clipboard; pasteboard tests use private named pasteboards).
 - Entry counts must not score passwords. Stats/audit workers analyze a detached `HealthSnapshot`, never the mutable live DB. Cancel scans when leaving their view or locking/quitting, keep them alive under overlays, and reject stale results by generation.
 - Save keybindings as sparse overrides and refresh the browser's cached keys after settings changes. Loading repairs only conflicting overrides; navigation must not dismiss a failed settings-save warning (full details remain in F1 help).
 - Cross-view communication uses typed message structs (e.g., `type FooMsg struct{}`)
@@ -218,5 +223,5 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - All DB-sourced strings rendered in the TUI must go through `sanitizeDisplay()` / `sanitizeNoteLines()` (`internal/ui/sanitize.go`) — raw control bytes corrupt the Bubble Tea frame. Clipboard/QR paths use raw values
 - `keepass.Open`/`OpenWithKeyFile` set `DB.SuspectCorruption()` when decoded protected values look like binary garbage; the app then forces read-only and headless mutations refuse to run
 - The editor uses `ctrl+` keybindings (ctrl+s, ctrl+r, ctrl+g, etc.) because regular keys go to text inputs
-- Clipboard support uses platform-specific commands (`pbcopy` on macOS, `xclip`/`xsel`/`wl-copy` on Linux)
+- Clipboard: macOS writes NSPasteboard in-process (`internal/pasteboard`, purego) with Concealed/Transient markers and current-host-only, tracking ownership by changeCount; `/usr/bin/pbcopy` is an unmarked fallback. Linux uses `wl-copy` (with `--sensitive` when supported) on Wayland, else `xclip`/`xsel`. OSC 52 is sent only per `clipboard_osc52`. Backends remember copies as a keyed hash and clear only their own copy; `main` calls `ui.ReleaseClipboard()` after `Run` and turns SIGHUP into a quit
 - Do not commit binary artifacts, coverage files, or `.env` files

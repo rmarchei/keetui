@@ -444,3 +444,24 @@ func TestConfigPathLegacyFallback(t *testing.T) {
 		t.Errorf("configPath() = %q, want documented %q when both exist", got, documented)
 	}
 }
+
+func TestOSC52Mode(t *testing.T) {
+	for _, tc := range []struct{ stored, mode, sanitized string }{
+		{"", OSC52Auto, ""},
+		{"auto", OSC52Auto, "auto"},
+		{"always", OSC52Always, "always"},
+		{"never", OSC52Never, "never"},
+		{"Always", OSC52Auto, ""},
+		{"yes", OSC52Auto, ""},
+	} {
+		c := Default()
+		c.ClipboardOSC52 = tc.stored
+		if got := c.OSC52Mode(); got != tc.mode {
+			t.Errorf("OSC52Mode(%q) = %q, want %q", tc.stored, got, tc.mode)
+		}
+		c.Sanitize()
+		if c.ClipboardOSC52 != tc.sanitized {
+			t.Errorf("Sanitize(%q) = %q, want %q", tc.stored, c.ClipboardOSC52, tc.sanitized)
+		}
+	}
+}

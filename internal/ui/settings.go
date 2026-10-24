@@ -15,6 +15,7 @@ import (
 
 const (
 	settingClipboardClear = iota
+	settingClipboardOSC52
 	settingAutoLock
 	settingPasswordLength
 	settingPasswordStrength
@@ -32,6 +33,7 @@ const (
 
 var settingLabels = [settingCount]string{
 	"Clipboard clear (sec)",
+	"Terminal clipboard",
 	"Auto-lock (min)",
 	"Password length",
 	"Password strength",
@@ -48,6 +50,7 @@ var settingLabels = [settingCount]string{
 
 var settingDescriptions = [settingCount]string{
 	"Seconds before clipboard is cleared after copying (0: disable, min: 15)",
+	"Copy via OSC 52, which cannot be marked sensitive: auto (only without a local clipboard), always, never",
 	"Minutes of inactivity before database is locked (0: disable, min: 5)",
 	"Default length for generated passwords (min: 8)",
 	"Show password strength indicator",
@@ -104,6 +107,8 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 	}
 
 	inputs[settingClipboardClear].SetValue(strconv.Itoa(cfg.ClipboardClearSeconds))
+	inputs[settingClipboardOSC52].CharLimit = 6
+	inputs[settingClipboardOSC52].SetValue(cfg.OSC52Mode())
 	inputs[settingAutoLock].SetValue(strconv.Itoa(cfg.AutoLockMinutes))
 	inputs[settingPasswordLength].SetValue(strconv.Itoa(cfg.PasswordLength))
 	if cfg.ShowPasswordStrength {
@@ -267,6 +272,10 @@ func (m SettingsModel) draftConfig() (config.Config, map[int]string) {
 		return n
 	}
 	cfg.ClipboardClearSeconds = number(settingClipboardClear, 15, true)
+	cfg.ClipboardOSC52 = m.inputs[settingClipboardOSC52].Value()
+	if !slices.Contains(config.OSC52Modes, cfg.ClipboardOSC52) {
+		errs[settingClipboardOSC52] = "Choose a mode from the list"
+	}
 	cfg.AutoLockMinutes = number(settingAutoLock, 5, true)
 	cfg.PasswordLength = number(settingPasswordLength, 8, false)
 	toggle := func(i int) bool {
@@ -328,7 +337,7 @@ func (m SettingsModel) body() (string, []fieldRows) {
 
 	for i := range m.inputs {
 		start := b.row
-		if isToggleSetting(i) || i == settingDefaultPreset || i == settingTheme || i == settingKeyBindings {
+		if isToggleSetting(i) || isChoiceSetting(i) || i == settingKeyBindings {
 			value := m.inputs[i].Value()
 			switch {
 			case isToggleSetting(i):

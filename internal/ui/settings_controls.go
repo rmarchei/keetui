@@ -22,8 +22,14 @@ func (m SettingsModel) moveFocus(delta int) SettingsModel {
 	return m
 }
 
+func isChoiceSetting(i int) bool {
+	return i == settingClipboardOSC52 || i == settingDefaultPreset || i == settingTheme
+}
+
 func (m SettingsModel) choices() []string {
 	switch m.focused {
+	case settingClipboardOSC52:
+		return config.OSC52Modes
 	case settingDefaultPreset:
 		return PresetNames
 	case settingTheme:

@@ -14,6 +14,7 @@ import (
 // Config holds all configurable settings.
 type Config struct {
 	ClipboardClearSeconds int          `json:"clipboard_clear_seconds"`
+	ClipboardOSC52        string       `json:"clipboard_osc52,omitempty"`
 	AutoLockMinutes       int          `json:"auto_lock_minutes"`
 	PasswordLength        int          `json:"password_length"`
 	ShowPasswordStrength  bool         `json:"show_password_strength"`
@@ -53,6 +54,27 @@ func (c Config) ClipboardClearDuration() time.Duration {
 		return 15 * time.Second
 	}
 	return time.Duration(c.ClipboardClearSeconds) * time.Second
+}
+
+// Terminal clipboard (OSC 52) policies.
+const (
+	OSC52Auto   = "auto"   // only when no local clipboard is reachable
+	OSC52Always = "always" // in addition to the local clipboard
+	OSC52Never  = "never"
+)
+
+// OSC52Modes lists the valid clipboard_osc52 values.
+var OSC52Modes = []string{OSC52Auto, OSC52Always, OSC52Never}
+
+// OSC52Mode returns the terminal clipboard policy, defaulting to "auto".
+// OSC 52 copies cannot be marked as sensitive, and terminal multiplexers
+// and session recorders may keep them, so they are used only when needed.
+func (c Config) OSC52Mode() string {
+	switch c.ClipboardOSC52 {
+	case OSC52Always, OSC52Never:
+		return c.ClipboardOSC52
+	}
+	return OSC52Auto
 }
 
 // AutoLockDuration returns the auto-lock timeout as a duration.
@@ -220,6 +242,9 @@ func (c *Config) Sanitize() {
 	}
 	if c.ClipboardClearSeconds > 0 && c.ClipboardClearSeconds < 15 {
 		c.ClipboardClearSeconds = 15
+	}
+	if c.ClipboardOSC52 != "" && c.OSC52Mode() != c.ClipboardOSC52 {
+		c.ClipboardOSC52 = ""
 	}
 	if c.AutoLockMinutes < 0 {
 		c.AutoLockMinutes = 5

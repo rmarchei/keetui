@@ -357,3 +357,28 @@ func TestSettingsView(t *testing.T) {
 		t.Error("View() should return non-empty string")
 	}
 }
+
+func TestSettingsTerminalClipboardPersistence(t *testing.T) {
+	isolateSettingsConfig(t)
+	m := NewSettingsModel(config.Default())
+	if got := m.inputs[settingClipboardOSC52].Value(); got != config.OSC52Auto {
+		t.Fatalf("Terminal clipboard defaults to %q", got)
+	}
+	for _, mode := range config.OSC52Modes {
+		m.inputs[settingClipboardOSC52].SetValue(mode)
+		updated, cmd := m.save()
+		m = updated.(SettingsModel)
+		if m.isError || cmd == nil {
+			t.Fatalf("saving %s failed: %s", mode, m.status)
+		}
+		cfg, err := config.Load()
+		if err != nil || cfg.OSC52Mode() != mode {
+			t.Fatalf("mode %s did not persist: %q, %v", mode, cfg.ClipboardOSC52, err)
+		}
+		m = NewSettingsModel(cfg)
+	}
+	m.inputs[settingClipboardOSC52].SetValue("sometimes")
+	if _, errs := m.draftConfig(); errs[settingClipboardOSC52] == "" {
+		t.Fatal("invalid mode accepted")
+	}
+}

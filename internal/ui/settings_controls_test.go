@@ -33,7 +33,7 @@ func TestSettingsSpaceTogglesWithoutTyping(t *testing.T) {
 }
 
 func TestSettingsChoicePickerCommitAndCancel(t *testing.T) {
-	for _, field := range []int{settingDefaultPreset, settingTheme} {
+	for _, field := range []int{settingClipboardOSC52, settingDefaultPreset, settingTheme} {
 		m := NewSettingsModel(config.Default())
 		m.focused, m.width, m.height = field, 40, 11
 		original := m.inputs[field].Value()

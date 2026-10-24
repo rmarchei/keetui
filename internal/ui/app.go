@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"net/url"
 	"os"
@@ -144,7 +143,7 @@ type AppModel struct {
 	cfg             config.Config
 	dirty           bool      // true when in-memory changes haven't been saved
 	saving          bool      // true while a save runs in the background; input is gated
-	lastCopied      string    // most recent keetui-copied clipboard value not yet cleared
+	clipboardHeld   bool      // a keetui copy may still be on the clipboard
 	helpReturnState viewState // help must not overwrite a pending confirmation
 	quitReturn      *quitContext
 	entryCount      int       // cached entry count for status bar
@@ -995,33 +994,35 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CopyToClipboardMsg:
-		if err := m.clipboardBackend().write(msg.Value); err != nil {
+		res, err := m.clipboardBackend().copy(msg.Value, copyOptions{
+			transient: m.cfg.ClipboardClearDuration() > 0,
+			osc52:     m.cfg.OSC52Mode(),
+		})
+		if err != nil {
 			return m, statusCmd(fmt.Sprintf("Clipboard error: %s", err), true)
 		}
-		m.lastCopied = msg.Value
+		m.clipboardHeld = true
 		clearCmd := m.scheduleClearClipboard()
-		return m, tea.Batch(
-			statusCmd(fmt.Sprintf("Copied %s!", msg.Field), false),
-			clearCmd,
-		)
+		return m, tea.Batch(statusCmd(copyStatus(msg.Field, res), false), clearCmd)
 
 	case clipboardClearMsg:
 		if msg.gen != m.clipboardGen || m.clipboardClearAt.IsZero() {
 			return m, nil
 		}
-		current, err := m.clipboardBackend().read()
-		expected := m.lastCopied
+		outcome, err := m.clipboardBackend().release()
 		m.forgetCopiedValue()
-		if err != nil {
-			// Can't read clipboard (e.g. over SSH) — clear anyway so OSC 52 clear is sent.
-			m.clipboardBackend().clear()
-		} else if current == expected {
-			m.clipboardBackend().clear()
-		} else {
+		switch {
+		case err != nil:
+			return m, statusCmd(fmt.Sprintf("Clipboard error: %s", err), true)
+		case outcome == clearDone:
+			return m, statusCmd("Clipboard cleared", false)
+		case outcome == clearChanged:
 			return m, statusCmd("Clipboard changed; left untouched", false)
+		case outcome == clearRequested:
+			// OSC 52 has no acknowledgement; do not claim a verified erase.
+			return m, statusCmd("Clipboard clear requested", false)
 		}
-		// OSC 52 has no acknowledgement; do not claim a verified erase.
-		return m, statusCmd("Clipboard clear requested", false)
+		return m, nil
 
 	case OpenURLMsg:
 		if err := openURL(msg.URL); err != nil {
@@ -1054,7 +1055,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.dirty = false
 		}
-		m.clipboardBackend().clear()
+		_, _ = m.clipboardBackend().release()
 		m.forgetCopiedValue()
 		m.autoLockCheckAt = time.Time{}
 		m.db = nil
@@ -1499,13 +1500,7 @@ func (m AppModel) saveBusy() (tea.Model, tea.Cmd) {
 // outstanding, so a copied secret does not outlive the process. The
 // clipboard is left alone when the user has since copied something else.
 func (m AppModel) clearClipboardOnQuit() {
-	if m.lastCopied == "" {
-		return
-	}
-	if current, err := m.clipboardBackend().read(); err == nil && current != m.lastCopied {
-		return
-	}
-	m.clipboardBackend().clear()
+	_, _ = m.clipboardBackend().release()
 }
 
 func statusCmd(text string, isError bool) tea.Cmd {
@@ -1557,90 +1552,6 @@ type RenameGroupStartMsg struct {
 
 // ChangePasswordStartMsg is sent to initiate master password change.
 type ChangePasswordStartMsg struct{}
-
-// osc52Copy writes an OSC 52 escape sequence to set the terminal clipboard.
-// This works over SSH because the escape sequence travels through the connection
-// to the local terminal emulator. Writes directly to /dev/tty to avoid
-// interfering with bubbletea's stdout rendering.
-func osc52Copy(text string) {
-	f, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
-	if err != nil {
-		return
-	}
-	defer func() { _ = f.Close() }()
-	b64 := base64.StdEncoding.EncodeToString([]byte(text))
-	_, _ = fmt.Fprintf(f, "\033]52;c;%s\a", b64)
-}
-
-func copyToClipboard(text string) error {
-	// Always attempt OSC 52 first — works over SSH when the terminal supports it,
-	// and is silently ignored by terminals that don't.
-	osc52Copy(text)
-
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("pbcopy")
-	case "linux":
-		// Try xclip first, then xsel, then wl-copy (Wayland)
-		if _, err := exec.LookPath("xclip"); err == nil {
-			cmd = exec.Command("xclip", "-selection", "clipboard")
-		} else if _, err := exec.LookPath("xsel"); err == nil {
-			cmd = exec.Command("xsel", "--clipboard", "--input")
-		} else if _, err := exec.LookPath("wl-copy"); err == nil {
-			cmd = exec.Command("wl-copy")
-		} else {
-			// No clipboard utility available, but OSC 52 was already sent.
-			return nil
-		}
-	default:
-		// OSC 52 was already sent; don't fail on unsupported platforms.
-		return nil
-	}
-	cmd.Stdin = nil
-	pipe, err := cmd.StdinPipe()
-	if err != nil {
-		return nil // OSC 52 already attempted
-	}
-	if err := cmd.Start(); err != nil {
-		_ = pipe.Close()
-		return nil // OSC 52 already attempted
-	}
-	_, writeErr := pipe.Write([]byte(text))
-	_ = pipe.Close()
-	_ = cmd.Wait() // best-effort; OSC 52 already attempted
-	_ = writeErr
-	return nil
-}
-
-func readClipboard() (string, error) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("pbpaste")
-	case "linux":
-		if _, err := exec.LookPath("xclip"); err == nil {
-			cmd = exec.Command("xclip", "-selection", "clipboard", "-o")
-		} else if _, err := exec.LookPath("xsel"); err == nil {
-			cmd = exec.Command("xsel", "--clipboard", "--output")
-		} else if _, err := exec.LookPath("wl-paste"); err == nil {
-			cmd = exec.Command("wl-paste", "--no-newline")
-		} else {
-			return "", fmt.Errorf("no clipboard utility found")
-		}
-	default:
-		return "", fmt.Errorf("clipboard not supported on %s", runtime.GOOS)
-	}
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("clipboard read: %w", err)
-	}
-	return string(out), nil
-}
-
-func clearClipboard() {
-	_ = copyToClipboard("")
-}
 
 func openURL(rawURL string) error {
 	if rawURL == "" {

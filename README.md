@@ -257,6 +257,7 @@ Settings are stored in `~/.config/keetui/config.json`:
 ```json
 {
   "clipboard_clear_seconds": 15,
+  "clipboard_osc52": "auto",
   "auto_lock_minutes": 5,
   "password_length": 20,
   "show_password_strength": true,
@@ -274,6 +275,7 @@ Settings are stored in `~/.config/keetui/config.json`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `clipboard_clear_seconds` | 15 | Seconds before clipboard is automatically cleared (0: disable) |
+| `clipboard_osc52` | `"auto"` | Copy through the terminal (OSC 52): `auto` (only without a local clipboard, e.g. over SSH), `always`, or `never`. See [Clipboard](#clipboard) |
 | `auto_lock_minutes` | 5 | Minutes of inactivity before the database locks (0: disable) |
 | `password_length` | 20 | Length of generated passwords (minimum 8) |
 | `show_password_strength` | true | Show password strength indicator in detail and editor views |
@@ -333,9 +335,9 @@ git config core.hooksPath .githooks
 
 ## Security
 
-- **Clipboard auto-clear**: Copied passwords and TOTP codes are automatically cleared from the clipboard (configurable, default 15s)
+- **Clipboard auto-clear**: Copied passwords and TOTP codes are automatically cleared from the clipboard (configurable, default 15s), and marked as sensitive where the platform supports it (see [Clipboard](#clipboard))
 - **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered
-- **Live security status**: The status bar shows `clip:15s` until clipboard clearing and `lock:4:59` until auto-lock. The lock countdown is highlighted in its final 30 seconds; normal input resets inactivity. Copying again restarts the clipboard timer, even for the same value. `off` means a protection is disabled (`C:`/`L:` are compact labels on very narrow terminals). Clearing is best-effort, especially over OSC 52; a different clipboard value is left untouched when it can be read.
+- **Live security status**: The status bar shows `clip:15s` until clipboard clearing and `lock:4:59` until auto-lock. The lock countdown is highlighted in its final 30 seconds; normal input resets inactivity. Copying again restarts the clipboard timer, even for the same value. `off` means a protection is disabled (`C:`/`L:` are compact labels on very narrow terminals). Clearing over OSC 52 cannot be verified; a local clipboard that has changed since the copy is left untouched.
 - **Password generator**: Generates random passwords via `crypto/rand` with configurable character sets (uppercase, lowercase, digits, symbols)
 - **Backup on save**: When enabled, the original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback (disabled by default; enable via `backup_on_save` setting)
 - **Read-only mode**: Open with `--read-only` to browse a database without risk of accidental modification
@@ -361,11 +363,41 @@ If decoded protected values look like binary garbage (e.g. the database was writ
 
 ## Clipboard
 
-Clipboard support uses platform-native commands:
+keetui copies to the local clipboard and marks copies as sensitive where the
+platform allows, so clipboard history and managers can skip them:
 
-- **macOS**: `pbcopy`
-- **Linux (X11)**: `xclip` or `xsel`
-- **Linux (Wayland)**: `wl-copy`
+- **macOS**: keetui writes the pasteboard directly. Copies carry the
+  `org.nspasteboard.ConcealedType` marker (plus `TransientType` while
+  auto-clear is on), which tells macOS to keep them out of clipboard history
+  and is honored by managers such as Maccy, Alfred, Paste and Raycast. They
+  also stay on this Mac (no Universal Clipboard). `/usr/bin/pbcopy` is a
+  fallback that cannot mark copies.
+- **Linux (Wayland)**: `wl-copy`. With wl-clipboard 2.3.0 or later, copies
+  carry `x-kde-passwordManagerHint=secret`, honored by Klipper, CopyQ 8+,
+  GPaste 51.1+, cliphist and clipman.
+- **Linux (X11)**: `xclip` or `xsel`, which cannot mark copies.
+
+When a copy cannot be marked, the status bar says that clipboard managers may
+keep it.
+
+**Terminal clipboard (OSC 52).** Over SSH, or when no local clipboard is
+available, keetui sends the copy to the terminal with OSC 52 instead. These
+copies cannot be marked, and keetui cannot verify that they were cleared:
+
+- tmux with `set-clipboard on` keeps them in its paste buffers, which
+  clearing does not remove.
+- Session recorders (`script`, asciinema, `tmux pipe-pane`) and raw terminal
+  logs record them.
+
+`clipboard_osc52` controls this: `auto` (the default) uses OSC 52 only when
+needed, `always` also sends local copies to the terminal, and `never` disables
+it.
+
+**Clearing.** keetui clears only its own copy: if you have copied something
+else since, the clipboard is left untouched. It clears on the timer, on lock,
+on quit, and when the process is terminated (SIGTERM, SIGINT, or SIGHUP when
+the terminal is closed). After `kill -9`, the copy stays until something
+replaces it.
 
 ## License
 
