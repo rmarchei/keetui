@@ -457,9 +457,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Capture undo state before deletion
 		parentUUID, _ := m.db.FindEntryParentUUID(msg.UUID)
-		rawEntry, _ := m.db.GetRawEntry(msg.UUID)
 		entry, _ := m.db.GetEntry(msg.UUID)
 		recycleBin := m.db.RecycleBinEnabled()
+		var snapshot *keepass.EntrySnapshot
+		if !recycleBin {
+			snapshot, _ = m.db.SnapshotEntry(msg.UUID)
+		}
 
 		if err := m.db.DeleteEntry(msg.UUID); err != nil {
 			m.state = viewBrowser
@@ -469,22 +472,20 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshEntryCount()
 		m.state = viewBrowser
 
-		if rawEntry != nil {
-			if recycleBin {
-				m.undoStack.push(undoAction{
-					actionType:  undoMoveEntry,
-					description: fmt.Sprintf("Delete '%s'", entry.Title),
-					entryUUID:   msg.UUID,
-					sourceUUID:  parentUUID,
-				})
-			} else {
-				m.undoStack.push(undoAction{
-					actionType:  undoDeleteEntry,
-					description: fmt.Sprintf("Delete '%s'", entry.Title),
-					rawEntry:    rawEntry,
-					parentUUID:  parentUUID,
-				})
-			}
+		if recycleBin {
+			m.undoStack.push(undoAction{
+				actionType:  undoMoveEntry,
+				description: fmt.Sprintf("Delete '%s'", entry.Title),
+				entryUUID:   msg.UUID,
+				sourceUUID:  parentUUID,
+			})
+		} else if snapshot != nil {
+			m.undoStack.push(undoAction{
+				actionType:    undoDeleteEntry,
+				description:   fmt.Sprintf("Delete '%s'", entry.Title),
+				entrySnapshot: snapshot,
+				parentUUID:    parentUUID,
+			})
 		}
 
 		statusText := "Entry deleted"
@@ -509,6 +510,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if rawGroup != nil {
 			groupName = rawGroup.Name
 		}
+		var snapshot *keepass.GroupSnapshot
+		if !recycleBinG {
+			snapshot, _ = m.db.SnapshotGroup(msg.UUID)
+		}
 
 		if err := m.db.DeleteGroup(msg.UUID); err != nil {
 			m.state = viewBrowser
@@ -526,12 +531,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					groupUUID:   msg.UUID,
 					sourceUUID:  parentUUID,
 				})
-			} else {
+			} else if snapshot != nil {
 				m.undoStack.push(undoAction{
-					actionType:  undoDeleteGroup,
-					description: fmt.Sprintf("Delete group '%s'", groupName),
-					rawGroup:    rawGroup,
-					parentUUID:  parentUUID,
+					actionType:    undoDeleteGroup,
+					description:   fmt.Sprintf("Delete group '%s'", groupName),
+					groupSnapshot: snapshot,
+					parentUUID:    parentUUID,
 				})
 			}
 		}
@@ -1281,9 +1286,9 @@ func (m AppModel) handleUndo() (tea.Model, tea.Cmd) {
 	var err error
 	switch action.actionType {
 	case undoDeleteEntry:
-		err = m.db.InsertRawEntry(action.parentUUID, *action.rawEntry)
+		err = m.db.InsertEntrySnapshot(action.parentUUID, action.entrySnapshot)
 	case undoDeleteGroup:
-		err = m.db.InsertRawGroup(action.parentUUID, *action.rawGroup)
+		err = m.db.InsertGroupSnapshot(action.parentUUID, action.groupSnapshot)
 	case undoEditEntry:
 		err = m.db.UpdateEntry(action.entryUUID, *action.prevEntry)
 	case undoRenameGroup:

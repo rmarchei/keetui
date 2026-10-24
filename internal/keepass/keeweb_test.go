@@ -2,6 +2,9 @@ package keepass
 
 import (
 	"bytes"
+	"compress/gzip"
+	"encoding/base64"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -130,10 +133,39 @@ func assertKeewebFixture(t *testing.T, db *DB, fixture keewebFixture, deleted bo
 	}
 }
 
+// assertKeewebBinaries fails unless the binary pool is still as KeeWeb wrote
+// it: a.bin, the only binary of the protected-binary fixtures, must be
+// protected, and every compressed binary must be a complete gzip stream, or
+// KeeWeb refuses to open the file.
+func assertKeewebBinaries(t *testing.T, db *DB, fixture keewebFixture) {
+	t.Helper()
+	for _, b := range *db.binaryPool() {
+		protected := b.MemoryProtection != 0 || (b.Protected != nil && b.Protected.Bool)
+		if fixture.attachment && !protected {
+			t.Errorf("binary %d of a.bin is no longer protected", b.ID)
+		}
+		if db.IsKdbx4() || !b.Compressed.Bool || protected {
+			continue
+		}
+		stream, err := base64.StdEncoding.DecodeString(string(b.Content))
+		if err != nil {
+			t.Errorf("binary %d is not base64: %v", b.ID, err)
+			continue
+		}
+		reader, err := gzip.NewReader(bytes.NewReader(stream))
+		if err == nil {
+			_, err = io.ReadAll(reader)
+		}
+		if err != nil {
+			t.Errorf("binary %d is not a complete gzip stream: %v", b.ID, err)
+		}
+	}
+}
+
 func TestKeewebCompatibility(t *testing.T) {
 	for _, fixture := range keewebFixtures() {
 		t.Run(fixture.file, func(t *testing.T) {
-			for _, operation := range []string{"save", "delete", "upgrade"} {
+			for _, operation := range []string{"save", "delete", "upgrade", "undo"} {
 				t.Run(operation, func(t *testing.T) {
 					if operation == "upgrade" && fixture.kdbx4 {
 						t.Skip("already KDBX 4")
@@ -154,6 +186,28 @@ func TestKeewebCompatibility(t *testing.T) {
 					case "upgrade":
 						if err := db.ConvertToKDBX4(); err != nil {
 							t.Fatalf("convert to KDBX 4: %v", err)
+						}
+					case "undo":
+						// Undo the deletion after a save in between. In the
+						// protected-binary fixtures, that save drops the entry's
+						// protected attachment from the binary pool.
+						entry := keewebEntries(t, db)[fixture.deleteTitle]
+						parent, err := db.FindEntryParentUUID(entry.UUID)
+						if err != nil {
+							t.Fatalf("find parent: %v", err)
+						}
+						snapshot, err := db.SnapshotEntry(entry.UUID)
+						if err != nil {
+							t.Fatalf("snapshot entry: %v", err)
+						}
+						if err := db.PermanentlyDeleteEntry(entry.UUID); err != nil {
+							t.Fatalf("delete entry: %v", err)
+						}
+						if err := db.SaveAs(filepath.Join(t.TempDir(), "deleted.kdbx")); err != nil {
+							t.Fatalf("save without the entry: %v", err)
+						}
+						if err := db.InsertEntrySnapshot(parent, snapshot); err != nil {
+							t.Fatalf("undo delete: %v", err)
 						}
 					}
 					path := filepath.Join(t.TempDir(), "saved.kdbx")
@@ -181,6 +235,10 @@ func TestKeewebCompatibility(t *testing.T) {
 						got := randomnessOf(reopened)
 						assertFreshRandomness(t, got, seen...)
 						seen = append(seen, got)
+						// Converting to KDBX 4 re-adds every binary unprotected.
+						if operation != "upgrade" {
+							assertKeewebBinaries(t, reopened, fixture)
+						}
 					}
 				})
 			}

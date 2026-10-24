@@ -27,12 +27,13 @@ type undoAction struct {
 	actionType  undoActionType
 	description string
 
-	// For delete entry: the raw entry and its parent group UUID
-	rawEntry   *gokeepasslib.Entry
-	parentUUID gokeepasslib.UUID
+	// For delete entry: a self-contained copy of the entry and its parent
+	// group UUID. Raw copies would keep binary pool IDs, which saving renumbers.
+	entrySnapshot *keepass.EntrySnapshot
+	parentUUID    gokeepasslib.UUID
 
-	// For delete group: the raw group and its parent group UUID
-	rawGroup *gokeepasslib.Group
+	// For delete group: a self-contained copy of the group and its parent group UUID
+	groupSnapshot *keepass.GroupSnapshot
 
 	// For edit entry: the previous simplified entry state
 	entryUUID gokeepasslib.UUID
