@@ -350,12 +350,14 @@ git config core.hooksPath .githooks
 
 KeeWeb (via its kdbxweb library) can store file attachments in **KDBX 3.1** files as *protected binaries* in the Meta section, encrypted with the same inner stream cipher as passwords. Before `gokeepasslib` v3.7.0, these binaries were skipped during decryption, making subsequent protected values appear as random garbage. Upstream v3.7.0 includes the protected-binary decoding fix and now reports XML parsing errors instead of silently dropping entries. Upstream v3.7.1 also decrypts protected values in document order, so files whose groups interleave entries and subgroups no longer have their later passwords corrupted.
 
-keetui still needs the [rmarchei/gokeepasslib](https://github.com/rmarchei/gokeepasslib) fork (see `replace` in `go.mod`) for two compatibility fixes on top of v3.7.1:
+keetui still needs the [rmarchei/gokeepasslib](https://github.com/rmarchei/gokeepasslib) fork (see `replace` in `go.mod`) for these fixes on top of v3.7.1:
 
 - Accept empty timestamps written by some KeeWeb files, including metadata and entry history.
 - Decrypt protected values **before** removing unused attachments during save. Removing a protected binary too early shifts the stream and corrupts the remaining passwords.
+- Write complete KDBX 3.1 attachments. The last one or two bytes of their compressed data were dropped, so KeeWeb refused to open a file with an attachment added by keetui. Saving such a file with this version repairs it.
+- Return KDBX 4 attachments exactly as stored. An attachment whose content happened to be valid base64, such as a key file, was decoded when extracted, copied or merged.
 
-Regression tests use synthetic kdbxweb databases to check passwords, history, protected custom fields and attachments across saving, deleting entries and converting to KDBX 4. The fork should only be removed once both remaining fixes are available upstream and these tests pass. These fixes prevent corruption; they cannot recover passwords that have already been saved incorrectly.
+Regression tests use synthetic kdbxweb databases to check passwords, history, protected custom fields and attachments across saving, deleting entries and converting to KDBX 4. The fork should only be removed once all of these fixes are available upstream and these tests pass. These fixes prevent corruption; they cannot recover passwords that have already been saved incorrectly.
 
 ### Corruption guard
 
