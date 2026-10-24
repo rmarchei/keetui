@@ -2,6 +2,7 @@ package ui
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -361,6 +362,40 @@ func TestBrowserTagFilter(t *testing.T) {
 	}
 	if m.tagFilter != "" {
 		t.Errorf("tagFilter should be empty after cycling through all tags, got %q", m.tagFilter)
+	}
+}
+
+func TestBrowserTagFilterSanitizesIndicator(t *testing.T) {
+	db := createTestUIDB(t)
+	root := db.RootGroup()
+
+	// A sixel DCS sorts before letters, so the first press of t selects it.
+	// The renderer passes terminated DCS/APC sequences through to the terminal.
+	tag := "\x1bPq#1~~~~\x1b\\x"
+	_, _ = db.AddEntry(root.UUID, keepass.Entry{
+		Title:    "Hostile",
+		Password: "pass",
+		Tags:     tag + ";work",
+	})
+
+	m := NewBrowserModel(db)
+	m.width, m.height = 80, 24
+
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 't', Text: string('t')})
+	m = updated.(BrowserModel)
+	if m.tagFilter != tag {
+		t.Fatalf("tagFilter = %q, want %q", m.tagFilter, tag)
+	}
+	if len(m.items) == 0 {
+		t.Fatal("filtering must still match the raw tag")
+	}
+
+	content := m.View().Content
+	if strings.Contains(content, "\x1bP") {
+		t.Errorf("tag indicator emitted a raw DCS sequence: %q", content)
+	}
+	if !strings.Contains(content, "tag: "+sanitizeDisplay(tag)) {
+		t.Errorf("tag indicator should show the sanitized tag, got %q", content)
 	}
 }
 

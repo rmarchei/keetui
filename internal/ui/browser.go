@@ -945,7 +945,7 @@ func (m BrowserModel) View() tea.View {
 			indicators = append(indicators, "sort: "+m.sortBy.String())
 		}
 		if m.tagFilter != "" {
-			indicators = append(indicators, "tag: "+m.tagFilter)
+			indicators = append(indicators, "tag: "+sanitizeDisplay(m.tagFilter))
 		}
 		if len(indicators) > 0 {
 			bc += hiddenStyle.Render("  [" + strings.Join(indicators, ", ") + "]")
