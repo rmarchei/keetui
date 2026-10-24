@@ -109,7 +109,7 @@ git config core.hooksPath .githooks   # enable pre-commit gofmt check
 
 ### Building
 
-CI, release builds, and the Makefile's container image are pinned to Go 1.27.1.
+CI, release builds, and the Makefile's container image are pinned to Go 1.27.3.
 Keep `go 1.26.0` in `go.mod` as the minimum source version unless newer language
 features are required. Go 1.27-built macOS binaries require macOS 13 Ventura or
 newer; the generated Homebrew formula declares that requirement.
@@ -212,7 +212,7 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - When adding a new view, create a new file in `internal/ui/`, implement `tea.Model`, and add the view state and message handling to `app.go`
 - When adding new KeePass operations, add them to the appropriate file in `internal/keepass/` with corresponding tests
 - The `keepass.DB` struct holds a reference to the underlying `gokeepasslib.Database` — call `LockProtectedEntries()` before encoding and `UnlockProtectedEntries()` after decoding
-- `go.mod` retains the `rmarchei/gokeepasslib` fork (local clone: `../gokeepasslib`), based on upstream v3.7.0 plus subsequent dependency updates. Protected KDBX 3.1 binaries are supported upstream, but the fork still handles empty KeeWeb timestamps and moves unused-binary cleanup after decryption to prevent corruption on save. Drop the replace only when both fixes are available upstream and `TestKeewebCompatibility` passes. Its fixtures are synthetic; never substitute a user's database
+- `go.mod` retains the `rmarchei/gokeepasslib` fork (local clone: `../gokeepasslib`), based on upstream v3.7.1. Protected KDBX 3.1 binaries are supported upstream, but the fork still handles empty KeeWeb timestamps and moves unused-binary cleanup after decryption to prevent corruption on save. Drop the replace only when both fixes are available upstream and `TestKeewebCompatibility` passes. Its fixtures are synthetic; never substitute a user's database
 - All DB-sourced strings rendered in the TUI must go through `sanitizeDisplay()` / `sanitizeNoteLines()` (`internal/ui/sanitize.go`) — raw control bytes corrupt the Bubble Tea frame. Clipboard/QR paths use raw values
 - `keepass.Open`/`OpenWithKeyFile` set `DB.SuspectCorruption()` when decoded protected values look like binary garbage; the app then forces read-only and headless mutations refuse to run
 - The editor uses `ctrl+` keybindings (ctrl+s, ctrl+r, ctrl+g, etc.) because regular keys go to text inputs

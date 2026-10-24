@@ -62,7 +62,7 @@ go build -o keetui ./cmd/keetui
 
 ### Build with Make
 
-CI, release builds, and container-based Make targets use **Go 1.27.1**.
+CI, release builds, and container-based Make targets use **Go 1.27.3**.
 macOS binaries built with this toolchain require **macOS 13 Ventura or newer**.
 The module retains Go 1.26.0 as its minimum source version; local builds without
 a container use the installed Go compiler.
@@ -346,9 +346,9 @@ git config core.hooksPath .githooks
 
 ### KeeWeb / kdbxweb compatibility
 
-KeeWeb (via its kdbxweb library) can store file attachments in **KDBX 3.1** files as *protected binaries* in the Meta section, encrypted with the same inner stream cipher as passwords. Before `gokeepasslib` v3.7.0, these binaries were skipped during decryption, making subsequent protected values appear as random garbage. Upstream v3.7.0 includes the protected-binary decoding fix and now reports XML parsing errors instead of silently dropping entries.
+KeeWeb (via its kdbxweb library) can store file attachments in **KDBX 3.1** files as *protected binaries* in the Meta section, encrypted with the same inner stream cipher as passwords. Before `gokeepasslib` v3.7.0, these binaries were skipped during decryption, making subsequent protected values appear as random garbage. Upstream v3.7.0 includes the protected-binary decoding fix and now reports XML parsing errors instead of silently dropping entries. Upstream v3.7.1 also decrypts protected values in document order, so files whose groups interleave entries and subgroups no longer have their later passwords corrupted.
 
-keetui still needs the [rmarchei/gokeepasslib](https://github.com/rmarchei/gokeepasslib) fork (see `replace` in `go.mod`) for two compatibility fixes on top of v3.7.0:
+keetui still needs the [rmarchei/gokeepasslib](https://github.com/rmarchei/gokeepasslib) fork (see `replace` in `go.mod`) for two compatibility fixes on top of v3.7.1:
 
 - Accept empty timestamps written by some KeeWeb files, including metadata and entry history.
 - Decrypt protected values **before** removing unused attachments during save. Removing a protected binary too early shifts the stream and corrupts the remaining passwords.

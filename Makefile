@@ -4,7 +4,7 @@ CMD      := ./cmd/keetui
 DIST     := dist
 
 VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-GOIMAGE  := golang:1.27.1
+GOIMAGE  := golang:1.27.3
 LINTIMAGE := golangci/golangci-lint:latest
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 
