@@ -9,6 +9,7 @@ require (
 	github.com/boombuler/barcode v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/ebitengine/purego v0.11.2
+	github.com/jezek/xgb v1.3.1
 	github.com/pquerna/otp v1.5.0
 	github.com/tobischo/gokeepasslib/v3 v3.7.1
 	github.com/trustelem/zxcvbn v1.0.2-0.20211210161922-475ca3b81504

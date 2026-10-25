@@ -4,42 +4,102 @@ package ui
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
+	"time"
+
+	"github.com/rmarchei/keetui/internal/x11clip"
 )
 
 // linuxClipboard uses wl-copy on Wayland, where wl-clipboard 2.3.0 and later
-// can mark copies as sensitive (x-kde-passwordManagerHint=secret), and
-// xclip or xsel on X11, which cannot. Ownership is checked by content.
+// can mark copies as sensitive (x-kde-passwordManagerHint=secret). On X11 it
+// owns CLIPBOARD in-process (internal/x11clip), which offers the same marker
+// and tracks ownership through the X server; xclip and xsel, which cannot
+// mark copies, are fallbacks. Tool copies are checked by content.
 type linuxClipboard struct {
 	getenv func(string) string
 	has    func(string) bool
-	tool   string // tool used for the last write
+	// run executes wl-copy, runX xclip and xsel, and output the tools that
+	// read the clipboard; tests replace them, so they never reach a real
+	// clipboard.
+	run    func(env []string, input []byte, name string, args ...string) error
+	runX   func(env []string, input []byte, name string, args ...string) error
+	output func(name string, args ...string) ([]byte, error)
+	newX11 func() x11Owner
+
+	tool      string   // backend of the last write: wl-copy, x11, xclip or xsel
+	x11       x11Owner // created on the first X11 copy
+	byContent bool     // holds matched another client's copy of the value
 
 	sensitiveOnce sync.Once
 	sensitive     bool // wl-copy understands --sensitive
 }
 
-func newNativeClipboard() nativeClipboard {
-	return &linuxClipboard{getenv: os.Getenv, has: func(name string) bool {
-		_, err := exec.LookPath(name)
-		return err == nil
-	}}
+// x11Owner is the in-process CLIPBOARD owner, *x11clip.Owner. A Copy that
+// fails blanks the earlier copy, so a value copied elsewhere instead (a tool
+// or OSC 52) never leaves the previous secret on the clipboard.
+type x11Owner interface {
+	Copy(value []byte, marked bool) error
+	Owns() bool
+	Blank()
+	Read() ([]byte, error)
+	Close() error
 }
 
-// linuxTool picks the clipboard tool for the session. X11 tools reach
-// Wayland apps only on some compositors (not wlroots or Hyprland without an
-// X11 window in focus), so wl-copy comes first.
+// x11Name names keetui's owner window, so that clipboard managers which
+// filter by window (clipmenu, greenclip) can skip keetui's copies.
+const x11Name = "keetui"
+
+// handOffTimeout bounds the exit hand-off to xclip.
+const handOffTimeout = 2 * time.Second
+
+// x11ToolTimeout bounds the part of an xclip or xsel run that keetui waits
+// for: connecting to the X server, reading the input and taking the
+// clipboard. Both then leave a forked process holding the copy, which keetui
+// does not wait for. Tests shorten it.
+var x11ToolTimeout = 2 * time.Second
+
+// errToolTimeout reports an xclip or xsel run that was still waiting for the
+// X server after x11ToolTimeout.
+var errToolTimeout = errors.New("timed out waiting for the X server")
+
+func newNativeClipboard() nativeClipboard {
+	return &linuxClipboard{
+		getenv: os.Getenv,
+		has: func(name string) bool {
+			_, err := exec.LookPath(name)
+			return err == nil
+		},
+		run:    pipeTo,
+		runX:   pipeDetached,
+		output: outputBounded,
+		newX11: func() x11Owner { return &x11clip.Owner{Name: x11Name} },
+	}
+}
+
+// linuxTool picks the clipboard for the session. X11 clients reach Wayland
+// apps only on some compositors (not wlroots or Hyprland without an X11
+// window in focus), so wl-copy comes first.
 func linuxTool(getenv func(string) string, has func(string) bool) string {
 	if getenv("WAYLAND_DISPLAY") != "" && has("wl-copy") && has("wl-paste") {
 		return "wl-copy"
 	}
 	if getenv("DISPLAY") != "" {
-		for _, tool := range []string{"xclip", "xsel"} {
-			if has(tool) {
-				return tool
-			}
+		return "x11"
+	}
+	return ""
+}
+
+// x11Fallback picks the tool for copies the in-process owner cannot make.
+func x11Fallback(has func(string) bool) string {
+	for _, tool := range []string{"xclip", "xsel"} {
+		if has(tool) {
+			return tool
 		}
 	}
 	return ""
@@ -49,7 +109,7 @@ func (l *linuxClipboard) available() bool { return linuxTool(l.getenv, l.has) !=
 
 func (l *linuxClipboard) wlSensitive() bool {
 	l.sensitiveOnce.Do(func() {
-		out, err := exec.Command("wl-copy", "--help").Output()
+		out, err := l.output("wl-copy", "--help")
 		l.sensitive = err == nil && bytes.Contains(out, []byte("--sensitive"))
 	})
 	return l.sensitive
@@ -67,48 +127,226 @@ func (l *linuxClipboard) write(value []byte, _ bool) (bool, error) {
 		if l.wlSensitive() {
 			args, marked = append(args, "--sensitive"), true
 		}
-		err = pipeTo(wlEnv(l.getenv), value, "wl-copy", args...)
-	case "xclip":
-		err = pipeTo(nil, value, "xclip", "-selection", "clipboard")
-	case "xsel":
-		err = pipeTo(nil, value, "xsel", "--clipboard", "--input")
+		err = l.run(wlEnv(l.getenv), value, "wl-copy", args...)
+	case "x11":
+		tool, marked, err = l.writeX11(value)
 	default:
 		err = errNoClipboard
 	}
 	if err != nil {
 		return false, err
 	}
-	l.tool = tool
+	l.tool, l.byContent = tool, false
 	return marked, nil
 }
 
-// holds treats an unreadable clipboard (empty, or an image) as not ours.
-func (l *linuxClipboard) holds(matches func([]byte) bool, _ bool) bool {
-	var cmd *exec.Cmd
-	switch l.tool {
-	case "wl-copy":
-		cmd = exec.Command("wl-paste", "--no-newline", "--type", "text")
+// writeX11 copies through the in-process owner. When the owner fails (no
+// connection, a timeout, unconfirmed ownership) or the value would need an
+// INCR transfer, xclip or xsel makes an unmarked copy instead.
+func (l *linuxClipboard) writeX11(value []byte) (tool string, marked bool, err error) {
+	if l.x11 == nil {
+		l.x11 = l.newX11()
+	}
+	if err = l.x11.Copy(value, true); err == nil {
+		return "x11", true, nil
+	}
+	tool = x11Fallback(l.has)
+	switch tool {
 	case "xclip":
-		cmd = exec.Command("xclip", "-selection", "clipboard", "-o")
+		if ferr := l.runX(nil, value, "xclip", "-selection", "clipboard"); ferr != nil {
+			return "", false, fmt.Errorf("%w; %w", err, ferr)
+		}
 	case "xsel":
-		cmd = exec.Command("xsel", "--clipboard", "--output")
+		if ferr := l.runX(nil, value, "xsel", "--clipboard", "--input"); ferr != nil {
+			return "", false, fmt.Errorf("%w; %w", err, ferr)
+		}
+	default:
+		return "", false, err
+	}
+	return tool, false, nil
+}
+
+// holds asks the X server whether keetui's copy is still on the clipboard,
+// and reads tool copies back; an unreadable clipboard (empty, or an image)
+// is not ours.
+func (l *linuxClipboard) holds(matches func([]byte) bool, alsoTerminal bool) bool {
+	l.byContent = false
+	var out []byte
+	var err error
+	switch l.tool {
+	case "x11":
+		if l.x11.Owns() {
+			return true
+		}
+		if !alsoTerminal {
+			return false // another client copied since
+		}
+		// The terminal applies its OSC 52 copy asynchronously, possibly
+		// after keetui's, so the clipboard may hold the same value.
+		out, err = l.x11.Read()
+		l.byContent = err == nil && matches(out)
+		clear(out)
+		return l.byContent
+	case "wl-copy":
+		out, err = l.output("wl-paste", "--no-newline", "--type", "text")
+	case "xclip":
+		out, err = l.output("xclip", "-selection", "clipboard", "-o")
+	case "xsel":
+		out, err = l.output("xsel", "--clipboard", "--output")
 	default:
 		return false
 	}
-	out, err := cmd.Output()
-	return err == nil && matches(out)
+	// A tool that got no answer from the server leaves the copy to the
+	// clear, as Owns does for keetui's own copy: replacing a copy made
+	// before the server stopped answering beats leaving the secret, and the
+	// clear reports the timeout.
+	held := err == nil && matches(out) || errors.Is(err, errToolTimeout)
+	clear(out)
+	return held
 }
 
 func (l *linuxClipboard) clear() error {
 	switch l.tool {
 	case "wl-copy":
-		return exec.Command("wl-copy", "--clear").Run()
+		return l.run(nil, nil, "wl-copy", "--clear")
+	case "x11":
+		if l.byContent {
+			// Another client (the terminal) holds keetui's value: replace
+			// it with an empty copy, which keetui then keeps.
+			return l.x11.Copy(nil, false)
+		}
+		// Keep the clipboard, empty. Giving it up would let managers that
+		// ignore the marker (ClipIt, Parcellite, Diodon, xfce4-clipman,
+		// qlipper, GPaste before 51.1) restore the secret from history.
+		l.x11.Blank()
+		return nil
 	case "xclip":
-		return pipeTo(nil, nil, "xclip", "-selection", "clipboard")
+		return l.runX(nil, nil, "xclip", "-selection", "clipboard")
 	case "xsel":
-		return exec.Command("xsel", "--clipboard", "--clear").Run()
+		return l.clearXsel()
 	}
 	return errNoClipboard
+}
+
+// clearXsel replaces xsel's copy with an empty one. xsel cannot own an
+// empty clipboard, and its --clear gives the clipboard up, so managers that
+// ignore the marker may restore the copy; it is the last resort.
+func (l *linuxClipboard) clearXsel() error {
+	if l.x11 != nil && l.x11.Copy(nil, false) == nil {
+		return nil
+	}
+	if l.has("xclip") {
+		return l.runX(nil, nil, "xclip", "-selection", "clipboard")
+	}
+	return l.runX(nil, nil, "xsel", "--clipboard", "--clear")
+}
+
+// close runs at exit. The X server drops keetui's clipboard with its
+// connection, and managers that ignore the marker then restore their newest
+// entry, possibly the secret. An empty copy owned by xclip, which outlives
+// keetui (see pipeDetached), prevents that; xsel cannot own an empty
+// clipboard.
+func (l *linuxClipboard) close() {
+	if l.x11 == nil {
+		return
+	}
+	if l.x11.Owns() && l.has("xclip") {
+		l.handOff()
+	}
+	_ = l.x11.Close()
+}
+
+// handOff gives the clipboard to an empty xclip copy and waits until xclip,
+// which takes the clipboard after forking, owns it, so that it never goes
+// ownerless in between.
+func (l *linuxClipboard) handOff() {
+	done := make(chan error, 1)
+	go func() { done <- l.runX(nil, nil, "xclip", "-selection", "clipboard") }()
+	deadline := time.After(handOffTimeout)
+	select {
+	case err := <-done:
+		if err != nil {
+			return // xclip failed, so it will not take the clipboard
+		}
+	case <-deadline:
+		return
+	}
+	for l.x11.Owns() {
+		select {
+		case <-deadline:
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// pipeDetached runs an X11 clipboard tool like pipeTo, in a session of its
+// own. xclip forks the server that keeps its copy without leaving keetui's
+// session, and when keetui is its terminal's session leader (xterm -e
+// keetui, tmux new-window keetui, ssh -t host keetui), the kernel hangs up
+// the terminal's foreground processes as keetui exits: xclip would die with
+// it, leaving the clipboard without an owner for managers to refill. xsel
+// detaches itself, and wl-copy ignores SIGHUP.
+//
+// The copy runs in the UI's update, so pipeDetached waits at most
+// x11ToolTimeout: a server that does not answer keeps xclip and xsel waiting
+// without a limit. A tool still copying a value then is killed, with what it
+// forked, so that a server answering later cannot receive a copy keetui
+// reported as not made, and would never clear. A tool making an empty copy
+// (a clear, or the hand-off at exit) is left to finish, as its copy can only
+// replace what keetui copied.
+func pipeDetached(env []string, input []byte, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Env = env
+	cmd.Stdin = bytes.NewReader(input)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.WaitDelay = x11ToolTimeout // in case what it forked holds the input pipe open
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	var waitErr error
+	exited := make(chan struct{})
+	go func() {
+		waitErr = cmd.Wait()
+		close(exited)
+	}()
+	t := time.NewTimer(x11ToolTimeout)
+	defer t.Stop()
+	select {
+	case <-exited:
+	case <-t.C:
+		select {
+		case <-exited: // it finished just now
+		default:
+			if len(input) > 0 {
+				// The tool leads its own process group (Setsid), which
+				// therefore holds what it forked and never keetui.
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+				<-exited
+			}
+			return fmt.Errorf("%s: %w", name, errToolTimeout)
+		}
+	}
+	if waitErr != nil {
+		return fmt.Errorf("%s: %w", name, waitErr)
+	}
+	return nil
+}
+
+// outputBounded runs a tool that reads the clipboard, for at most
+// x11ToolTimeout: the read runs in the UI's update (timer, lock, quit), and
+// xclip and xsel wait without a limit for a server that does not answer.
+func outputBounded(name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), x11ToolTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = x11ToolTimeout
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		clear(out)
+		return nil, fmt.Errorf("%s: %w", name, errToolTimeout)
+	}
+	return out, err
 }
 
 // wlEnv points wl-copy's temporary copy of stdin at the per-user runtime

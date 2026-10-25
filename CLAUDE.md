@@ -33,6 +33,10 @@ keetui/
 │   │   ├── stats.go             # Database statistics
 │   │   ├── strength.go          # Password strength evaluation
 │   │   └── *_test.go            # Corresponding tests for each
+│   ├── x11clip/
+│   │   ├── owner.go             # In-process X11 CLIPBOARD owner (xgb): copy, blank, read-back (INCR)
+│   │   ├── serve.go             # Selection targets: TARGETS, UTF8_STRING, STRING, hint, MULTIPLE
+│   │   └── *_test.go            # Unit tests; xvfb_test.go needs KEETUI_X11_TEST_DISPLAY
 │   └── ui/
 │       ├── app.go               # Top-level app model, view orchestration
 │       ├── audit.go             # Security audit results view
@@ -78,6 +82,7 @@ keetui/
 | `github.com/pquerna/otp` | TOTP/2FA code generation |
 | `github.com/boombuler/barcode` | QR code generation |
 | `github.com/ebitengine/purego` | AppKit calls without cgo (macOS pasteboard) |
+| `github.com/jezek/xgb` | X11 protocol without cgo (Linux clipboard owner, `internal/x11clip`) |
 
 ## Architecture
 
@@ -140,6 +145,8 @@ make                                    # build via Makefile (uses container if 
 go test ./...                           # run all tests
 go test -v ./internal/keepass/...       # run keepass tests with verbose output
 make check                              # lint + test (gofmt, golangci-lint, go test -race)
+Xvfb :99 -nolisten tcp -noreset &       # X11 owner tests: a dedicated server (Linux/container)
+KEETUI_X11_TEST_DISPLAY=:99 go test -race ./internal/x11clip/
 ```
 
 ### Formatting & Vetting
@@ -184,7 +191,7 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - Help is an overlay: `CloseHelpMsg` restores the previous screen, including unsaved form input. `F1` is safe inside inputs; do not steal printable `?`. Forward non-input messages to the underlying views so blink, secret re-mask, TOTP, and resize updates continue without restarting timers. Quit prompts preserve any pending confirmation and its return context.
 - Construct confirmations with an explicit return target; the target belongs to `ConfirmModel`, not shared app state. `viewNone` is zero and is not an overlay parent. Keep input gated during encryption and show wait feedback for blocked input rather than reading the changing database.
 - Store clamped scroll offsets during updates, using the same bounds as rendering; do not repair scrolling only in a value-receiver `View`. Track form rows incrementally and keep mouse hit-testing aligned with the rendered window.
-- Security countdowns use one generation-guarded display tick, independent of the clear/lock timers. Display ticks must not count as activity or erase status messages. Clipboard timers use generations so copying the same value again cannot be cleared by an earlier timer; clipboard tests use an injected backend, never the desktop clipboard (`internal/ui` TestMain installs a refusing process clipboard; pasteboard tests use private named pasteboards).
+- Security countdowns use one generation-guarded display tick, independent of the clear/lock timers. Display ticks must not count as activity or erase status messages. Clipboard timers use generations so copying the same value again cannot be cleared by an earlier timer; clipboard tests use an injected backend, never the desktop clipboard (`internal/ui` TestMain installs a refusing process clipboard; pasteboard tests use private named pasteboards; Linux backend tests inject a fake X11 owner and fake tool runners, so they never run xclip, xsel or wl-copy; the detach and timeout tests run `/bin/sh` in xclip's place). X11 tests that need a real server run only against `KEETUI_X11_TEST_DISPLAY` (CI starts `Xvfb :99 -noreset`) and skip otherwise; never read `DISPLAY` in tests, and never start tmux from tests.
 - Entry counts must not score passwords. Stats/audit workers analyze a detached `HealthSnapshot`, never the mutable live DB. Cancel scans when leaving their view or locking/quitting, keep them alive under overlays, and reject stale results by generation.
 - Save keybindings as sparse overrides and refresh the browser's cached keys after settings changes. Loading repairs only conflicting overrides; navigation must not dismiss a failed settings-save warning (full details remain in F1 help).
 - Cross-view communication uses typed message structs (e.g., `type FooMsg struct{}`)
@@ -223,5 +230,5 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - All DB-sourced strings rendered in the TUI must go through `sanitizeDisplay()` / `sanitizeNoteLines()` (`internal/ui/sanitize.go`) — raw control bytes corrupt the Bubble Tea frame. Clipboard/QR paths use raw values
 - `keepass.Open`/`OpenWithKeyFile` set `DB.SuspectCorruption()` when decoded protected values look like binary garbage; the app then forces read-only and headless mutations refuse to run
 - The editor uses `ctrl+` keybindings (ctrl+s, ctrl+r, ctrl+g, etc.) because regular keys go to text inputs
-- Clipboard: macOS writes NSPasteboard in-process (`internal/pasteboard`, purego) with Concealed/Transient markers and current-host-only, tracking ownership by changeCount; `/usr/bin/pbcopy` is an unmarked fallback. Linux uses `wl-copy` (with `--sensitive` when supported) on Wayland, else `xclip`/`xsel`. OSC 52 is sent only per `clipboard_osc52`. Backends remember copies as a keyed hash and clear only their own copy; `main` calls `ui.ReleaseClipboard()` after `Run` and turns SIGHUP into a quit
+- Clipboard: macOS writes NSPasteboard in-process (`internal/pasteboard`, purego) with Concealed/Transient markers and current-host-only, tracking ownership by changeCount; `/usr/bin/pbcopy` is an unmarked fallback. Linux uses `wl-copy` (with `--sensitive` when supported) on Wayland. On X11, `internal/x11clip` (xgb; imported only from `clipboard_linux.go`, so darwin binaries do not link it) owns CLIPBOARD from a window named `keetui`, offers `x-kde-passwordManagerHint=secret`, and tracks ownership through the server (SelectionClear, `GetSelectionOwner`). Never let the X11 clipboard go ownerless while it may hold a secret, because history managers that ignore the marker restore it: clearing blanks the copy and keeps ownership (reusing the acquisition timestamp, so a newer copy elsewhere is never taken), a timeout never drops the connection, a failed `Copy` blanks the previous copy, and at exit the `nativeCloser` hook hands an empty copy to `xclip`. Every X round trip, xclip/xsel run (`pipeDetached`, in its own session via `Setsid` so it survives keetui's terminal hangup) and clipboard read-back (`outputBounded`) is bounded to 2 s; an unanswered ownership or content check leaves the copy to the clear. xclip, then xsel, are unmarked fallbacks (owner failure, values over one X request: Copy serves no INCR); never clear with `xsel --clear` while the owner or xclip can take an empty copy. `Read` drains INCR transfers in the event loop, so no clipboard text stays in a property on keetui's window, and never deletes a property named by a SelectionNotify, which any client can forge. Keep `xgb.Logger` silenced: its stderr output corrupts the frame. OSC 52 is sent only per `clipboard_osc52`. Backends remember copies as a keyed hash and clear only their own copy; `main` calls `ui.ReleaseClipboard()` (bounded to 5 s) after `Run` and turns SIGHUP into a quit
 - Do not commit binary artifacts, coverage files, or `.env` files

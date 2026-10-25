@@ -377,10 +377,61 @@ platform allows, so clipboard history and managers can skip them:
 - **Linux (Wayland)**: `wl-copy`. With wl-clipboard 2.3.0 or later, copies
   carry `x-kde-passwordManagerHint=secret`, honored by Klipper, CopyQ 8+,
   GPaste 51.1+, cliphist and clipman.
-- **Linux (X11)**: `xclip` or `xsel`, which cannot mark copies.
+- **Linux (X11)**: keetui owns the clipboard itself, with no external tool,
+  and copies carry `x-kde-passwordManagerHint=secret`. CopyQ, Klipper and
+  clipcat skip them; GPaste 51.1 keeps them only as a masked password item
+  that it does not save. GPaste 51.0 and older, ClipIt, Parcellite, Diodon,
+  xfce4-clipman, qlipper, greenclip and clipmenu ignore the marker and store
+  every copy. `xclip`, then `xsel`, are fallbacks that cannot mark copies:
+  keetui uses them when it cannot reach or authenticate to the X server
+  itself (see below), or for values larger than one X request (about
+  256 KiB).
 
 When a copy cannot be marked, the status bar says that clipboard managers may
 keep it.
+
+**X11 details.** clipmenu and greenclip can skip keetui by the name of its
+clipboard window, `keetui`: set `CM_IGNORE_WINDOW='^keetui$'` for clipmenu, or
+`blacklisted_applications = ["keetui"]` in greenclip's configuration. When
+keetui clears a copy, it keeps the clipboard but empties it, because ClipIt,
+Parcellite, Diodon, xfce4-clipman, qlipper and GPaste 45 would otherwise put
+their newest entry, possibly the password, straight back. At exit keetui hands
+an empty copy to `xclip`, so install xclip: without it the clipboard is left
+without an owner, and Diodon and Parcellite then restore the password from
+their history. keetui starts xclip in a session of its own, so the copy
+outlives keetui even when keetui leads its terminal's session
+(`xterm -e keetui`, `tmux new-window keetui`, `ssh -t host keetui`), whose
+exit hangs up the processes on that terminal. If keetui is killed with
+`kill -9` or crashes, Diodon and Parcellite restore the password, even after
+the clear timer has emptied the clipboard. Fallback copies made with `xsel`
+are cleared with `xsel --clear` only when keetui cannot take an empty copy
+itself, with the same risk.
+
+If the X server stops answering, keetui still wipes its copy at once and keeps
+the clipboard, which is empty once the server answers again. At exit keetui
+waits about 5 seconds at most for the server, then leaves the empty copy to
+xclip, which takes the clipboard once the server answers. If the server does
+not answer keetui's connection, the first copy waits 2 seconds for it; later
+copies do not wait for it again until it answers. A copy that falls back to
+xclip or xsel, which need the same server, waits at most 2 seconds more:
+keetui then stops the tool, so that the copy cannot reach the clipboard later
+without keetui knowing, and sends it with OSC 52 instead (unless
+`clipboard_osc52` is `never`). An empty copy that clears the clipboard is left
+to finish once the server answers. Reading the clipboard back to check a
+fallback copy also waits at most 2 seconds; without an answer keetui clears
+the copy anyway, and the status bar reports the timeout.
+
+With `clipboard_osc52` set to `always`, keetui reads the clipboard back when
+it clears, to recognize the terminal's copy of its value. Large text that the
+clipboard's owner sends in parts (INCR) is read to the end, and none of it is
+left behind. A transfer that takes more than 2 seconds counts as someone
+else's copy and is left in place.
+
+keetui finds the X server's cookie the way its X library does: entries for
+this host (as display managers and `ssh -X` write them) or for any host. A
+cookie stored only for an IP address, for example for `DISPLAY=127.0.0.1:0`,
+is not found, so copies go through xclip or xsel, unmarked, and the status bar
+says so.
 
 **Terminal clipboard (OSC 52).** Over SSH, or when no local clipboard is
 available, keetui sends the copy to the terminal with OSC 52 instead. These
@@ -398,8 +449,10 @@ it.
 **Clearing.** keetui clears only its own copy: if you have copied something
 else since, the clipboard is left untouched. It clears on the timer, on lock,
 on quit, and when the process is terminated (SIGTERM, SIGINT, or SIGHUP when
-the terminal is closed). After `kill -9`, the copy stays until something
-replaces it.
+the terminal is closed). After `kill -9`, a copy on macOS or Wayland, or an
+X11 fallback copy made with xclip or xsel, stays until something replaces it.
+keetui's own X11 copy ends with the process instead, and clipboard managers
+that ignore the marker may then restore it (see X11 details).
 
 ## License
 

@@ -42,5 +42,14 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Install Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb
+
+      # The X11 clipboard tests run only against this dedicated server.
       - name: Test
-        run: go test -race ./...
+        run: |
+          Xvfb :99 -nolisten tcp -noreset &
+          for _ in $(seq 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.1; done
+          KEETUI_X11_TEST_DISPLAY=:99 go test -race ./...

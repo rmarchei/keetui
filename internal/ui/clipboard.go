@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/rmarchei/keetui/internal/config"
 )
@@ -167,12 +168,40 @@ func platformClipboard() *systemClipboard {
 	return processClipboard.Load()
 }
 
-// ReleaseClipboard clears keetui's copy if it is still on the clipboard.
-// main calls it after the program exits, because signals and recovered
-// panics end the program without the model's quit handling.
+// nativeCloser is a native backend that must hand the clipboard over before
+// keetui exits, because its copy ends with the process (X11).
+type nativeCloser interface{ close() }
+
+// releaseTimeout bounds ReleaseClipboard, so that an unresponsive display
+// cannot hang the exit.
+var releaseTimeout = 5 * time.Second
+
+// ReleaseClipboard clears keetui's copy if it is still on the clipboard,
+// then lets the backend hand the clipboard over. main calls it after the
+// program exits, because signals and recovered panics end the program
+// without the model's quit handling.
 func ReleaseClipboard() {
-	if c := processClipboard.Load(); c != nil {
+	c := processClipboard.Load()
+	if c == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
 		_, _ = c.release()
+		c.closeNative()
+	}()
+	select {
+	case <-done:
+	case <-time.After(releaseTimeout):
+	}
+}
+
+func (c *systemClipboard) closeNative() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n, ok := c.native.(nativeCloser); ok {
+		n.close()
 	}
 }
 
