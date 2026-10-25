@@ -7,7 +7,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Unlock `.kdbx` databases with password or password + key file
 - Create new `.kdbx` databases from scratch
 - Browse groups and entries with vim-style navigation
-- Search entries across all groups with fuzzy matching (searches title, username, URL, notes, custom fields)
+- Search entries across all groups with literal substrings or optional fuzzy matching (title, username, URL, notes, custom fields)
 - Favorite/pin entries -- mark entries with `f` key, shown first with `[*]` indicator (uses KeePass Tags)
 - Tag filtering -- cycle through tags with `t` to filter entries by any KeePass tag
 - Sort options -- cycle through name, modification date, or creation date with `S`
@@ -152,7 +152,8 @@ Use `PageUp` / `PageDown` to read long unlock errors, and `j` / `k` or
 | `j` / `k` | Navigate up/down |
 | `Enter` / `l` | Open group or view entry |
 | `Esc` / `h` | Go back |
-| `/` | Search entries (fuzzy, all fields) |
+| `/` | Search entries (literal substring, all fields) |
+| `Tab` while searching | Toggle literal / fuzzy matching |
 | `S` | Cycle sort mode (name/modified/created) |
 | `t` | Filter by tag (cycle through tags) |
 | `n` | New entry |
@@ -221,13 +222,24 @@ When browsing inside the recycle bin group, these additional keys are available:
 
 ## Search
 
-Press `/` in the browser to search across all entries in the database. Matches filter by title, username, URL, notes, and custom fields. Fuzzy matching is supported — typing "git" will match "GitHub". Exact substring matches are shown first, followed by fuzzy matches. While you type, the arrow keys (or the mouse wheel) move through the results; `Enter` opens the selected entry, and going back from it returns to the results. `Esc` cancels the search.
+Press `/` in the browser to search across all entries in the database. Each
+new search starts in **literal** mode: `test` matches consecutive `test`
+characters, ignoring case, in the title, username, URL, notes, or custom fields.
 
-The search row keeps the query and result count visible, including when you
-return from an entry. Matching characters in titles and usernames are bold and
-underlined. Results matched through another field show a label such as “matches
-notes” or “matches protected field”; field contents remain hidden. The position
-line also names the selected result's matching field on narrow terminals.
+Press `Tab` while typing to toggle **fuzzy** mode. It also accepts the query's
+characters in order with gaps between them: `gth` matches `GitHub`. Exact
+substring matches appear first, followed by fuzzy matches. Press `Tab` again to
+return to literal matching without changing the query.
+
+The search row shows the mode, query, and result count. While you type, the
+arrow keys (or the mouse wheel) move through the results; `Enter` opens the
+selected entry. Going back preserves the results and search mode. `Esc`
+cancels the search.
+
+Matching characters in titles and usernames are bold and underlined. Results
+matched through another field show a label such as “matches notes” or “matches
+protected field”; field contents remain hidden. The position line also names
+the selected result's matching field on narrow terminals.
 
 ## TOTP Support
 

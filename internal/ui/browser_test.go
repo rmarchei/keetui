@@ -217,34 +217,17 @@ func TestBrowserSearchByNotesAndCustomFields(t *testing.T) {
 
 func TestBrowserFuzzySearch(t *testing.T) {
 	db := createTestUIDB(t)
-	root := db.RootGroup()
-
-	_, _ = db.AddEntry(root.UUID, keepass.Entry{
-		Title:    "GitHub",
-		UserName: "octocat",
-		Password: "secret",
-	})
-
-	m := NewBrowserModel(db)
-	m.width, m.height = 80, 24
-
-	// "git" should fuzzy-match "GitHub" (g-i-t all appear in order)
-	updated, _ := m.Update(tea.KeyPressMsg{Code: '/', Text: string('/')})
+	if _, err := db.AddEntry(db.RootGroup().UUID, keepass.Entry{Title: "GitHub", UserName: "octocat"}); err != nil {
+		t.Fatal(err)
+	}
+	m := startSearch(t, NewBrowserModel(db), "gth")
+	if len(m.items) != 0 {
+		t.Fatal("a new search matched scattered letters before fuzzy mode was enabled")
+	}
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	m = updated.(BrowserModel)
-	for _, r := range "git" {
-		updated, _ = m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
-		m = updated.(BrowserModel)
-	}
-
-	found := false
-	for _, item := range m.items {
-		if !item.isGroup && item.entry.Title == "GitHub" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("fuzzy search 'git' should match 'GitHub', got %d results", len(m.items))
+	if !m.searchFuzzy || len(m.items) != 1 || m.items[0].entry.Title != "GitHub" {
+		t.Fatal("Tab did not enable fuzzy matching for the current query")
 	}
 }
 

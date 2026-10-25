@@ -22,6 +22,9 @@ func TestSearchHighlightPositions(t *testing.T) {
 		{"GitHub", "GIT", false, []int{0, 1, 2}},
 		{"GitHub", "gh", true, []int{0, 3}},
 		{"GitHub", "gh", false, nil},
+		{"FastestVPN", "test", false, []int{3, 4, 5, 6}},
+		{"Ataner NDTrust", "test", false, nil},
+		{"Ataner NDTrust", "test", true, []int{1, 4, 12, 13}},
 		{"a-b ab", "ab", true, []int{4, 5}}, // prefer the contiguous match
 		{"İ日本語", "i日", false, []int{0, 1}},  // lowercasing changes the byte length
 		{"Cafe\u0301", "e", false, []int{3}},
@@ -134,5 +137,104 @@ func TestSearchBarFitsLongQueriesAndZeroResults(t *testing.T) {
 		if !strings.Contains(bar, "0") || lipgloss.Width(bar) != width {
 			t.Errorf("query displaced count at %d: %q", width, bar)
 		}
+	}
+}
+
+func TestLiteralSearchRequiresContiguousTextInEveryField(t *testing.T) {
+	setters := map[string]func(*keepass.Entry, string){
+		"title":     func(e *keepass.Entry, s string) { e.Title = s },
+		"username":  func(e *keepass.Entry, s string) { e.UserName = s },
+		"URL":       func(e *keepass.Entry, s string) { e.URL = s },
+		"notes":     func(e *keepass.Entry, s string) { e.Notes = s },
+		"field key": func(e *keepass.Entry, s string) { e.CustomFields = []keepass.CustomField{{Key: s}} },
+		"field value": func(e *keepass.Entry, s string) {
+			e.CustomFields = []keepass.CustomField{{Key: "Extra", Value: s}}
+		},
+		"protected value": func(e *keepass.Entry, s string) {
+			e.CustomFields = []keepass.CustomField{{Key: "Extra", Value: s, Protected: true}}
+		},
+	}
+	for field, set := range setters {
+		t.Run(field, func(t *testing.T) {
+			m := NewBrowserModel(createTestUIDB(t))
+			m.searching = true
+			for _, value := range []string{"prefix TeSt suffix", "prefix t-e-s-t suffix", "t", "e", "s", "tset"} {
+				entry := keepass.Entry{Title: "Example"}
+				set(&entry, value)
+				m.allItems = append(m.allItems, listItem{entry: entry})
+			}
+			m.searchInput.SetValue("TeSt")
+			m.applySearch()
+			if len(m.items) != 1 || !reflect.DeepEqual(m.items[0], m.allItems[0]) {
+				t.Fatalf("literal search returned %d results, want only the contiguous match", len(m.items))
+			}
+			if got := searchMatchField(m.allItems[1], "test", false); got != "" {
+				t.Fatalf("literal mode explained a scattered match as %q", got)
+			}
+			updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+			m = updated.(BrowserModel)
+			if len(m.items) != 2 || !reflect.DeepEqual(m.items, m.allItems[:2]) {
+				t.Fatalf("fuzzy search returned %d results, want exact then scattered, excluding single letters and wrong order", len(m.items))
+			}
+			if searchMatchField(m.allItems[1], "test", true) == "" {
+				t.Fatal("fuzzy mode lost its match explanation")
+			}
+		})
+	}
+}
+
+func TestSearchModeTogglePreservesQueryAndResetsForNewSearch(t *testing.T) {
+	db := createTestUIDB(t)
+	for _, title := range []string{"FastestVPN", "Ataner NDTrust"} {
+		if _, err := db.AddEntry(db.RootGroup().UUID, keepass.Entry{Title: title}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 20 {
+		if _, err := db.AddEntry(db.RootGroup().UUID, keepass.Entry{Title: fmt.Sprintf("t-e-s-t %02d", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := NewBrowserModel(db)
+	m.width, m.height = 80, 12
+	m = startSearch(t, m, "TeSt")
+	press := func(code rune) {
+		updated, _ := m.Update(tea.KeyPressMsg{Code: code})
+		m = updated.(BrowserModel)
+	}
+	if m.searchFuzzy || len(m.items) != 1 || m.items[0].entry.Title != "FastestVPN" {
+		t.Fatal("literal search did not exclude the scattered matches from the screenshot")
+	}
+	if !strings.Contains(ansi.Strip(m.searchView()), "literal · 1 result") || !strings.Contains(ansi.Strip(m.footerView()), "tab fuzzy") {
+		t.Fatal("literal mode or fuzzy toggle is not discoverable")
+	}
+	press(tea.KeyTab)
+	if len(m.items) != 22 || m.items[0].entry.Title != "FastestVPN" {
+		t.Fatal("fuzzy mode should keep exact matches before scattered matches")
+	}
+	if !strings.Contains(ansi.Strip(m.searchView()), "fuzzy · 22 results") || !strings.Contains(ansi.Strip(m.footerView()), "tab literal") {
+		t.Fatal("fuzzy mode or literal toggle is not discoverable")
+	}
+	for range 20 {
+		press(tea.KeyDown)
+	}
+	if m.offset == 0 {
+		t.Fatal("fixture did not scroll")
+	}
+	press(tea.KeyTab)
+	if m.searchFuzzy || len(m.items) != 1 || m.cursor != 0 || m.offset != 0 || m.searchInput.Value() != "TeSt" {
+		t.Fatal("switching back changed the query or left selection outside the filtered results")
+	}
+	assertFrame(t, m.View().Content, m.width, m.height)
+	press(tea.KeyTab)
+	press(tea.KeyEnter)
+	updated, _ := m.Update(RefreshMsg{})
+	m = updated.(BrowserModel)
+	if m.searching || !m.searchFuzzy || len(m.items) != 22 || m.searchInput.Value() != "TeSt" {
+		t.Fatal("returning from an entry lost the committed query or mode")
+	}
+	m = startSearch(t, m, "test")
+	if m.searchFuzzy || len(m.items) != 1 {
+		t.Fatal("a new search inherited fuzzy mode")
 	}
 }

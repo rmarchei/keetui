@@ -51,7 +51,8 @@ func (m HelpModel) sections() []helpSection {
 	result := []helpSection{
 		{"Browser", []helpBinding{
 			{k.NavDown + "/" + k.NavUp, "Navigate"}, {"enter/" + k.Open, "Open entry/group"},
-			{"esc/" + k.Back, "Back"}, {k.Search, "Search"},
+			{"esc/" + k.Back, "Back"}, {k.Search, "Search (literal)"},
+			{"tab (search)", "Toggle literal/fuzzy"},
 			{k.NewEntry, "New entry"}, {k.NewGroup, "New group"},
 			{k.RenameGroup, "Rename group"}, {k.Delete, "Delete"},
 			{k.Duplicate, "Duplicate"}, {k.Favorite, "Favorite"},

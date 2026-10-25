@@ -24,8 +24,17 @@ func (m BrowserModel) searchView() string {
 	if len(m.items) == 1 {
 		count = "1 result"
 	}
+	mode := "literal"
+	if m.searchFuzzy {
+		mode = "fuzzy"
+	}
 	if width < 32 {
-		count = fmt.Sprintf("%d found", len(m.items))
+		count = fmt.Sprint(len(m.items))
+	}
+	if width < 24 {
+		count = strings.ToUpper(mode[:1]) + ":" + count
+	} else {
+		count = mode + " · " + count
 	}
 	count = ansi.Truncate(count, max(0, width-8), "…")
 	leftWidth := max(1, width-lipgloss.Width(count)-2)
@@ -104,7 +113,7 @@ func highlightSearch(text, query string, style lipgloss.Style, fuzzy bool) strin
 // Explain the highest-ranked matching field, using the same exact-before-fuzzy
 // ordering as applySearch. Never include notes, custom values or protected
 // field names in the explanation.
-func searchMatchField(item listItem, query string) string {
+func searchMatchField(item listItem, query string, allowFuzzy bool) string {
 	if query == "" {
 		return ""
 	}
@@ -126,7 +135,7 @@ func searchMatchField(item listItem, query string) string {
 		}
 	}
 	for _, fuzzy := range []bool{false, true} {
-		if fuzzy && len(query) <= 1 {
+		if fuzzy && (!allowFuzzy || len(query) <= 1) {
 			break
 		}
 		for _, field := range fields {

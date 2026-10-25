@@ -72,6 +72,7 @@ type BrowserModel struct {
 	searching   bool
 	searchInput textinput.Model
 	searchQuery string
+	searchFuzzy bool               // opt-in for the current query; new searches start literal
 	allItems    []listItem         // unfiltered items for search
 	cutEntry    *gokeepasslib.UUID // entry UUID in the clipboard for move
 	cutGroup    *gokeepasslib.UUID // group UUID in the clipboard for move
@@ -415,12 +416,12 @@ func (m *BrowserModel) applySearch() {
 	if query == "" {
 		m.items = m.allItems
 	} else {
-		// Exact substring matches first, then fuzzy matches
+		// Literal substrings by default; opt-in fuzzy matches follow exact ones.
 		var exact, fuzzy []listItem
 		for _, item := range m.allItems {
 			if entryMatchesSubstring(item, query) {
 				exact = append(exact, item)
-			} else if len(query) > 1 && entryMatchesFuzzy(item, query) {
+			} else if m.searchFuzzy && len(query) > 1 && entryMatchesFuzzy(item, query) {
 				fuzzy = append(fuzzy, item)
 			}
 		}
@@ -564,12 +565,17 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Search mode key handling
 		if m.searching {
 			switch msg.String() {
+			case "tab":
+				m.searchFuzzy = !m.searchFuzzy
+				m.applySearch()
+				return m, nil
 			case "esc":
 				// Fully leave search state: a stale searchQuery would
 				// re-render the search header and resurrect the canceled
 				// search on the next RefreshMsg.
 				m.searching = false
 				m.searchQuery = ""
+				m.searchFuzzy = false
 				m.searchInput.SetValue("")
 				m.searchInput.Blur()
 				m.items = m.buildItemsWithDB(m.currentGroup())
@@ -583,6 +589,7 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// cancel instead.
 					m.searching = false
 					m.searchQuery = ""
+					m.searchFuzzy = false
 					m.searchInput.SetValue("")
 					m.searchInput.Blur()
 					m.items = m.buildItemsWithDB(m.currentGroup())
@@ -635,6 +642,7 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sortItems(m.allItems, m.db.RecycleBinUUID(), m.sortBy)
 			m.searchInput.SetValue("")
 			m.searchQuery = ""
+			m.searchFuzzy = false
 			m.searchInput.Focus()
 			m.items = m.allItems
 			m.cursor = 0
@@ -677,6 +685,7 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.searchQuery != "" {
 				// Clear search results and go back to normal browsing
 				m.searchQuery = ""
+				m.searchFuzzy = false
 				m.items = m.buildItemsWithDB(m.currentGroup())
 				m.cursor = 0
 				m.offset = 0
@@ -995,7 +1004,7 @@ func (m BrowserModel) View() tea.View {
 			position := fmt.Sprintf("  %d/%d items", m.cursor+1, len(m.items))
 			if m.searchQuery != "" {
 				position = fmt.Sprintf("  %d/%d", m.cursor+1, len(m.items))
-				if field := searchMatchField(m.items[m.cursor], m.searchQuery); field != "" {
+				if field := searchMatchField(m.items[m.cursor], m.searchQuery, m.searchFuzzy); field != "" {
 					position += " · matches " + field
 				}
 			}
@@ -1054,7 +1063,7 @@ func (m BrowserModel) renderRow(i int, cols browserColumns) string {
 	if selected {
 		nameStyle = selectedItemStyle
 	}
-	fuzzy := m.searchQuery != "" && !entryMatchesSubstring(item, m.searchQuery)
+	fuzzy := m.searchFuzzy && m.searchQuery != "" && !entryMatchesSubstring(item, m.searchQuery)
 	row := cursor + icon + padCell(highlightSearch(item.title(), m.searchQuery, nameStyle, fuzzy), cols.title)
 	if cols.user > 0 {
 		style := secondaryStyle
@@ -1065,7 +1074,7 @@ func (m BrowserModel) renderRow(i int, cols browserColumns) string {
 	}
 	if cols.extra > 0 {
 		extra := item.extra()
-		if field := searchMatchField(item, m.searchQuery); field != "" && field != "title" && field != "username" {
+		if field := searchMatchField(item, m.searchQuery, m.searchFuzzy); field != "" && field != "title" && field != "username" {
 			extra = "matches " + field + " · " + extra
 		}
 		row += "  " + hiddenStyle.Render(padCell(extra, cols.extra))
@@ -1131,7 +1140,11 @@ func (m BrowserModel) footerView() string {
 	var hints []string
 	switch {
 	case m.searching:
-		hints = []string{"↑/↓: navigate", "enter: open", "esc: cancel", "F1: help"}
+		mode := "fuzzy"
+		if m.searchFuzzy {
+			mode = "literal"
+		}
+		hints = []string{"enter: open", "esc: cancel", "F1: help", "tab: " + mode, "↑/↓: navigate"}
 	case m.readOnly:
 		hints = []string{"?: help", k.Search + ": search", open, back, k.ShowStats + ": info",
 			k.ShowAudit + ": audit", k.Quit + ": quit", nav, k.CycleSort + ": sort", k.FilterTag + ": tag"}
