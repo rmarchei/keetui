@@ -54,6 +54,7 @@ type autoLockMsg struct {
 type databaseOpenResultMsg struct {
 	db  *keepass.DB
 	err error
+	gen int // the open it answers; see AppModel.openGen
 }
 
 // saveResultMsg carries the outcome of an asynchronous save.
@@ -138,6 +139,7 @@ type AppModel struct {
 	width           int
 	height          int
 	lastActivity    time.Time        // tracks last user interaction for auto-lock
+	openGen         int              // the latest unlock attempt; older results are dropped
 	autoLockGen     int              // current auto-lock timer generation; see autoLockMsg
 	filePath        string           // remember file path for re-lock
 	keyFilePath     string           // remember key file path for re-lock
@@ -1422,8 +1424,13 @@ func (m AppModel) handleUndo() (tea.Model, tea.Cmd) {
 // derivation (Argon2) deliberately takes on the order of a second, and
 // running it inside Update would freeze the whole UI with no feedback.
 func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cmd) {
+	if m.db != nil {
+		return m, nil // already open: a late duplicate
+	}
 	m.unlock.unlocking = true
 	m.unlock.err = nil
+	m.openGen++
+	gen := m.openGen
 	return m, func() tea.Msg {
 		var db *keepass.DB
 		var err error
@@ -1432,11 +1439,16 @@ func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cm
 		} else {
 			db, err = keepass.Open(msg.FilePath, msg.Password)
 		}
-		return databaseOpenResultMsg{db: db, err: err}
+		return databaseOpenResultMsg{db: db, err: err, gen: gen}
 	}
 }
 
 func (m AppModel) handleDatabaseOpenResult(msg databaseOpenResultMsg) (tea.Model, tea.Cmd) {
+	if msg.gen != m.openGen || m.db != nil {
+		// A superseded attempt, or one finishing after another opened the
+		// database: replacing it would drop the edits made since.
+		return m, nil
+	}
 	m.unlock.unlocking = false
 	if msg.err != nil {
 		m.unlock.err = fmt.Errorf("failed to unlock: %w", msg.err)

@@ -88,6 +88,9 @@ func (m UnlockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.err = nil
+			// Unlocking from now on, not from when the app gets the open
+			// request: an enter queued behind this one is ignored.
+			m.unlocking = true
 			return m, func() tea.Msg {
 				return DatabaseOpenedMsg{
 					FilePath:    m.filePath,

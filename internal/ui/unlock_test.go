@@ -2,11 +2,15 @@ package ui
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/rmarchei/keetui/internal/config"
+	"github.com/rmarchei/keetui/internal/keepass"
 )
 
 func TestUnlockRejectsEmpty(t *testing.T) {
@@ -106,5 +110,55 @@ func TestUnlockCardIsCenteredUnlessTheErrorNeedsScrolling(t *testing.T) {
 	}
 	if plain := ansi.Strip(m.View().Content); !strings.Contains(plain, "pgup/pgdown error") || !strings.Contains(plain, "synthetic.kdbx") {
 		t.Errorf("long error lost the scrolling hint or the file:\n%s", plain)
+	}
+}
+
+// Two enters queued before the app gets the open request start one open:
+// the first marks the screen unlocking at once.
+func TestUnlockQueuedEnterStartsOneOpen(t *testing.T) {
+	m := NewUnlockModel("synthetic.kdbx", "")
+	m.input.SetValue("synthetic")
+	next, first := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, second := next.(UnlockModel).Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if first == nil || second != nil {
+		t.Fatalf("enter, enter = %v, %v: want one open request", first != nil, second != nil)
+	}
+}
+
+// An open that finishes after a newer attempt, or after the database is
+// open, is dropped: replacing the database would lose the edits made since.
+func TestLateOpenResultIsDropped(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "synthetic.kdbx")
+	db, err := keepass.Create(path, "synthetic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := keepass.Create(filepath.Join(dir, "other.kdbx"), "synthetic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp(path, "", config.Default())
+	app.clipboard = &testClipboard{}
+	step := func(msg tea.Msg) {
+		t.Helper()
+		next, _ := app.Update(msg)
+		app = next.(AppModel)
+	}
+	step(DatabaseOpenedMsg{FilePath: path, Password: "synthetic"})
+	step(DatabaseOpenedMsg{FilePath: path, Password: "synthetic"})
+	step(databaseOpenResultMsg{db: other, gen: 1})
+	if app.db != nil {
+		t.Fatal("the superseded attempt opened the database")
+	}
+	step(databaseOpenResultMsg{db: db, gen: 2})
+	if app.db != db || app.state != viewBrowser {
+		t.Fatalf("db %p, state %v: want the latest attempt's database", app.db, app.state)
+	}
+	app.dirty = true
+	step(databaseOpenResultMsg{db: other, gen: 2})
+	step(DatabaseOpenedMsg{FilePath: path, Password: "synthetic"})
+	if app.db != db || !app.dirty || app.state != viewBrowser {
+		t.Fatalf("db %p, dirty %v, state %v: a late open replaced the open database", app.db, app.dirty, app.state)
 	}
 }
