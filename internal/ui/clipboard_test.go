@@ -246,6 +246,10 @@ func TestClipboardAlwaysModeClearsTheTerminalLeg(t *testing.T) {
 			"Clipboard cleared; terminal copy left: tmux would drop the clear now"},
 		{terminalResult{route: routeTmuxPassthrough}, clearDetached, nil, clearDetached,
 			"Clipboard cleared; terminal copy left: the terminal that got it detached"},
+		{terminalResult{route: routeHerdr}, clearNoRemoteClient, nil, clearNoRemoteClient,
+			"Clipboard cleared; terminal copy left: no herdr client over SSH"},
+		{terminalResult{route: routeHerdr}, clearOverwritten, nil, clearOverwritten,
+			"Clipboard cleared; terminal copy overwritten with a space"},
 		{terminalResult{}, clearRequested, errors.New("terminal clipboard: no tty"), clearRequested,
 			"Clipboard cleared; terminal clear failed: terminal clipboard: no tty"},
 	} {

@@ -53,16 +53,18 @@ func (r copyResult) autoClear() bool { return r.native || r.terminal && r.via.cl
 type clearOutcome int
 
 const (
-	clearNothing     clearOutcome = iota // no keetui copy was outstanding
-	clearDone                            // keetui's copy was removed
-	clearChanged                         // the clipboard holds something else; left untouched
-	clearRequested                       // OSC 52 only: an empty copy was sent, unverifiable
-	clearUnsupported                     // the terminal copy cannot be cleared (tmux)
-	clearDeferred                        // tmux would drop the clear now; the copy is kept for a retry
-	clearAway                            // as clearDeferred: a tmux client that got the copy is attached, but out of reach
-	clearDetached                        // the tmux client that got the copy left; others would get the clear
-	clearReattached                      // as clearRequested, sent to a terminal like the one that left
-	clearPartial                         // as clearRequested, but some tmux clients that got the copy left
+	clearNothing        clearOutcome = iota // no keetui copy was outstanding
+	clearDone                               // keetui's copy was removed
+	clearChanged                            // the clipboard holds something else; left untouched
+	clearRequested                          // OSC 52 only: an empty copy was sent, unverifiable
+	clearUnsupported                        // the terminal copy cannot be cleared (tmux)
+	clearDeferred                           // tmux would drop the clear now; the copy is kept for a retry
+	clearAway                               // as clearDeferred: a tmux client that got the copy is attached, but out of reach
+	clearDetached                           // the tmux client that got the copy left; others would get the clear
+	clearReattached                         // as clearRequested, sent to a terminal like the one that left
+	clearPartial                            // as clearRequested, but some tmux clients that got the copy left
+	clearOverwritten                        // herdr: a single space was copied over it, as herdr drops an empty copy
+	clearNoRemoteClient                     // herdr: nothing sent, as no herdr client runs over SSH
 )
 
 // pending reports a clear that could not be sent yet: the copy is kept and
@@ -248,7 +250,7 @@ func platformClipboard() *systemClipboard {
 		d := newSessionDetector(os.Getenv)
 		processClipboard.CompareAndSwap(nil, &systemClipboard{
 			native:   newNativeClipboard(),
-			terminal: newTerminalRoutes(os.Getenv),
+			terminal: newTerminalRoutes(os.Getenv, d.detect),
 			detect:   d.detect,
 		})
 	})
@@ -315,7 +317,7 @@ func copyStatus(field string, r copyResult) string {
 		return fmt.Sprintf("Copied %s (clipboard managers may keep it)", field)
 	case r.termErr != nil:
 		return fmt.Sprintf("Copied %s (OSC 52 failed: %s)", field, r.termErr)
-	case r.terminal && r.via.route != routeTTY:
+	case r.terminal && r.via.route.tmux():
 		return fmt.Sprintf("Copied %s (also sent %s)", field, tmuxLegStatus(r.via))
 	case r.terminal:
 		return fmt.Sprintf("Copied %s (also sent via OSC 52)", field)
@@ -325,7 +327,7 @@ func copyStatus(field string, r copyResult) string {
 
 func terminalCopyStatus(field string, v terminalResult) string {
 	switch {
-	case v.route == routeTTY:
+	case !v.route.tmux():
 		return fmt.Sprintf("Sent %s to the terminal clipboard (OSC 52)", field)
 	case v.unverified != "":
 		// No tmux to ask: say what the copy needs to arrive.
@@ -405,6 +407,10 @@ func clearStatus(r clearResult, err error) (text string, isError bool) {
 		return "Clipboard clear requested on the reattached terminal", false
 	case outcome == clearPartial:
 		return "Clipboard clear requested; a terminal that got the copy detached", true
+	case outcome == clearOverwritten:
+		return "Terminal clipboard overwritten with a space", false
+	case outcome == clearNoRemoteClient:
+		return "Terminal clipboard not cleared: no herdr client over SSH", true
 	}
 	return "", false
 }
@@ -420,6 +426,10 @@ func legClearStatus(r clearResult) (string, bool) {
 		return done + "terminal clear requested", false
 	case leg == clearPartial:
 		return done + "terminal clear requested; a terminal that got the copy detached", true
+	case leg == clearOverwritten:
+		return done + "terminal copy overwritten with a space", false
+	case leg == clearNoRemoteClient:
+		return done + "terminal copy left: no herdr client over SSH", true
 	case leg == clearUnsupported:
 		return done + "tmux can't clear the terminal copy", true
 	case leg == clearDetached:
@@ -457,6 +467,10 @@ func clearDetail(r clearResult) string {
 	case clearPartial:
 		return "The copy went to several tmux clients, and some of them detached before the clear. " +
 			"The clear went to those still attached; the clipboards of the terminals that detached may still hold the copy."
+	case clearOverwritten:
+		return herdrOverwriteHelp
+	case clearNoRemoteClient:
+		return herdrNoClientHelp
 	}
 	return ""
 }
@@ -467,6 +481,10 @@ func legClearDetail(leg clearOutcome) string {
 	const once = "The copy also went to the terminal (OSC 52). keetui clears that copy right after the local one, once: " +
 		"it never sends a second clear, which could wipe something copied there since."
 	switch leg {
+	case clearOverwritten:
+		return once + "\n\n" + herdrOverwriteHelp
+	case clearNoRemoteClient:
+		return once + "\n\n" + herdrNoClientHelp
 	case clearDeferred, clearAway:
 		return once + " tmux would have dropped the clear (keetui's pane not on screen, " +
 			"or a terminal that got the copy suspended or showing another window), so keetui sent none: " +
@@ -480,8 +498,22 @@ func legClearDetail(leg clearOutcome) string {
 	return ""
 }
 
+const (
+	herdrCopyHelp = "keetui runs in herdr, which hands OSC 52 to the client that last typed. " +
+		"A client running over SSH passes it on to its terminal; a local client writes this machine's clipboard " +
+		"(on macOS with pbcopy, unmarked). herdr ignores an empty OSC 52, so the timed clear copies a single space over the copy, " +
+		"and only while a herdr client runs over SSH."
+	herdrOverwriteHelp = "keetui runs in herdr, which ignores an empty OSC 52, so keetui cleared the terminal copy by copying a single space over it " +
+		"while a herdr client was attached over SSH. herdr hands it to the client that last typed. " +
+		"Like any OSC 52 clear, it also replaces whatever was copied to that terminal's clipboard since."
+	herdrNoClientHelp = "keetui runs in herdr, which ignores an empty OSC 52; keetui clears a terminal copy there by copying a single space over it. " +
+		"herdr hands OSC 52 to the client that last typed, and a local client writes this machine's clipboard " +
+		"(on macOS with pbcopy, unmarked). No herdr client was attached over SSH, so keetui sent nothing: " +
+		"the copy may still be on the clipboard of the terminal that got it."
+)
+
 // clipboardHelp is the F1 guidance for a copy: where it went and why, and
-// the tmux setup behind a terminal copy.
+// the tmux or herdr setup behind a terminal copy.
 func clipboardHelp(r copyResult, err error) string {
 	var parts []string
 	for _, part := range []string{localHelp(r), terminalHelp(r, err)} {
@@ -518,7 +550,8 @@ func localHelp(r copyResult) string {
 	return strings.Join(lines, "\n")
 }
 
-// terminalHelp is the F1 guidance for a terminal copy routed through tmux.
+// terminalHelp is the F1 guidance for a terminal copy routed through tmux
+// or herdr.
 func terminalHelp(r copyResult, err error) string {
 	var routeErr *tmuxRouteError
 	switch {
@@ -528,6 +561,8 @@ func terminalHelp(r copyResult, err error) string {
 		return tmuxHelp(routeErr.termName, false)
 	case !r.terminal || r.via.route == routeTTY:
 		return ""
+	case r.via.route == routeHerdr:
+		return herdrCopyHelp
 	case r.via.unverified != "":
 		return unverifiedTmuxHelp(r.via)
 	case r.native:

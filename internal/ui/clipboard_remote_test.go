@@ -325,7 +325,7 @@ func TestHerdrScanFindsRealProcesses(t *testing.T) {
 	}
 }
 
-// A copy asks where the user is each time.
+// A copy asks where the user is each time, and a herdr clear asks again.
 func TestSessionIsDetectedForEachCopy(t *testing.T) {
 	sessions := []remoteSession{{why: "no SSH session found"}, {remote: true, herdr: true, why: "a herdr client runs over SSH (pid 1)"}}
 	calls := 0
@@ -365,6 +365,72 @@ func TestAlsoTerminalRouteSendsBothLegs(t *testing.T) {
 	_, _ = c.copy("local only", copyOptions{transient: true, osc52: config.OSC52Never})
 	if len(term.sent) != 2 {
 		t.Fatalf("never sent %q", term.sent)
+	}
+}
+
+func TestHerdrRouteClearsWithASpace(t *testing.T) {
+	var writes []string
+	write := func(seq string) error { writes = append(writes, seq); return nil }
+	session := remoteSession{remote: true, herdr: true, why: "a herdr client runs over SSH (pid 9)"}
+	h := herdrClipboard{write: write, detect: func() remoteSession { return session }}
+	res, err := h.copy([]byte("synthetic-secret"))
+	if err != nil || res.route != routeHerdr || !res.clearable() {
+		t.Fatalf("copy = %+v, %v", res, err)
+	}
+	if outcome, err := h.clear(res); outcome != clearOverwritten || err != nil {
+		t.Fatalf("clear with a client over SSH = %v, %v", outcome, err)
+	}
+	for _, s := range []remoteSession{
+		{herdr: true, why: "every herdr client runs locally (1 found)"},
+		{remote: true, why: "SSH_CONNECTION is set"}, // no herdr client found
+		{why: "no SSH session found"},
+	} {
+		session = s
+		if outcome, err := h.clear(res); outcome != clearNoRemoteClient || err != nil {
+			t.Fatalf("clear for %+v = %v, %v", s, outcome, err)
+		}
+	}
+	if outcome, _ := (herdrClipboard{write: write}).clear(res); outcome != clearNoRemoteClient {
+		t.Fatalf("clear without detection = %v", outcome)
+	}
+	want := []string{"\x1b]52;c;c3ludGhldGljLXNlY3JldA==\a", "\x1b]52;c;IA==\a"}
+	if strings.Join(writes, "|") != strings.Join(want, "|") {
+		t.Fatalf("writes = %q, want %q", writes, want)
+	}
+
+	text, isErr := clearStatus(clearResult{outcome: clearOverwritten}, nil)
+	if text != "Terminal clipboard overwritten with a space" || isErr ||
+		!strings.Contains(clearDetail(clearResult{outcome: clearOverwritten}), "ignores an empty OSC 52") {
+		t.Fatalf("overwrite status = %q, %v", text, isErr)
+	}
+	text, isErr = clearStatus(clearResult{outcome: clearNoRemoteClient}, nil)
+	if text != "Terminal clipboard not cleared: no herdr client over SSH" || !isErr ||
+		!strings.Contains(clearDetail(clearResult{outcome: clearNoRemoteClient}), "pbcopy") {
+		t.Fatalf("no-client status = %q, %v", text, isErr)
+	}
+	if help := clipboardHelp(copyResult{terminal: true, via: res, session: session}, nil); !strings.Contains(help, "client that last typed") {
+		t.Fatalf("copy help = %q", help)
+	}
+}
+
+func TestHerdrPanePicksTheHerdrRoute(t *testing.T) {
+	env := map[string]string{"HERDR_ENV": "1"}
+	getenv := func(k string) string { return env[k] }
+	routes := newTerminalRoutes(getenv, func() remoteSession { return remoteSession{} })
+	for _, kind := range []terminalKind{{}, {class: terminalOther}, {class: terminalTmux, tmux: "3.5a"}} {
+		if h, ok := routes.pick(kind, false).(herdrClipboard); !ok || h.detect == nil {
+			t.Fatalf("herdr pane (%v) routed to %#v", kind, routes.pick(kind, false))
+		}
+	}
+	delete(env, "HERDR_ENV")
+	env["TERM_PROGRAM"] = "herdr"
+	if _, ok := newTerminalRoutes(getenv, nil).pick(terminalKind{}, false).(herdrClipboard); !ok {
+		t.Fatal("TERM_PROGRAM=herdr not routed through herdr")
+	}
+	// tmux inside a herdr pane is tmux.
+	env["TMUX"] = "/tmp/tmux-1/default,1,0"
+	if _, ok := newTerminalRoutes(getenv, nil).pick(terminalKind{}, false).(tmuxClipboard); !ok {
+		t.Fatal("tmux in a herdr pane not routed through tmux")
 	}
 }
 
@@ -414,4 +480,37 @@ func batchHas(cmd tea.Cmd, want tea.Msg) bool {
 		return false
 	}
 	return msg == want
+}
+
+func TestHerdrClearStatusInApp(t *testing.T) {
+	for _, tc := range []struct {
+		outcome clearOutcome
+		text    string
+		isErr   bool
+	}{
+		{clearOverwritten, "Terminal clipboard overwritten with a space", false},
+		{clearNoRemoteClient, "Terminal clipboard not cleared: no herdr client over SSH", true},
+	} {
+		m := createTestApp(t)
+		clipboard := m.clipboard.(*testClipboard)
+		clipboard.terminalOnly = true
+		clipboard.via = terminalResult{route: routeHerdr}
+		clipboard.outcomes = []clearOutcome{tc.outcome}
+		m = copyForCountdown(t, m, "synthetic")
+		_, cmd := m.Update(clipboardClearMsg{gen: m.clipboardGen})
+		status := statusOf(t, cmd)
+		if status.Text != tc.text || status.IsError != tc.isErr || !strings.Contains(status.Detail, "herdr") {
+			t.Fatalf("status = %+v", status)
+		}
+	}
+
+	// A local copy whose terminal leg went through herdr.
+	m := createTestApp(t)
+	m.clipboard.(*testClipboard).leg = clearNoRemoteClient
+	m = copyForCountdown(t, m, "synthetic")
+	_, cmd := m.Update(clipboardClearMsg{gen: m.clipboardGen})
+	if status := statusOf(t, cmd); status.Text != "Clipboard cleared; terminal copy left: no herdr client over SSH" || !status.IsError ||
+		!strings.Contains(status.Detail, "once") {
+		t.Fatalf("leg status = %+v", status)
+	}
 }

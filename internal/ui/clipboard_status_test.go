@@ -344,6 +344,7 @@ func TestLongTmuxStatusKeepsOneRow(t *testing.T) {
 			via: terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a"}}),
 		copyStatus("history password", copyResult{terminal: true,
 			via: terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a", plain: true}}),
+		"Terminal clipboard not cleared: no herdr client over SSH",
 		"Clipboard cleared; terminal copy left: the terminal that got it detached",
 		"Clipboard cleared; terminal clear failed: terminal clipboard: open /dev/tty: no such device or address",
 	} {

@@ -1681,7 +1681,7 @@ func TestRemoteTmuxPlainLegFollowsMode(t *testing.T) {
 func TestTerminalRoutesPick(t *testing.T) {
 	env := map[string]string{}
 	getenv := func(k string) string { return env[k] }
-	routes := newTerminalRoutes(getenv)
+	routes := newTerminalRoutes(getenv, nil)
 	tmuxKind := terminalKind{class: terminalTmux, tmux: "3.5a"}
 	for _, kind := range []terminalKind{{}, {class: terminalOther}} {
 		if _, ok := routes.pick(kind, false).(ttyClipboard); !ok {
@@ -1698,7 +1698,7 @@ func TestTerminalRoutesPick(t *testing.T) {
 		t.Fatal("auto remote tmux copies send a plain OSC 52")
 	}
 	env["TMUX"], env["TMUX_PANE"] = "/tmp/tmux-1000/default,1234,0", "%5"
-	routes = newTerminalRoutes(getenv)
+	routes = newTerminalRoutes(getenv, nil)
 	for _, kind := range []terminalKind{{}, tmuxKind} {
 		if tmux, ok := routes.pick(kind, true).(tmuxClipboard); !ok || tmux.pane != "%5" || tmux.settle == nil || !tmux.plain || tmux.version != kind.tmux {
 			t.Fatalf("$TMUX not routed through tmux: %#v", routes.pick(kind, true))
@@ -1769,6 +1769,7 @@ func TestTerminalCopyStatus(t *testing.T) {
 		{terminalResult{route: routeRemoteTmux, unverified: "remote"}, "Sent password via tmux passthrough (unverified; needs allow-passthrough on)"},
 		{terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.2a"}, "Sent password via tmux passthrough (OSC 52)"},
 		{terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a", plain: true}, "Sent password via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy"},
+		{terminalResult{route: routeHerdr}, "Sent password to the terminal clipboard (OSC 52)"},
 	} {
 		if got := copyStatus("password", copyResult{terminal: true, via: tc.via}); got != tc.want {
 			t.Errorf("copyStatus(%+v) = %q, want %q", tc.via, got, tc.want)

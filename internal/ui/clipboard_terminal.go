@@ -12,7 +12,8 @@ import (
 
 // Terminal copies use OSC 52. Outside tmux the sequence goes straight to the
 // terminal. Inside tmux (see clipboard_tmux.go) it never goes raw: tmux would
-// drop it or keep it in a paste buffer that any pane can read back.
+// drop it or keep it in a paste buffer that any pane can read back. In a
+// herdr pane it goes raw, but its clear cannot be empty.
 
 // terminalRoute names how an OSC 52 copy travels to the terminal.
 type terminalRoute int
@@ -22,7 +23,13 @@ const (
 	routeTmuxPassthrough                      // wrapped in tmux passthrough (DCS tmux; ...)
 	routeTmuxLoadBuffer                       // tmux load-buffer -w; the buffer is deleted at once
 	routeRemoteTmux                           // passthrough to a tmux known only from XTVERSION
+	routeHerdr                                // raw OSC 52 in a herdr pane
 )
+
+// tmux reports a route through tmux.
+func (r terminalRoute) tmux() bool {
+	return r == routeTmuxPassthrough || r == routeTmuxLoadBuffer || r == routeRemoteTmux
+}
 
 // terminalResult describes where a terminal copy went and who may keep it.
 type terminalResult struct {
@@ -88,6 +95,7 @@ type terminalRoutes struct {
 	tty    terminalClipboard
 	tmux   terminalClipboard // nil unless $TMUX is set
 	remote terminalClipboard // nil to treat a remote tmux as a plain terminal
+	herdr  terminalClipboard // nil unless keetui runs in a herdr pane
 }
 
 // configurable is a route whose copies depend on the copy's options.
@@ -97,13 +105,16 @@ type configurable interface {
 	with(kind terminalKind, plain bool) terminalClipboard
 }
 
-func newTerminalRoutes(getenv func(string) string) terminalRoutes {
+func newTerminalRoutes(getenv func(string) string, detect func() remoteSession) terminalRoutes {
 	routes := terminalRoutes{
 		tty:    ttyClipboard{write: writeTTY},
 		remote: remoteTmuxClipboard{write: writeTTY, settle: settlePassthrough},
 	}
 	if getenv("TMUX") != "" {
 		routes.tmux = tmuxClipboard{run: runTmux, write: writeTTY, settle: settlePassthrough, pane: getenv("TMUX_PANE")}
+	}
+	if inHerdr(getenv) {
+		routes.herdr = herdrClipboard{write: writeTTY, detect: detect}
 	}
 	return routes
 }
@@ -119,6 +130,9 @@ func (r terminalRoutes) pick(kind terminalKind, plain bool) terminalClipboard {
 		return refusedTerminal{errTerminalNotTmux}
 	case r.tmux != nil:
 		route = r.tmux
+	case r.herdr != nil:
+		// herdr panes drop $TMUX, and herdr answers XTVERSION itself.
+		route = r.herdr
 	case kind.class == terminalTmux && r.remote != nil:
 		route = r.remote
 	}
@@ -146,6 +160,31 @@ func (t ttyClipboard) copy(value []byte) (terminalResult, error) {
 
 func (t ttyClipboard) clear(terminalResult) (clearOutcome, error) {
 	return clearRequested, t.write(ansi.SetSystemClipboard(""))
+}
+
+// herdrClipboard serves keetui in a herdr pane. herdr hands a plain OSC 52
+// to the client that last typed: a client running over SSH writes it to its
+// terminal, a local one to this machine's clipboard (on macOS with pbcopy,
+// unmarked). herdr drops an empty OSC 52, so a clear copies a space over
+// the copy instead, and only while a client runs over SSH: a local client
+// would put the space on this machine's clipboard.
+type herdrClipboard struct {
+	write  func(string) error
+	detect func() remoteSession // nil finds no client
+}
+
+func (h herdrClipboard) copy(value []byte) (terminalResult, error) {
+	return terminalResult{route: routeHerdr}, h.write(ansi.SetSystemClipboard(string(value)))
+}
+
+func (h herdrClipboard) clear(terminalResult) (clearOutcome, error) {
+	if h.detect == nil {
+		return clearNoRemoteClient, nil
+	}
+	if s := h.detect(); !s.herdr || !s.remote {
+		return clearNoRemoteClient, nil
+	}
+	return clearOverwritten, h.write(ansi.SetSystemClipboard(" "))
 }
 
 // remoteTmuxClipboard serves a terminal that answered XTVERSION as tmux

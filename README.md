@@ -487,6 +487,16 @@ F1 shows what decided, and where the copy went. In a remote session:
   forwarded X server is gone, the ssh client prints its error over the screen,
   so keetui redraws the whole screen after a failed copy.
 
+**herdr.** In a herdr pane keetui sends a plain OSC 52, which herdr hands to
+the client that last typed: a client running over SSH writes it to its
+terminal, while a local client writes this machine's clipboard (on macOS
+with `pbcopy`, unmarked). herdr ignores an empty OSC 52, so keetui clears a
+terminal copy by copying a single space over it, and only while a herdr
+client runs over SSH at that moment; otherwise it sends nothing, since the
+space would land on this machine's clipboard, and the status bar says the
+copy was not cleared. Like any OSC 52 clear, the space also replaces
+whatever was copied to that terminal's clipboard since.
+
 **tmux.** Inside tmux, keetui sends no plain OSC 52 (unless you ask for one
 for a tmux it cannot query, see below): with the default
 `set-clipboard external` tmux drops it, and with `on` it keeps it in a paste
