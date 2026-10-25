@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -42,6 +43,12 @@ func NewHelpModel(keys config.KeyBindings, width, height int) HelpModel {
 	m := HelpModel{keys: keys, width: width, height: height, ready: true}
 	m.viewport = viewport.New()
 	m.viewport.FillHeight = true
+	m.viewport.KeyMap = viewport.KeyMap{
+		Up:       key.NewBinding(key.WithKeys("up", keys.NavUp)),
+		Down:     key.NewBinding(key.WithKeys("down", keys.NavDown)),
+		PageUp:   key.NewBinding(key.WithKeys("pgup")),
+		PageDown: key.NewBinding(key.WithKeys("pgdown")),
+	}
 	m.resize()
 	return m
 }
@@ -61,30 +68,30 @@ func (m HelpModel) sections() []helpSection {
 			{k.Save + "/ctrl+s", "Save / save as"}, {k.ShowStats, "Database info"},
 			{k.ShowAudit, "Password audit"}, {k.ShowSettings, "Settings"},
 			{k.ChangePassword, "Master password"}, {"ctrl+z", "Undo"},
-			{"?/F1", "Help"}, {k.Quit, "Quit"},
+			{"?/F1", "Help"}, {k.Quit + "/ctrl+c", "Quit"},
 		}},
 		{"Entry", []helpBinding{
-			{"j/k", "Select field"}, {"enter", "Copy selected field"},
+			{k.NavDown + "/" + k.NavUp, "Select field"}, {"enter", "Copy selected field"},
 			{k.CopyUsername, "Copy username"}, {k.CopyPassword, "Copy password"},
 			{k.CopyURL, "Copy URL"}, {k.CopyTOTP, "Copy TOTP"},
 			{k.HIBPCheck, "Check breaches (HIBP)"},
 			{k.TogglePassword, "Reveal / hide"}, {k.ShowQR, "Show QR"},
 			{k.Edit, "Edit entry"}, {k.OpenURL, "Open URL"},
 			{k.Attachments, "Attachments"}, {k.ShowHistory, "Password history"},
-			{"esc/" + k.Back, "Back"}, {"?/F1", "Help"}, {k.Quit, "Quit"},
+			{"esc/" + k.Back, "Back"}, {"?/F1", "Help"}, {k.Quit + "/ctrl+c", "Quit"},
 		}},
 		{"Editor", []helpBinding{
 			{"tab/shift+tab", "Navigate fields"}, {"ctrl+s", "Save entry"},
 			{"ctrl+r", "Reveal / hide"}, {"ctrl+g", "Generate password"},
 			{"ctrl+a", "Add custom field"}, {"ctrl+t", "Protect custom field"},
 			{"ctrl+d", "Delete custom field"}, {"esc", "Cancel"},
-			{"F1", "Help (keeps edits)"},
+			{"F1", "Help (keeps edits)"}, {"ctrl+c", "Quit"},
 		}},
 		{"Settings", []helpBinding{
 			{"tab/shift+tab", "Navigate fields"}, {"space", "Toggle / open picker"},
-			{"ctrl+s", "Save settings"}, {"enter", "Select / record key"},
-			{"esc", "Cancel / back"}, {"backspace", "Reset recorded key / inherit"},
-			{"space/←/→", "Cycle a database setting"}, {"F1", "Help / full status"},
+			{"ctrl+s", "Save settings"}, {"enter", "Next / change / open"},
+			{"esc", "Back to browser"}, {"↑/↓", "Navigate fields"},
+			{"ctrl+c", "Quit"}, {"F1", "Help / full status"},
 		}},
 		{"Bin", []helpBinding{
 			{k.Delete, "Delete permanently"}, {k.Restore, "Restore to root"},
@@ -148,7 +155,7 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "esc", "?", "f1":
 			return m, func() tea.Msg { return CloseHelpMsg{} }
-		case "q", "ctrl+c":
+		case m.keys.Quit, "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "tab", "right", "shift+tab", "left":
 			delta := 1
@@ -175,7 +182,7 @@ func (m HelpModel) View() tea.View {
 }
 
 func (m HelpModel) footer() string {
-	return renderHints(m.width, "esc/F1: close", "←/→/tab: section", "j/k: scroll", "pgup/pgdown: page")
+	return renderHints(m.width, "esc/F1: close", "←/→/tab: section", m.keys.NavDown+"/"+m.keys.NavUp+": scroll", "pgup/pgdown: page", m.keys.Quit+": quit")
 }
 
 func (m *HelpModel) resize() {

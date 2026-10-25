@@ -39,9 +39,9 @@ func (m AppModel) startHealthScan(view viewState) (tea.Model, tea.Cmd) {
 	snapshot := m.db.HealthSnapshot()
 	m.state = view
 	if view == viewStats {
-		m.stats = StatsModel{loading: true, width: m.width, height: m.viewHeight()}
+		m.stats = StatsModel{keys: m.cfg.Keys(), loading: true, width: m.width, height: m.viewHeight()}
 	} else {
-		m.audit = AuditModel{loading: true, width: m.width, height: m.viewHeight()}
+		m.audit = AuditModel{keys: m.cfg.Keys(), loading: true, width: m.width, height: m.viewHeight()}
 	}
 	return m, func() tea.Msg {
 		defer cancel()

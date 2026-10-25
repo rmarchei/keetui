@@ -64,6 +64,32 @@ func TestValidateNoDuplicates(t *testing.T) {
 	}
 }
 
+func TestValidateSharedScreenBindings(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		overrides KeyBindings
+		valid     bool
+	}{
+		{"history copy on former Back", KeyBindings{Back: "B", CopyPassword: "h"}, true},
+		{"former navigation keys are free", KeyBindings{NavDown: "J", NavUp: "K", Edit: "j", CopyPassword: "k"}, true},
+		{"former quit key is free", KeyBindings{Quit: "X", CopyPassword: "q"}, true},
+		{"arrow aliases", KeyBindings{NavDown: "down", NavUp: "up"}, true},
+		{"detail action shadows navigation", KeyBindings{NavDown: "e"}, false},
+		{"attachment add shadows quit", KeyBindings{Quit: "+"}, false},
+		{"attachment add shadows save", KeyBindings{Save: "+"}, false},
+		{"help tabs shadow quit", KeyBindings{Quit: "tab"}, false},
+		{"help paging shadows navigation", KeyBindings{NavUp: "pgup"}, false},
+		{"stats paging shadows Back", KeyBindings{Back: "home"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.overrides.Merge(DefaultKeyBindings()).Validate()
+			if (err == nil) != tc.valid {
+				t.Fatalf("Validate() = %v, want valid=%v", err, tc.valid)
+			}
+		})
+	}
+}
+
 func TestValidateDetectsDuplicates(t *testing.T) {
 	kb := DefaultKeyBindings()
 	kb.NewEntry = "d" // same as Delete

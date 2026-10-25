@@ -133,7 +133,9 @@ You can also upgrade from the TUI: press `s` to open the save dialog, then `Tab`
 
 ## Keyboard Shortcuts
 
-All keybindings shown below are defaults and can be customized via the config file (see [Keybindings](#keybindings)).
+The shortcuts below show the defaults. Browser and entry actions can be
+customized via the config file (see [Keybindings](#keybindings)); forms keep
+their editing controls.
 
 Screens adapt to the terminal size. Settings and entry forms scroll to keep the
 focused field visible; use `Tab` / `Shift+Tab` to move between fields. Shortcut
@@ -372,6 +374,13 @@ Keybindings can be customized by adding a `keybindings` section to the config fi
 ```
 
 Run `keetui -config` to see all available keybinding names and their current values.
+
+Navigation and quit bindings also apply in entry details, history, attachments,
+statistics, audit results, and Help (where navigation scrolls). Back applies to
+the browsing screens; Help uses `Esc` or `F1` to close. Attachments use the
+configured save and delete keys. Conflicts are checked across these screens.
+Text inputs keep printable characters for typing; use `Ctrl+C` to request quit,
+including while entering an attachment path or viewing a QR code.
 
 ## Development
 

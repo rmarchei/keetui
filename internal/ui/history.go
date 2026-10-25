@@ -71,15 +71,15 @@ func (m HistoryModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
-		case "esc", "h", "left":
+		case "esc", m.keys.Back, "left":
 			return m, func() tea.Msg { return BackToDetailMsg{} }
 
-		case "j", "down":
+		case m.keys.NavDown, "down":
 			if m.cursor < len(m.history)-1 {
 				m.cursor++
 			}
 
-		case "k", "up":
+		case m.keys.NavUp, "up":
 			if m.cursor > 0 {
 				m.cursor--
 			}
@@ -156,5 +156,5 @@ func (m HistoryModel) View() tea.View {
 }
 
 func (m HistoryModel) footer() string {
-	return renderHints(m.width, "esc: back", "F1: help", "j/k: navigate", m.keys.TogglePassword+": toggle passwords", m.keys.CopyPassword+": copy password", m.keys.Quit+": quit")
+	return renderHints(m.width, "esc: back", "F1: help", m.keys.NavDown+"/"+m.keys.NavUp+": navigate", m.keys.TogglePassword+": toggle passwords", m.keys.CopyPassword+": copy password", m.keys.Quit+": quit")
 }

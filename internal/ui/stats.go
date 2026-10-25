@@ -6,11 +6,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
 )
 
 // StatsModel shows database statistics.
 type StatsModel struct {
+	keys    config.KeyBindings
 	loading bool
 	stats   keepass.DBStats
 	width   int
@@ -21,8 +23,12 @@ type StatsModel struct {
 // ShowStatsMsg requests showing database stats.
 type ShowStatsMsg struct{}
 
-func NewStatsModel(stats keepass.DBStats) StatsModel {
-	return StatsModel{stats: stats}
+func NewStatsModel(stats keepass.DBStats, keys ...config.KeyBindings) StatsModel {
+	kb := config.DefaultKeyBindings()
+	if len(keys) > 0 {
+		kb = keys[0]
+	}
+	return StatsModel{stats: stats, keys: kb}
 }
 
 func (m StatsModel) Init() tea.Cmd {
@@ -39,20 +45,20 @@ func (m StatsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "q":
+		case m.keys.Quit:
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
-		case "esc", "h", "left":
+		case "esc", m.keys.Back, "left":
 			return m, func() tea.Msg { return BackToBrowserMsg{} }
-		case "j", "down", "k", "up", "pgdown", "pgup", "home", "end":
+		case m.keys.NavDown, "down", m.keys.NavUp, "up", "pgdown", "pgup", "home", "end":
 			_, height := viewSize(m.width, m.height)
 			visible := max(1, bodyHeight(height, m.footer()))
 			limit := scrollLimit(m.body(), visible)
 			switch msg.String() {
-			case "j", "down":
+			case m.keys.NavDown, "down":
 				m.offset++
-			case "k", "up":
+			case m.keys.NavUp, "up":
 				m.offset--
 			case "pgdown":
 				m.offset += visible
@@ -149,7 +155,7 @@ func (m StatsModel) body() string {
 }
 
 func (m StatsModel) footer() string {
-	return renderHints(m.width, "esc: back", "q: quit", "j/k: scroll", "pgup/pgdown: page", "F1: help")
+	return renderHints(m.width, "esc: back", "F1: help", m.keys.Quit+": quit", m.keys.NavDown+"/"+m.keys.NavUp+": scroll", "pgup/pgdown: page")
 }
 
 func (m StatsModel) View() tea.View {

@@ -11,7 +11,7 @@ import (
 // KeyBindings holds configurable key mappings for the TUI.
 // Empty strings are filled from defaults via Merge.
 type KeyBindings struct {
-	// Browser navigation
+	// Shared navigation (text inputs keep their own editing keys).
 	NavUp   string `json:"nav_up,omitempty"`
 	NavDown string `json:"nav_down,omitempty"`
 	Open    string `json:"open,omitempty"`
@@ -260,6 +260,8 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 
 	// Detail context keys
 	detail := map[string][]string{}
+	addKey(detail, kb.NavUp, "nav_up")
+	addKey(detail, kb.NavDown, "nav_down")
 	addKey(detail, kb.TogglePassword, "toggle_password")
 	addKey(detail, kb.Edit, "edit")
 	addKey(detail, kb.OpenURL, "open_url")
@@ -295,28 +297,46 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 	addReserved(browser, "ctrl+c", "")
 	addReserved(browser, "ctrl+z", "")
 	addReserved(browser, "ctrl+s", "save")
-	addReserved(detail, "j", "")
-	addReserved(detail, "k", "")
 	addReserved(detail, "enter", "")
 	addReserved(detail, "esc", "back")
 	addReserved(detail, "left", "back")
-	addReserved(detail, "q", "quit")
 	addReserved(detail, "ctrl+c", "")
 	addReserved(detail, "f1", "")
 	addReserved(detail, "?", "")
-	addReserved(detail, "up", "")
-	addReserved(detail, "down", "")
+	addReserved(detail, "up", "nav_up")
+	addReserved(detail, "down", "nav_down")
 	addReserved(detail, "ctrl+z", "")
 
-	var conflicts []bindingConflict
-	for key, names := range browser {
-		if len(names) > 1 {
-			conflicts = append(conflicts, bindingConflict{"browser", key, names})
-		}
+	// These screens share navigation but have additional fixed controls.
+	// History, QR and audit use subsets of the contexts checked above.
+	attachments := map[string][]string{}
+	stats := map[string][]string{}
+	help := map[string][]string{}
+	for _, context := range []map[string][]string{attachments, stats, help} {
+		addKey(context, kb.NavUp, "nav_up")
+		addKey(context, kb.NavDown, "nav_down")
+		addKey(context, kb.Quit, "quit")
 	}
-	for key, names := range detail {
-		if len(names) > 1 {
-			conflicts = append(conflicts, bindingConflict{"detail", key, names})
+	addKey(attachments, kb.Back, "back")
+	addKey(attachments, kb.Save, "save")
+	addKey(attachments, kb.Delete, "delete")
+	addReserved(attachments, "+", "")
+	addKey(stats, kb.Back, "back")
+	for _, key := range []string{"pgup", "pgdown", "home", "end"} {
+		addReserved(stats, key, "")
+	}
+	for _, key := range []string{"tab", "shift+tab", "left", "right", "pgup", "pgdown"} {
+		addReserved(help, key, "")
+	}
+
+	var conflicts []bindingConflict
+	for context, bindings := range map[string]map[string][]string{
+		"browser": browser, "detail": detail, "attachments": attachments, "stats": stats, "help": help,
+	} {
+		for key, names := range bindings {
+			if len(names) > 1 {
+				conflicts = append(conflicts, bindingConflict{context, key, names})
+			}
 		}
 	}
 

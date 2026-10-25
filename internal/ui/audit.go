@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
 )
 
@@ -25,6 +26,7 @@ type auditLine struct {
 
 // AuditModel shows a comprehensive password audit.
 type AuditModel struct {
+	keys    config.KeyBindings
 	loading bool
 	result  keepass.AuditResult
 	lines   []auditLine
@@ -34,8 +36,12 @@ type AuditModel struct {
 	height  int
 }
 
-func NewAuditModel(result keepass.AuditResult) AuditModel {
-	m := AuditModel{result: result}
+func NewAuditModel(result keepass.AuditResult, keys ...config.KeyBindings) AuditModel {
+	kb := config.DefaultKeyBindings()
+	if len(keys) > 0 {
+		kb = keys[0]
+	}
+	m := AuditModel{result: result, keys: kb}
 	m.buildLines()
 	// Move cursor to first selectable line
 	for i, l := range m.lines {
@@ -101,20 +107,20 @@ func (m AuditModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "q":
+		case m.keys.Quit:
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "ctrl+c":
 			return m, func() tea.Msg { return RequestQuitMsg{} }
-		case "esc", "h", "left":
+		case "esc", m.keys.Back, "left":
 			return m, func() tea.Msg { return BackToBrowserMsg{} }
 
-		case "j", "down":
+		case m.keys.NavDown, "down":
 			m.moveDown()
 
-		case "k", "up":
+		case m.keys.NavUp, "up":
 			m.moveUp()
 
-		case "enter", "l", "right":
+		case "enter", m.keys.Open, "right":
 			if len(m.lines) > 0 && !m.lines[m.cursor].isHeader {
 				entry := m.lines[m.cursor].entry.Entry
 				return m, func() tea.Msg {
@@ -202,7 +208,7 @@ func (m AuditModel) View() tea.View {
 }
 
 func (m AuditModel) footer() string {
-	return renderHints(m.width, "esc: back", "F1: help", "j/k: navigate", "enter: view entry", "q: quit")
+	return renderHints(m.width, "esc: back", "F1: help", m.keys.NavDown+"/"+m.keys.NavUp+": navigate", "enter: view entry", m.keys.Quit+": quit")
 }
 
 func auditTitle(line auditLine) string {

@@ -795,10 +795,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.cancelHealthScan()
 		if msg.view == viewStats {
-			m.stats = NewStatsModel(msg.stats)
+			m.stats = NewStatsModel(msg.stats, m.cfg.Keys())
 			m.stats.width, m.stats.height = m.width, m.viewHeight()
 		} else {
-			m.audit = NewAuditModel(msg.audit)
+			m.audit = NewAuditModel(msg.audit, m.cfg.Keys())
 			m.audit.width, m.audit.height = m.width, m.viewHeight()
 		}
 		return m, nil

@@ -323,13 +323,13 @@ func (m DetailModel) headerView() string {
 
 func (m DetailModel) footerView() string {
 	if m.showQR {
-		return renderHints(m.width, "esc: close", m.keys.ShowQR+": close", "QR: "+sanitizeDisplay(m.qrLabel))
+		return renderHints(m.width, "esc: close", m.keys.ShowQR+": close", "F1: help", "QR: "+sanitizeDisplay(m.qrLabel))
 	}
 	if m.addingAttachment || m.extractingAttachment {
 		return renderHints(m.width, "enter: confirm path", "esc: cancel", "F1: help")
 	}
 	if m.attachMode {
-		help := "  j/k: select  s: save to disk  d: delete  +: add file  esc: back"
+		help := fmt.Sprintf("  %s/%s: select  %s: save to disk  %s: delete  +: add file  %s: quit", m.keys.NavDown, m.keys.NavUp, m.keys.Save, m.keys.Delete, m.keys.Quit)
 		return renderHints(m.width, append([]string{"F1: help", "esc: back"}, strings.Split(strings.TrimSpace(help), "  ")...)...)
 	}
 	// Show selected field name in footer
@@ -342,15 +342,15 @@ func (m DetailModel) footerView() string {
 
 	var help string
 	if m.readOnly {
-		help = fmt.Sprintf("  j/k: select  %s: QR  %s: toggle pw  %s: url",
-			m.keys.ShowQR, m.keys.TogglePassword, m.keys.OpenURL)
+		help = fmt.Sprintf("  %s/%s: select  %s: QR  %s: toggle pw  %s: url",
+			m.keys.NavDown, m.keys.NavUp, m.keys.ShowQR, m.keys.TogglePassword, m.keys.OpenURL)
 		if m.entry.HistoryCount > 0 {
 			help += fmt.Sprintf("  %s: history", m.keys.ShowHistory)
 		}
 		help += fmt.Sprintf("  esc: back  %s: quit", m.keys.Quit)
 	} else {
-		help = fmt.Sprintf("  j/k: select  %s: QR  %s: toggle pw  %s: edit  %s: url  %s: attach",
-			m.keys.ShowQR, m.keys.TogglePassword, m.keys.Edit, m.keys.OpenURL, m.keys.Attachments)
+		help = fmt.Sprintf("  %s/%s: select  %s: QR  %s: toggle pw  %s: edit  %s: url  %s: attach",
+			m.keys.NavDown, m.keys.NavUp, m.keys.ShowQR, m.keys.TogglePassword, m.keys.Edit, m.keys.OpenURL, m.keys.Attachments)
 		if m.entry.HistoryCount > 0 {
 			help += fmt.Sprintf("  %s: history", m.keys.ShowHistory)
 		}
@@ -561,6 +561,9 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyPressMsg:
+		if msg.String() == "ctrl+c" {
+			return m, func() tea.Msg { return RequestQuitMsg{} }
+		}
 		// File path input mode for adding attachments
 		if m.addingAttachment {
 			switch msg.String() {
@@ -628,16 +631,20 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		if msg.String() == m.keys.Quit {
+			return m, func() tea.Msg { return RequestQuitMsg{} }
+		}
+
 		// Attachment selection mode
 		if m.attachMode {
 			switch msg.String() {
-			case "esc", "h", "left":
+			case "esc", m.keys.Back, "left":
 				m.attachMode = false
 				if m.ready {
 					m.viewport.SetContent(m.buildContent())
 				}
 				return m, nil
-			case "j", "down":
+			case m.keys.NavDown, "down":
 				if m.attachIdx < len(m.attachments)-1 {
 					m.attachIdx++
 					if m.ready {
@@ -645,7 +652,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case "k", "up":
+			case m.keys.NavUp, "up":
 				if m.attachIdx > 0 {
 					m.attachIdx--
 					if m.ready {
@@ -653,7 +660,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case "s", "enter":
+			case m.keys.Save, "enter":
 				if len(m.attachments) > 0 {
 					a := m.attachments[m.attachIdx]
 					m.extractingAttachment = true
@@ -669,7 +676,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, textinput.Blink
 				}
 				return m, nil
-			case "d":
+			case m.keys.Delete:
 				if len(m.attachments) > 0 {
 					a := m.attachments[m.attachIdx]
 					entryUUID := m.entry.UUID
@@ -689,10 +696,6 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.viewport.SetContent(m.buildContent())
 				}
 				return m, textinput.Blink
-			case "q":
-				return m, func() tea.Msg { return RequestQuitMsg{} }
-			case "ctrl+c":
-				return m, func() tea.Msg { return RequestQuitMsg{} }
 			}
 			return m, nil
 		}
@@ -700,7 +703,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// QR code display mode
 		if m.showQR {
 			switch msg.String() {
-			case "esc", m.keys.ShowQR:
+			case "esc", m.keys.Back, "left", m.keys.ShowQR:
 				m.showQR = false
 				m.viewport.SetContent(m.buildContent())
 			}
@@ -709,17 +712,11 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Normal detail view key handling
 		key := msg.String()
-		switch key {
-		case m.keys.Quit:
-			return m, func() tea.Msg { return RequestQuitMsg{} }
-		case "ctrl+c":
-			return m, func() tea.Msg { return RequestQuitMsg{} }
-		}
 
 		fields := m.selectableFields()
 
 		switch key {
-		case "j", "down":
+		case m.keys.NavDown, "down":
 			// When notes are expanded, scroll within the notes body before
 			// moving to the next field so the user can read all content.
 			if m.notesExpanded && m.selectedField < len(fields) && fields[m.selectedField].label == "Notes" {
@@ -736,7 +733,7 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "k", "up":
+		case m.keys.NavUp, "up":
 			// When notes are expanded, scroll within the notes body before
 			// moving to the previous field.
 			if m.notesExpanded && m.selectedField < len(fields) && fields[m.selectedField].label == "Notes" {
