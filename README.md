@@ -501,7 +501,10 @@ F1 shows what decided, and where the copy went. In a remote session:
   the session's display changes (a tmux used at the desk, then attached over
   `ssh -X`), keetui empties its copy on the old display but keeps that
   clipboard until it exits, so that managers there have no ownerless
-  clipboard to refill. If the forwarded X server is gone, the ssh client
+  clipboard to refill. Holding a forwarded display also holds its X11
+  channel: after a copy in a tmux attached with `ssh -X`, ssh does not exit
+  when you detach until keetui quits (or you type `~.`). If the forwarded X
+  server is gone, the ssh client
   prints its error over the screen, so keetui redraws the whole screen after
   a failed copy and after each clear of a copy on that display. A copy on a
   forwarded X server that went away before the clear (XQuartz quit) went with
