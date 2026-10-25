@@ -1,7 +1,11 @@
 package main
 
 import (
+	"path/filepath"
 	"testing"
+
+	"github.com/rmarchei/keetui/internal/config"
+	"github.com/rmarchei/keetui/internal/keepass"
 )
 
 func TestZeroBytes(t *testing.T) {
@@ -30,5 +34,23 @@ func TestSelfHash(t *testing.T) {
 	}
 	if len(h) != 64 { // SHA256 hex is 64 chars
 		t.Errorf("hash length = %d, want 64", len(h))
+	}
+}
+
+func TestBatchOperationsUseTheDatabaseBackupSetting(t *testing.T) {
+	db, err := keepass.Create(filepath.Join(t.TempDir(), "synthetic.kdbx"), "synthetic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyDatabaseSettings(db, config.Default()); err != nil || db.BackupOnSave {
+		t.Fatalf("without database settings: backup %v, err %v; want the global off", db.BackupOnSave, err)
+	}
+	db.SetCustomData(config.OverridesKey, `{"backup_on_save":true}`)
+	if err := applyDatabaseSettings(db, config.Default()); err != nil || !db.BackupOnSave {
+		t.Errorf("the database's backup_on_save was ignored (err %v)", err)
+	}
+	db.SetCustomData(config.OverridesKey, `{"backup_on_save":`)
+	if err := applyDatabaseSettings(db, config.Default()); err == nil || db.BackupOnSave {
+		t.Errorf("unreadable settings: backup %v, err %v; want the global off and an error", db.BackupOnSave, err)
 	}
 }

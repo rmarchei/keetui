@@ -36,9 +36,10 @@ type GeneratedPasswordMsg struct {
 // CancelPresetMsg cancels the preset picker and returns to the editor.
 type CancelPresetMsg struct{}
 
-// DefaultPresetChangedMsg is sent when the user changes the default preset.
-type DefaultPresetChangedMsg struct {
-	Cfg config.Config
+// SetDefaultPresetMsg asks the app to make a preset the default, where the
+// default is set: in the database or in the config file.
+type SetDefaultPresetMsg struct {
+	Name string
 }
 
 type presetOption struct {
@@ -169,12 +170,7 @@ func (m PresetPickerModel) updateList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			// "Like current" can't be a default
 			return m, nil
 		}
-		m.cfg.DefaultPreset = name
-		if err := m.cfg.Save(); err != nil {
-			m.err = fmt.Errorf("save config: %w", err)
-			return m, nil
-		}
-		return m, func() tea.Msg { return DefaultPresetChangedMsg{Cfg: m.cfg} }
+		return m, func() tea.Msg { return SetDefaultPresetMsg{Name: name} }
 	case "enter":
 		return m.selectPreset()
 	}

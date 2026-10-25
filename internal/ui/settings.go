@@ -28,6 +28,7 @@ const (
 	settingConfirmQuit
 	settingBackupOnSave
 	settingKeyBindings
+	settingDatabase
 	settingCount
 )
 
@@ -46,6 +47,7 @@ var settingLabels = [settingCount]string{
 	"Confirm on quit",
 	"Backup on save",
 	"Keybindings",
+	"This database",
 }
 
 // settingSections heads the settings that start a section.
@@ -53,6 +55,7 @@ var settingSections = map[int]string{
 	settingClipboardClear: "Security",
 	settingPasswordLength: "Password generator",
 	settingTheme:          "General",
+	settingDatabase:       "Database",
 }
 
 var settingDescriptions = [settingCount]string{
@@ -70,6 +73,7 @@ var settingDescriptions = [settingCount]string{
 	"Confirm before quitting, even without unsaved changes",
 	"Create a .kdbx.bak backup before each save",
 	"Record shortcuts by pressing keys; conflicts are checked immediately",
+	"Settings stored in the open database, encrypted with it, over the ones above",
 }
 
 // ShowSettingsMsg requests showing the settings view.
@@ -77,7 +81,8 @@ type ShowSettingsMsg struct{}
 
 // ConfigSavedMsg is sent after settings are saved to disk.
 type ConfigSavedMsg struct {
-	Cfg config.Config
+	Cfg       config.Config     // the global settings, saved to the config file
+	Overrides *config.Overrides // the database's settings; nil when unchanged
 }
 
 // SettingsModel handles viewing and editing application settings.
@@ -90,6 +95,7 @@ type SettingsModel struct {
 	status       string
 	isError      bool
 	saveError    string // persists until a successful save, including in sub-editors
+	db           databaseSettings
 	offset       int
 	fieldErrors  map[int]string
 	picking      bool
@@ -179,6 +185,9 @@ func (m SettingsModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.editingKeys {
 		return m.updateBindings(msg)
 	}
+	if m.db.editing {
+		return m.updateDatabase(msg)
+	}
 	if m.picking {
 		return m.updatePicker(msg)
 	}
@@ -226,13 +235,19 @@ func (m SettingsModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.editingKeys = true
 				return m, nil
 			}
+			if m.focused == settingDatabase {
+				if m.db.open {
+					m.db.editing = true
+				}
+				return m, nil
+			}
 			if msg.String() == "enter" {
 				return m.save()
 			}
 		}
 	}
 
-	if isToggleSetting(m.focused) || len(m.choices()) > 0 || m.focused == settingKeyBindings {
+	if isToggleSetting(m.focused) || len(m.choices()) > 0 || m.focused == settingKeyBindings || m.focused == settingDatabase {
 		return m, nil
 	}
 	// Update focused input
@@ -254,6 +269,16 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	overrides, dbErrs := m.draftOverrides(cfg)
+	for _, i := range databaseSettingList {
+		if problem := dbErrs[i]; problem != "" {
+			m.editingKeys = false
+			m.db.editing, m.db.focus = true, slices.Index(databaseSettingList, i)
+			m.status, m.isError = problem, true
+			m.syncLayout()
+			return m, nil
+		}
+	}
 	if err := cfg.Save(); err != nil {
 		m.saveError = fmt.Sprintf("Settings not saved: %s", err)
 		return m, nil
@@ -261,7 +286,11 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 	ApplyTheme(GetTheme(cfg.Theme()))
 	m.cfg = cfg
 	m.saveError, m.status, m.isError = "", "", false
-	return m, func() tea.Msg { return ConfigSavedMsg{Cfg: cfg} }
+	saved := ConfigSavedMsg{Cfg: cfg}
+	if m.db.open && !m.db.readOnly && overrides.Encode() != m.db.saved.Encode() {
+		saved.Overrides = &overrides
+	}
+	return m, func() tea.Msg { return saved }
 }
 
 // draftConfig validates without writing or changing the live configuration.
@@ -327,6 +356,7 @@ func (m *SettingsModel) syncLayout() {
 	body, rows := m.body()
 	available := bodyHeight(height, m.footer())
 	m.offset = clampOffset(body, available, followField(m.offset, rows[m.focused], available))
+	m.syncDatabaseLayout()
 }
 
 func (m SettingsModel) body() (string, []fieldRows) {
@@ -346,7 +376,7 @@ func (m SettingsModel) body() (string, []fieldRows) {
 		if section, ok := settingSections[i]; ok {
 			b.WriteString(sectionStyle.Render("  "+section) + "\n\n")
 		}
-		if isToggleSetting(i) || isChoiceSetting(i) || i == settingKeyBindings {
+		if isToggleSetting(i) || isChoiceSetting(i) || i == settingKeyBindings || i == settingDatabase {
 			value := m.inputs[i].Value()
 			switch {
 			case isToggleSetting(i):
@@ -356,6 +386,8 @@ func (m SettingsModel) body() (string, []fieldRows) {
 				}
 			case i == settingKeyBindings:
 				value = "[ Edit… ]"
+			case i == settingDatabase:
+				value = m.db.summary()
 			default:
 				value = "[ " + value + " ▾ ]"
 			}
@@ -370,6 +402,9 @@ func (m SettingsModel) body() (string, []fieldRows) {
 		}
 		b.WriteString("\n")
 		b.WriteString(hiddenStyle.Render(wrapIndented(settingDescriptions[i], width, 2)) + "\n")
+		if value, ok := m.db.override(i); ok {
+			b.WriteString(focusedStyle.Render(wrapIndented("This database: "+value, width, 2)) + "\n")
+		}
 		if problem := m.fieldErrors[i]; problem != "" {
 			b.WriteString(errorMsgStyle.Padding(0).Render(wrapIndented(problem, width, 2)) + "\n")
 		}
@@ -402,6 +437,9 @@ func (m SettingsModel) View() tea.View {
 	}
 	if m.picking {
 		return tea.NewView(m.pickerView())
+	}
+	if m.db.editing {
+		return tea.NewView(m.databaseView())
 	}
 	body, _ := m.body()
 	return tea.NewView(screen(body, m.footer(), m.width, m.height, m.offset))

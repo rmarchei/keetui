@@ -15,6 +15,7 @@ keetui/
 ├── internal/
 │   ├── config/
 │   │   ├── config.go            # Configuration loading, saving, defaults
+│   │   ├── overrides.go         # Per-database settings layered over the config
 │   │   ├── config_test.go
 │   │   ├── keybindings.go       # Keybinding definitions and customization
 │   │   └── keybindings_test.go
@@ -25,6 +26,7 @@ keetui/
 │   │   ├── keepass_test.go
 │   │   ├── attachment.go        # File attachment operations
 │   │   ├── audit.go             # Batch password audit (weak, reused, empty)
+│   │   ├── customdata.go        # Database-level custom data (per-database settings)
 │   │   ├── diceware.go          # Diceware passphrase generation
 │   │   ├── export.go            # CSV/XML import and export
 │   │   ├── hibp.go              # Have I Been Pwned breach check
@@ -53,6 +55,7 @@ keetui/
 │       ├── path_input.go        # Save-as file path input
 │       ├── preset.go            # Password generation preset picker
 │       ├── settings.go          # Settings editor view
+│       ├── settings_database.go # "This database" settings editor
 │       ├── stats.go             # Database stats view
 │       ├── styles.go            # Lip Gloss style definitions
 │       ├── themes.go            # Color theme definitions
@@ -178,6 +181,7 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - **CLI**: Run `keetui -config` to display the config file path and current settings as valid JSON.
 - **TUI**: Press `c` in the browser view to open the settings editor. Changes are saved to disk and take effect immediately.
 - If the config file does not exist, defaults are used. The file is created automatically when settings are saved from the TUI.
+- **Per-database settings**: `config.Overrides` (JSON under the KDBX metadata custom data key `KEETUI_SETTINGS`, read and written with `keepass.DB.CustomData`/`SetCustomData`) layer over the global config while a database is open. `AppModel.globalCfg` is the config file; `AppModel.cfg` is what is in effect (`globalCfg.Apply(dbOverrides)`, via `setOverrides`, cleared on lock). Only `config.json`'s global values may be saved to it: settings saves and the preset picker's default go through `ConfigSavedMsg`/`SetDefaultPresetMsg`, never `cfg.Save()` on the merged config. Changing database settings marks the database dirty. Theme, strength display and keybindings are global only.
 
 ## Code Conventions
 

@@ -174,7 +174,9 @@ func main() {
 	isBatchOp := *exportCSV != "" || *exportXML != "" || *importCSV != "" || *importXML != "" || *mergeDB != "" || *upgradeKDBX4
 	if isBatchOp {
 		db := openDBForBatch(dbPath, *keyFile)
-		db.BackupOnSave = cfg.BackupEnabled()
+		if err := applyDatabaseSettings(db, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %s; using the global settings\n", err)
+		}
 
 		// Refuse to modify a database whose protected values decoded as
 		// garbage (stream cipher misalignment, e.g. an incompatible writer):
@@ -411,4 +413,13 @@ func selfHash() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+
+// applyDatabaseSettings applies what matters to a batch operation of the
+// database's own settings, over the global ones: whether saving keeps a
+// backup. Unreadable settings leave the global ones in effect.
+func applyDatabaseSettings(db *keepass.DB, cfg config.Config) error {
+	overrides, err := config.ParseOverrides(db.CustomData(config.OverridesKey))
+	db.BackupOnSave = cfg.Apply(overrides).BackupEnabled()
+	return err
 }

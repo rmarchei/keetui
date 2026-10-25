@@ -82,8 +82,8 @@ func (m HelpModel) sections() []helpSection {
 		{"Settings", []helpBinding{
 			{"tab/shift+tab", "Navigate fields"}, {"space", "Toggle / open picker"},
 			{"ctrl+s", "Save settings"}, {"enter", "Select / record key"},
-			{"esc", "Cancel / back"}, {"backspace", "Reset recorded key"},
-			{"F1", "Help / full status"},
+			{"esc", "Cancel / back"}, {"backspace", "Reset recorded key / inherit"},
+			{"space/←/→", "Cycle a database setting"}, {"F1", "Help / full status"},
 		}},
 		{"Bin", []helpBinding{
 			{k.Delete, "Delete permanently"}, {k.Restore, "Restore to root"},

@@ -137,15 +137,17 @@ type AppModel struct {
 	presetPicker    PresetPickerModel
 	width           int
 	height          int
-	lastActivity    time.Time // tracks last user interaction for auto-lock
-	autoLockGen     int       // current auto-lock timer generation; see autoLockMsg
-	filePath        string    // remember file path for re-lock
-	keyFilePath     string    // remember key file path for re-lock
-	cfg             config.Config
-	dirty           bool      // true when in-memory changes haven't been saved
-	saving          bool      // true while a save runs in the background; input is gated
-	clipboardHeld   bool      // a keetui copy may still be on the clipboard
-	helpReturnState viewState // help must not overwrite a pending confirmation
+	lastActivity    time.Time        // tracks last user interaction for auto-lock
+	autoLockGen     int              // current auto-lock timer generation; see autoLockMsg
+	filePath        string           // remember file path for re-lock
+	keyFilePath     string           // remember key file path for re-lock
+	cfg             config.Config    // in effect: the global settings with the database's on top
+	globalCfg       config.Config    // the config file's settings
+	dbOverrides     config.Overrides // the open database's settings
+	dirty           bool             // true when in-memory changes haven't been saved
+	saving          bool             // true while a save runs in the background; input is gated
+	clipboardHeld   bool             // a keetui copy may still be on the clipboard
+	helpReturnState viewState        // help must not overwrite a pending confirmation
 	quitReturn      *quitContext
 	entryCount      int       // cached entry count for status bar
 	undoStack       undoStack // undo history
@@ -183,6 +185,7 @@ func NewApp(filePath, keyFilePath string, cfg config.Config, readOnly ...bool) A
 		filePath:     filePath,
 		keyFilePath:  keyFilePath,
 		cfg:          cfg,
+		globalCfg:    cfg,
 		readOnly:     ro,
 	}
 }
@@ -813,7 +816,8 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.startHealthScan(viewStats)
 
 	case ShowSettingsMsg:
-		m.settings = NewSettingsModel(m.cfg)
+		m.settings = NewSettingsModel(m.globalCfg)
+		m.settings.setDatabase(m.dbOverrides, m.readOnly)
 		m.state = viewSettings
 		return m, m.settings.Init()
 
@@ -833,16 +837,22 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewEditor
 		return m, nil
 
-	case DefaultPresetChangedMsg:
-		m.cfg = msg.Cfg
-		return m, statusCmd("Default preset updated", false)
+	case SetDefaultPresetMsg:
+		return m.setDefaultPreset(msg.Name)
 
 	case ConfigSavedMsg:
-		m.cfg = msg.Cfg
-		m.browser.keys = m.cfg.Keys()
-		if m.db != nil {
-			m.db.BackupOnSave = m.cfg.BackupEnabled()
+		m.globalCfg = msg.Cfg
+		status := "Settings saved to " + config.Path()
+		if msg.Overrides != nil && m.db != nil && !m.readOnly {
+			if m.db.SetCustomData(config.OverridesKey, msg.Overrides.Encode()) {
+				m.dirty = true
+				status += "; save the database to keep its settings"
+			}
+			m.setOverrides(*msg.Overrides)
+		} else {
+			m.setOverrides(m.dbOverrides)
 		}
+		m.browser.keys = m.cfg.Keys()
 		// Styles captured at construction time don't see ApplyTheme's
 		// global updates; re-pull them on the long-lived browser model.
 		setInputPromptStyle(&m.browser.searchInput, focusedStyle)
@@ -850,7 +860,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewBrowser
 		autoLockCmd := m.scheduleAutoLock()
 		return m, tea.Batch(
-			statusCmd("Settings saved to "+config.Path(), false),
+			statusCmd(status, false),
 			autoLockCmd,
 		)
 
@@ -1110,6 +1120,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clipboardDeferred = result.pending() && err == nil
 		m.autoLockCheckAt = time.Time{}
 		m.db = nil
+		m.setOverrides(config.Overrides{})
 		m.undoStack.clear()
 		m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
 		m.unlock.err = fmt.Errorf("locked due to inactivity")
@@ -1418,8 +1429,9 @@ func (m AppModel) handleDatabaseOpenResult(msg databaseOpenResultMsg) (tea.Model
 		return m, nil
 	}
 	db := msg.db
-	db.BackupOnSave = m.cfg.BackupEnabled()
 	m.db = db
+	overrides, overridesErr := config.ParseOverrides(db.CustomData(config.OverridesKey))
+	m.setOverrides(overrides)
 	if db.SuspectCorruption() {
 		// Decoded protected values look like binary garbage (stream cipher
 		// misalignment, e.g. an incompatible writer). Force read-only so the
@@ -1441,7 +1453,21 @@ func (m AppModel) handleDatabaseOpenResult(msg databaseOpenResultMsg) (tea.Model
 		return m, tea.Batch(autoLockCmd,
 			statusCmd("Protected values look corrupted (incompatible writer?) - forced read-only, see README", true))
 	}
+	if overridesErr != nil {
+		return m, tea.Batch(autoLockCmd,
+			statusCmd(fmt.Sprintf("This database's settings are unreadable, using the global ones: %s", overridesErr), true))
+	}
 	return m, autoLockCmd
+}
+
+// setOverrides makes o the open database's settings: the settings in
+// effect become the global ones with o on top.
+func (m *AppModel) setOverrides(o config.Overrides) {
+	m.dbOverrides = o
+	m.cfg = m.globalCfg.Apply(o)
+	if m.db != nil {
+		m.db.BackupOnSave = m.cfg.BackupEnabled()
+	}
 }
 
 func (m AppModel) handleSaveEntry(msg SaveEntryMsg) (tea.Model, tea.Cmd) {
@@ -1667,4 +1693,33 @@ func openURL(rawURL string) error {
 		return fmt.Errorf("open URL: %w", err)
 	}
 	return nil
+}
+
+// setDefaultPreset changes the default preset where it is set: in the
+// database when the database sets one, else in the config file.
+func (m AppModel) setDefaultPreset(name string) (tea.Model, tea.Cmd) {
+	var status string
+	switch {
+	case m.dbOverrides.DefaultPreset != nil && m.readOnly:
+		return m, statusCmd("This read-only database sets its own default preset", true)
+	case m.dbOverrides.DefaultPreset != nil:
+		overrides := m.dbOverrides
+		overrides.DefaultPreset = &name
+		if m.db.SetCustomData(config.OverridesKey, overrides.Encode()) {
+			m.dirty = true
+		}
+		m.setOverrides(overrides)
+		status = "Default preset set for this database; save the database to keep it"
+	default:
+		global := m.globalCfg
+		global.DefaultPreset = name
+		if err := global.Save(); err != nil {
+			return m, statusCmd(fmt.Sprintf("Default preset not saved: %s", err), true)
+		}
+		m.globalCfg = global
+		m.setOverrides(m.dbOverrides)
+		status = "Default preset updated"
+	}
+	m.presetPicker.cfg = m.cfg
+	return m, statusCmd(status, false)
 }

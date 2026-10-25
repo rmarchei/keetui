@@ -309,6 +309,33 @@ are rejected. While recording, navigation keys such as `Tab` and function keys
 such as `F2` can be assigned to browser/detail actions; outside recording,
 settings keeps its own navigation controls. Changes remain a draft until you save.
 
+### Per-database settings
+
+A database can carry its own settings, which apply over the global ones
+while it is open: choose **This database** at the end of the settings.
+They are stored inside the `.kdbx` file (in its custom data, as KeePassXC
+stores its own per-database options), so they are encrypted and
+authenticated with the database: nobody can change them without the master
+password, they travel with the vault to every machine, and other KeePass
+clients keep them intact. Locking the database drops them.
+
+These settings can be set per database: clipboard clear time, terminal
+clipboard, auto-lock, password length and character sets, default preset,
+confirm on quit, and backup on save. The theme, the strength display and
+keybindings stay global. In the editor an empty setting inherits the global
+one, shown beside it; `Space`, `←` and `→` cycle a choice, and `Backspace`
+returns it to inherit. `Ctrl+S` saves the global settings to the config file
+and the database's into the database, which then counts as modified: save the
+database to keep them. The global settings note the ones the database
+overrides. A read-only database shows its settings without changing them.
+Setting a default preset in the generator changes it where it is set: in the
+database when the database sets one, else globally.
+
+Batch operations (`--import-csv`, `--merge`, `--upgrade-kdbx4`) honor the
+database's backup on save. Settings stored as JSON under the custom data key
+`KEETUI_SETTINGS` use the config file's keys; unknown keys are ignored and
+invalid values repaired as in the config file.
+
 ### Keybindings
 
 Keybindings can be customized by adding a `keybindings` section to the config file. Only specify the keys you want to change; omitted keys use defaults:
