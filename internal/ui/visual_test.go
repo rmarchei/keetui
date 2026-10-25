@@ -134,8 +134,9 @@ func TestSettingsDescriptionsWrapIndented(t *testing.T) {
 			t.Errorf("description line %q is not indented by 2", line)
 		}
 	}
-	// Toggles and choices share the text inputs' value column.
-	if got, want := column(t, body, "[ auto ▾ ]"), column(t, body, "15"); got != want {
+	// Toggles and choices share the text inputs' value column. The config
+	// file's path above is a scratch directory, whose name may hold "15".
+	if got, want := column(t, body, "[ auto ▾ ]"), column(t, rowWith(t, body, "Clipboard clear"), "15"); got != want {
 		t.Errorf("choice value at %d, input value at %d", got, want)
 	}
 }
