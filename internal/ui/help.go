@@ -37,6 +37,8 @@ type HelpModel struct {
 	ready         bool
 	message       string
 	section       int
+	context       *helpSection
+	contextIndex  int
 }
 
 func NewHelpModel(keys config.KeyBindings, width, height int) HelpModel {
@@ -97,6 +99,11 @@ func (m HelpModel) sections() []helpSection {
 			{k.Delete, "Delete permanently"}, {k.Restore, "Restore to root"},
 			{k.EmptyRecycleBin, "Empty bin"}, {"esc/" + k.Back, "Back"}, {k.Save, "Save database"},
 		}},
+	}
+	// Replace the matching overview tab with the current screen's controls.
+	// This keeps contextual help visible without adding a long row of tabs.
+	if m.context != nil {
+		result[m.contextIndex] = *m.context
 	}
 	if m.message != "" {
 		result = append(result, helpSection{title: "Message"})
