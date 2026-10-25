@@ -133,7 +133,7 @@ func (c *systemClipboard) copy(value string, opts copyOptions) (copyResult, erro
 	}
 	var terminal terminalClipboard
 	if useTerminal {
-		terminal = c.terminal.pick(opts.terminal)
+		terminal = c.terminal.pick(opts.terminal, opts.osc52 == config.OSC52Always)
 		via, terr := terminal.copy([]byte(value))
 		switch {
 		case terr == nil:
@@ -270,7 +270,14 @@ func terminalCopyStatus(field string, v terminalResult) string {
 	case v.route == routeTTY:
 		return fmt.Sprintf("Sent %s to the terminal clipboard (OSC 52)", field)
 	case v.unverified != "":
-		return fmt.Sprintf("Sent %s via OSC 52 through tmux (unverified)", field)
+		// No tmux to ask: say what the copy needs to arrive.
+		switch {
+		case v.plain:
+			return fmt.Sprintf("Sent %s via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy", field)
+		case v.passthroughAlwaysAllowed():
+			return fmt.Sprintf("Sent %s via tmux passthrough (OSC 52)", field)
+		}
+		return fmt.Sprintf("Sent %s via tmux passthrough (unverified; needs allow-passthrough on)", field)
 	}
 	switch {
 	case v.nested:
@@ -288,8 +295,12 @@ func terminalCopyStatus(field string, v terminalResult) string {
 // one. The timed clear then empties only the local clipboard.
 func tmuxLegStatus(v terminalResult) string {
 	switch {
+	case v.unverified != "" && v.plain:
+		return "via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy"
+	case v.unverified != "" && v.passthroughAlwaysAllowed():
+		return "via tmux passthrough"
 	case v.unverified != "":
-		return "via OSC 52 through tmux, unverified"
+		return "via tmux passthrough, unverified; needs allow-passthrough on"
 	case v.nested:
 		return "via nested tmux OSC 52; outer tmux may keep a copy"
 	case v.clients > 1:
@@ -341,7 +352,7 @@ func clearStatus(outcome clearOutcome, err error) (text string, isError bool) {
 func clearDetail(outcome clearOutcome) string {
 	switch outcome {
 	case clearDeferred:
-		return tmuxHelp("")
+		return tmuxHelp("", false)
 	case clearAway:
 		return "A terminal that got the copy is still attached to tmux, but tmux would not pass the clear on to it now: " +
 			"the client is suspended (prefix C-z), or its session shows another window " +
@@ -371,19 +382,17 @@ func clipboardHelp(r copyResult, err error) string {
 	switch {
 	case errors.Is(err, errTerminalNotTmux) || errors.Is(r.termErr, errTerminalNotTmux):
 		return inheritedTmuxHelp
-	case errors.As(err, &routeErr):
-		return tmuxHelp(routeErr.termName)
-	case errors.As(r.termErr, &routeErr):
-		return tmuxHelp(routeErr.termName)
+	case errors.As(err, &routeErr), errors.As(r.termErr, &routeErr):
+		return tmuxHelp(routeErr.termName, false)
 	case !r.terminal || r.via.route == routeTTY:
 		return ""
 	case r.via.unverified != "":
-		return "keetui could not check whether tmux forwards the copy: " + r.via.unverified + "\n\n" + tmuxHelp(r.via.termName)
+		return unverifiedTmuxHelp(r.via)
 	case r.native:
 		return "The timed clear empties the local clipboard only: other terminals tmux sent the copy to keep it.\n\n" +
-			tmuxHelp(r.via.termName)
+			tmuxHelp(r.via.termName, r.via.nested)
 	}
-	return tmuxHelp(r.via.termName)
+	return tmuxHelp(r.via.termName, r.via.nested)
 }
 
 const inheritedTmuxHelp = "$TMUX names a tmux server, but the terminal answered XTVERSION with another name, " +
@@ -393,11 +402,11 @@ const inheritedTmuxHelp = "$TMUX names a tmux server, but the terminal answered 
 	"and could pass a plain OSC 52 on to tmux, which may keep it in a paste buffer."
 
 // tmuxHelp explains the tmux options behind terminal copies.
-func tmuxHelp(term string) string {
+func tmuxHelp(term string, nested bool) string {
 	if term == "" {
 		term = "TERM"
 	}
-	return "tmux and the terminal clipboard (~/.tmux.conf):\n\n" +
+	help := "tmux and the terminal clipboard (~/.tmux.conf):\n\n" +
 		"set -g allow-passthrough on\n" +
 		"  tmux forwards keetui's copies unchanged, keeps them out of its paste buffers, and lets keetui clear them. Always on before tmux 3.3. " +
 		"tmux drops them while keetui's pane is not on screen (another window current, another pane zoomed), so a clear waits until it is. " +
@@ -408,8 +417,45 @@ func tmuxHelp(term string) string {
 		"No setting lets them out of copy mode or another tmux mode, or to a suspended client (prefix C-z): " +
 		"a clear waits until keetui's pane leaves the mode or the client resumes.\n" +
 		"set -as terminal-features '," + term + ":clipboard'\n" +
-		"  Without passthrough, tmux 3.2+ sends copies only to a terminal it knows supports OSC 52. Those copies can't be cleared.\n\n" +
-		"set-clipboard needs no change: neither route depends on it."
+		"  Without passthrough, tmux 3.2+ sends copies only to a terminal it knows supports OSC 52. Those copies can't be cleared.\n\n"
+	if nested {
+		return help + "Nested tmux: this tmux runs inside another tmux (or screen), and hands the copy on to it as a plain OSC 52. " +
+			"The outer tmux forwards it only with set -g set-clipboard on, and then keeps it in a paste buffer that keetui cannot clear."
+	}
+	return help + "set-clipboard needs no change: neither route depends on it."
+}
+
+// unverifiedTmuxHelp explains a copy sent through a tmux keetui cannot ask:
+// one known only from XTVERSION, or one whose probe failed.
+func unverifiedTmuxHelp(v terminalResult) string {
+	var b strings.Builder
+	if v.route == routeRemoteTmux {
+		name := "tmux"
+		if v.version != "" {
+			name += " " + v.version
+		}
+		b.WriteString("The terminal answered XTVERSION as " + name + ", but $TMUX is unset, so keetui runs under a tmux it cannot ask: " +
+			"over SSH from a tmux pane, or in a tmux pane after sudo or su. ")
+	} else {
+		b.WriteString("keetui could not ask tmux how to reach the terminal: " + v.unverified + ". ")
+	}
+	b.WriteString("It sent the copy through tmux passthrough, which leaves no paste buffer and can be cleared")
+	if v.passthroughAlwaysAllowed() {
+		b.WriteString("; tmux before 3.3 always lets it through.")
+	} else {
+		b.WriteString(", but tmux 3.3 and later drop it unless that tmux allows passthrough.")
+	}
+	if v.plain {
+		b.WriteString(" With clipboard_osc52 always, keetui also sent a plain OSC 52, which tmux forwards with set-clipboard on, " +
+			"keeping a copy in a paste buffer that any pane can read back and keetui cannot clear.")
+	}
+	b.WriteString("\n\nTo make copies arrive, either:\n\n" +
+		"set -g allow-passthrough on   (or all)\n" +
+		"  in that tmux (~/.tmux.conf on the machine it runs on). Copies then arrive, leave no paste buffer, and are cleared on the timer.\n" +
+		"clipboard_osc52 always\n" +
+		"  in keetui's settings: keetui also sends a plain OSC 52, which tmux forwards with set -g set-clipboard on, " +
+		"but keeps in a paste buffer that keetui cannot clear.")
+	return b.String()
 }
 
 // envWith returns the environment with the given variables replaced.

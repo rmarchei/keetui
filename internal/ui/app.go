@@ -284,10 +284,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if version, ok := msg.(tea.TerminalVersionMsg); ok {
 		switch {
 		case strings.HasPrefix(version.Name, "tmux "):
-			m.terminalKind = terminalTmux
-		case version.Name != "" && m.terminalKind == terminalUnknown:
-			// Once tmux, always tmux: its routes never send a plain OSC 52.
-			m.terminalKind = terminalOther
+			m.terminalKind = terminalKind{class: terminalTmux, tmux: strings.TrimSpace(strings.TrimPrefix(version.Name, "tmux "))}
+		case version.Name != "" && m.terminalKind.class == terminalUnknown:
+			// Once tmux, always tmux: tmux answers for the terminal behind it.
+			m.terminalKind = terminalKind{class: terminalOther}
 		}
 		return m, nil
 	}

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/rmarchei/keetui/internal/config"
 )
 
 // Probe outputs captured from real tmux servers (display-message with
@@ -1508,8 +1510,41 @@ func TestTmuxProbeFailureSendsPassthroughOnly(t *testing.T) {
 	if len(f.writes) != 2 || f.writes[0] != passthroughOSC52([]byte(tmuxSecret)) || f.writes[1] != passthroughOSC52(nil) {
 		t.Fatalf("writes = %q", f.writes)
 	}
-	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password via OSC 52 through tmux (unverified)" {
+	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password via tmux passthrough (unverified; needs allow-passthrough on)" {
 		t.Fatalf("status = %q", got)
+	}
+	help := clipboardHelp(copyResult{terminal: true, via: res}, nil)
+	for _, want := range []string{"executable file not found", "set -g allow-passthrough on", "clipboard_osc52 always", "set-clipboard on"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("help lacks %q: %q", want, help)
+		}
+	}
+	if strings.Contains(help, "set-clipboard needs no change") {
+		t.Errorf("help = %q", help)
+	}
+
+	// tmux before 3.3 (from XTVERSION) always lets passthrough by.
+	f = &fakeTmux{probeErr: errors.New("tmux: no server running")}
+	res, _ = f.clipboard("%3").with(terminalKind{class: terminalTmux, tmux: "3.2a"}, false).copy([]byte(tmuxSecret))
+	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password via tmux passthrough (OSC 52)" {
+		t.Fatalf("status for 3.2a = %q", got)
+	}
+
+	// clipboard_osc52 always adds a plain OSC 52, which tmux forwards with
+	// set-clipboard on, and the clear sends both empty copies.
+	f = &fakeTmux{probeErr: errors.New("tmux: no server running")}
+	tmux = f.clipboard("%3").with(terminalKind{class: terminalTmux, tmux: "3.5a"}, true).(tmuxClipboard)
+	res, err = tmux.copy([]byte(tmuxSecret))
+	if err != nil || !res.plain || res.version != "3.5a" {
+		t.Fatalf("always copy = %+v, %v", res, err)
+	}
+	_, _ = tmux.clear(res)
+	plain := "\x1b]52;c;" + "c3ludGhldGljLUh1bnRlcjItc2VjcmV0" + "\a"
+	if want := []string{passthroughOSC52([]byte(tmuxSecret)) + plain, passthroughOSC52(nil) + "\x1b]52;c;\a"}; !slices.Equal(f.writes, want) {
+		t.Fatalf("always writes = %q, want %q", f.writes, want)
+	}
+	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy" {
+		t.Fatalf("always status = %q", got)
 	}
 
 	// A probe line before a failing show-messages is still an answer.
@@ -1581,8 +1616,65 @@ func TestRemoteTmuxAndTTYClipboards(t *testing.T) {
 	if !slices.Equal(writes, want) {
 		t.Fatalf("writes = %q", writes)
 	}
-	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password via OSC 52 through tmux (unverified)" {
+	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password via tmux passthrough (unverified; needs allow-passthrough on)" {
 		t.Fatalf("remote status = %q", got)
+	}
+	help := clipboardHelp(copyResult{terminal: true, via: res}, nil)
+	for _, want := range []string{"$TMUX is unset", "sudo or su", "set -g allow-passthrough on", "clipboard_osc52 always"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("remote help lacks %q: %q", want, help)
+		}
+	}
+	// No remote tmux advice that only fits a tmux keetui can ask.
+	for _, wrong := range []string{"terminal-features", "set-clipboard needs no change"} {
+		if strings.Contains(help, wrong) {
+			t.Errorf("remote help has %q: %q", wrong, help)
+		}
+	}
+}
+
+// clipboard_osc52 always: the remote tmux route also sends a plain OSC 52,
+// and its clear both empty copies; auto stays passthrough only.
+func TestRemoteTmuxPlainLegFollowsMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode, version string
+		writes        []string
+		status        string
+		leg           string
+	}{
+		{config.OSC52Auto, "3.5a", []string{passthroughOSC52([]byte(tmuxSecret)), passthroughOSC52(nil)},
+			"Sent password via tmux passthrough (unverified; needs allow-passthrough on)",
+			"Copied password (also sent via tmux passthrough, unverified; needs allow-passthrough on)"},
+		{config.OSC52Auto, "3.2a", []string{passthroughOSC52([]byte(tmuxSecret)), passthroughOSC52(nil)},
+			"Sent password via tmux passthrough (OSC 52)", "Copied password (also sent via tmux passthrough)"},
+		{config.OSC52Always, "3.5a", []string{
+			passthroughOSC52([]byte(tmuxSecret)) + "\x1b]52;c;c3ludGhldGljLUh1bnRlcjItc2VjcmV0\a",
+			passthroughOSC52(nil) + "\x1b]52;c;\a",
+		}, "Sent password via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy",
+			"Copied password (also sent via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy)"},
+	} {
+		var writes []string
+		remote := remoteTmuxClipboard{write: func(seq string) error { writes = append(writes, seq); return nil }}
+		c := &systemClipboard{native: &fakeNative{}, terminal: terminalRoutes{tty: &fakeTerminal{}, remote: remote}}
+		res, err := c.copy(tmuxSecret, copyOptions{osc52: tc.mode, terminal: terminalKind{class: terminalTmux, tmux: tc.version}})
+		if err != nil || res.via.route != routeRemoteTmux {
+			t.Fatalf("%s %s: copy = %+v, %v", tc.mode, tc.version, res, err)
+		}
+		if got := copyStatus("password", res); got != tc.status {
+			t.Errorf("%s %s: status = %q, want %q", tc.mode, tc.version, got, tc.status)
+		}
+		if got := copyStatus("password", copyResult{native: true, marked: true, terminal: true, via: res.via}); got != tc.leg {
+			t.Errorf("%s %s: leg status = %q, want %q", tc.mode, tc.version, got, tc.leg)
+		}
+		if outcome, err := c.release(); outcome != clearRequested || err != nil {
+			t.Fatalf("%s: release = %v, %v", tc.mode, outcome, err)
+		}
+		if !slices.Equal(writes, tc.writes) {
+			t.Errorf("%s %s: writes = %q, want %q", tc.mode, tc.version, writes, tc.writes)
+		}
+		if help := clipboardHelp(res, nil); tc.mode == config.OSC52Always && !strings.Contains(help, "paste buffer") {
+			t.Errorf("always help = %q", help)
+		}
 	}
 }
 
@@ -1590,27 +1682,31 @@ func TestTerminalRoutesPick(t *testing.T) {
 	env := map[string]string{}
 	getenv := func(k string) string { return env[k] }
 	routes := newTerminalRoutes(getenv)
-	for _, kind := range []terminalKind{terminalUnknown, terminalOther} {
-		if _, ok := routes.pick(kind).(ttyClipboard); !ok {
+	tmuxKind := terminalKind{class: terminalTmux, tmux: "3.5a"}
+	for _, kind := range []terminalKind{{}, {class: terminalOther}} {
+		if _, ok := routes.pick(kind, false).(ttyClipboard); !ok {
 			t.Fatalf("plain terminal (%v) not routed to the tty", kind)
 		}
 	}
-	if _, ok := routes.pick(terminalTmux).(remoteTmuxClipboard); !ok {
+	if _, ok := routes.pick(tmuxKind, false).(remoteTmuxClipboard); !ok {
 		t.Fatal("XTVERSION tmux without $TMUX not routed as remote tmux")
 	}
-	if remote := routes.pick(terminalTmux).(remoteTmuxClipboard); remote.settle == nil {
-		t.Fatal("remote tmux writes do not wait for a pending frame")
+	if remote := routes.pick(tmuxKind, true).(remoteTmuxClipboard); remote.settle == nil || !remote.plain || remote.version != "3.5a" {
+		t.Fatalf("remote tmux route = %#v", remote)
+	}
+	if remote := routes.pick(tmuxKind, false).(remoteTmuxClipboard); remote.plain {
+		t.Fatal("auto remote tmux copies send a plain OSC 52")
 	}
 	env["TMUX"], env["TMUX_PANE"] = "/tmp/tmux-1000/default,1234,0", "%5"
 	routes = newTerminalRoutes(getenv)
-	for _, kind := range []terminalKind{terminalUnknown, terminalTmux} {
-		if tmux, ok := routes.pick(kind).(tmuxClipboard); !ok || tmux.pane != "%5" || tmux.settle == nil {
-			t.Fatalf("$TMUX not routed through tmux: %#v", routes.pick(kind))
+	for _, kind := range []terminalKind{{}, tmuxKind} {
+		if tmux, ok := routes.pick(kind, true).(tmuxClipboard); !ok || tmux.pane != "%5" || tmux.settle == nil || !tmux.plain || tmux.version != kind.tmux {
+			t.Fatalf("$TMUX not routed through tmux: %#v", routes.pick(kind, true))
 		}
 	}
 	// $TMUX set, but the terminal named itself: nothing is sent, neither
 	// raw nor through a tmux pane keetui is not in.
-	refused := routes.pick(terminalOther)
+	refused := routes.pick(terminalKind{class: terminalOther}, false)
 	if _, ok := refused.(refusedTerminal); !ok {
 		t.Fatalf("inherited $TMUX routed to %#v", refused)
 	}
@@ -1670,7 +1766,9 @@ func TestTerminalCopyStatus(t *testing.T) {
 			"Sent password via tmux (OSC 52); can't auto-clear: allow-passthrough off"},
 		{terminalResult{route: routeTmuxLoadBuffer, noClear: "2 clients share the window"},
 			"Sent password via tmux (OSC 52); can't auto-clear: 2 clients share the window"},
-		{terminalResult{route: routeRemoteTmux, unverified: "remote"}, "Sent password via OSC 52 through tmux (unverified)"},
+		{terminalResult{route: routeRemoteTmux, unverified: "remote"}, "Sent password via tmux passthrough (unverified; needs allow-passthrough on)"},
+		{terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.2a"}, "Sent password via tmux passthrough (OSC 52)"},
+		{terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a", plain: true}, "Sent password via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy"},
 	} {
 		if got := copyStatus("password", copyResult{terminal: true, via: tc.via}); got != tc.want {
 			t.Errorf("copyStatus(%+v) = %q, want %q", tc.via, got, tc.want)
@@ -1696,14 +1794,24 @@ func TestClipboardHelpExplainsTmuxSetup(t *testing.T) {
 		{copyResult{}, routeErr, "set -as terminal-features ',screen-256color:clipboard'"},
 		{copyResult{native: true, termErr: routeErr}, nil, "set -g allow-passthrough on"},
 		{copyResult{terminal: true, via: terminalResult{route: routeTmuxLoadBuffer, termName: "foot"}}, nil, "',foot:clipboard'"},
-		{copyResult{terminal: true, via: terminalResult{route: routeTmuxPassthrough, unverified: "socket gone"}}, nil, "socket gone"},
 	} {
 		if got := clipboardHelp(tc.res, tc.err); !strings.Contains(got, tc.want) || !strings.Contains(got, "set-clipboard needs no change") {
 			t.Errorf("clipboardHelp(%+v, %v) = %q", tc.res, tc.err, got)
 		}
 	}
+	// Without a tmux to ask, set-clipboard matters for the plain OSC 52
+	// that clipboard_osc52 always adds.
+	unverified := copyResult{terminal: true, via: terminalResult{route: routeTmuxPassthrough, unverified: "socket gone"}}
+	if got := clipboardHelp(unverified, nil); !strings.Contains(got, "socket gone") || strings.Contains(got, "set-clipboard needs no change") {
+		t.Errorf("unverified help = %q", got)
+	}
+	// Nested tmux: the outer tmux needs set-clipboard on.
+	nested := copyResult{terminal: true, via: terminalResult{route: routeTmuxPassthrough, nested: true, noClear: "nested tmux"}}
+	if got := clipboardHelp(nested, nil); !strings.Contains(got, "set -g set-clipboard on") || strings.Contains(got, "set-clipboard needs no change") {
+		t.Errorf("nested help = %q", got)
+	}
 	for _, res := range []copyResult{{native: true, marked: true}, {terminal: true}} {
-		if got := clipboardHelp(res, errors.New("no tty")); got != "" {
+		if got := clipboardHelp(res, errors.New("no tty")); strings.Contains(got, "tmux") {
 			t.Errorf("non-tmux copy got tmux help: %q", got)
 		}
 	}

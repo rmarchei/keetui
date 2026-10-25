@@ -20,8 +20,9 @@ import (
 // external (the default) or off. With on, tmux keeps it in an automatic
 // paste buffer that any pane can read back with an OSC 52 query. tmux also
 // ignores empty OSC 52 data, so a raw clear does nothing. keetui therefore
-// never sends a raw OSC 52 inside tmux. It asks the server how a copy can
-// reach the terminal, once per copy and once per clear, and uses:
+// sends no raw OSC 52 inside tmux, unless tmux cannot be asked and
+// clipboard_osc52 is always. It asks the server how a copy can reach the
+// terminal, once per copy and once per clear, and uses:
 //
 //   - passthrough (DCS tmux; ... ST): forwarded unchanged with no buffer,
 //     and an empty copy clears. It needs allow-passthrough (always allowed
@@ -90,6 +91,16 @@ type tmuxClipboard struct {
 	write  func(string) error // the controlling terminal
 	settle func()             // lets a pending frame reach tmux first; nil in tests
 	pane   string             // $TMUX_PANE; unset in popups
+
+	// For a copy tmux could not be asked about: a plain OSC 52 after the
+	// passthrough (clipboard_osc52 always), and tmux's XTVERSION version.
+	plain   bool
+	version string
+}
+
+func (t tmuxClipboard) with(kind terminalKind, plain bool) terminalClipboard {
+	t.plain, t.version = plain, kind.tmux
+	return t
 }
 
 // passthroughSettle is a little over one frame at Bubble Tea's 60 fps.
@@ -113,9 +124,10 @@ func (t tmuxClipboard) copy(value []byte) (terminalResult, error) {
 	p, err := t.probe()
 	if err != nil {
 		// tmux cannot be asked (not on PATH, socket gone): passthrough is
-		// the one route that cannot leave a buffer behind.
-		res := terminalResult{route: routeTmuxPassthrough, unverified: err.Error()}
-		return res, t.write(passthroughOSC52(value))
+		// the one route that cannot leave a buffer behind. A plain OSC 52
+		// follows only on request (clipboard_osc52 always).
+		res := terminalResult{route: routeTmuxPassthrough, unverified: err.Error(), plain: t.plain, version: t.version}
+		return res, t.write(unverifiedOSC52(value, t.plain))
 	}
 	res, err := planTmuxCopy(p)
 	switch {
@@ -143,7 +155,7 @@ func (t tmuxClipboard) clear(last terminalResult) (clearOutcome, error) {
 	}
 	switch outcome {
 	case clearRequested, clearReattached, clearPartial:
-		return outcome, t.write(passthroughOSC52(nil))
+		return outcome, t.write(unverifiedOSC52(nil, last.plain))
 	}
 	return outcome, nil
 }

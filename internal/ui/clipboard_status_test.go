@@ -33,14 +33,15 @@ func TestTerminalVersionPicksTheTerminalRoute(t *testing.T) {
 		replies []string
 		want    terminalKind
 	}{
-		{nil, terminalUnknown}, // no reply: no change
-		{[]string{""}, terminalUnknown},
-		{[]string{"xterm(390)"}, terminalOther},
-		{[]string{"WezTerm 20240203"}, terminalOther},
-		{[]string{"tmux 3.8"}, terminalTmux},
-		{[]string{"tmux 3.3a", "xterm(390)"}, terminalTmux},
-		{[]string{"xterm(390)", "tmux 3.3a"}, terminalTmux},
-		{[]string{"tmuxinator"}, terminalOther},
+		{nil, terminalKind{}}, // no reply: no change
+		{[]string{""}, terminalKind{}},
+		{[]string{"xterm(390)"}, terminalKind{class: terminalOther}},
+		{[]string{"WezTerm 20240203"}, terminalKind{class: terminalOther}},
+		{[]string{"tmux 3.8"}, terminalKind{class: terminalTmux, tmux: "3.8"}},
+		{[]string{"tmux 3.3a", "xterm(390)"}, terminalKind{class: terminalTmux, tmux: "3.3a"}},
+		{[]string{"xterm(390)", "tmux 3.3a"}, terminalKind{class: terminalTmux, tmux: "3.3a"}},
+		{[]string{"tmux next-3.6"}, terminalKind{class: terminalTmux, tmux: "next-3.6"}},
+		{[]string{"tmuxinator"}, terminalKind{class: terminalOther}},
 	} {
 		m := createTestApp(t)
 		for _, name := range tc.replies {
@@ -339,6 +340,10 @@ func TestLongTmuxStatusKeepsOneRow(t *testing.T) {
 			via: terminalResult{route: routeTmuxPassthrough, nested: true, noClear: "nested tmux"}}),
 		copyStatus("history password", copyResult{native: true, marked: true, terminal: true,
 			via: terminalResult{route: routeTmuxPassthrough, clients: 12}}),
+		copyStatus("history password", copyResult{native: true, marked: true, terminal: true,
+			via: terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a"}}),
+		copyStatus("history password", copyResult{terminal: true,
+			via: terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a", plain: true}}),
 	} {
 		m.statusText = text
 		for _, width := range []int{20, 40, 80, 120} {
@@ -382,7 +387,7 @@ func TestClipboardRoutesEachCopy(t *testing.T) {
 	if _, err := c.copy("one", copyOptions{osc52: config.OSC52Auto}); err != nil || len(tty.sent) != 1 {
 		t.Fatalf("plain terminal copy went elsewhere: %v", err)
 	}
-	res, err := c.copy("two", copyOptions{osc52: config.OSC52Auto, terminal: terminalTmux})
+	res, err := c.copy("two", copyOptions{osc52: config.OSC52Auto, terminal: terminalKind{class: terminalTmux}})
 	if err != nil || res.via.route != routeRemoteTmux || len(remote.sent) != 1 {
 		t.Fatalf("remote tmux copy = %+v, %v", res, err)
 	}
@@ -395,7 +400,7 @@ func TestClipboardRoutesEachCopy(t *testing.T) {
 	// A local tmux leaves auto copies on the local clipboard (macOS)...
 	tmux := &fakeTerminal{result: terminalResult{route: routeTmuxPassthrough}}
 	c = &systemClipboard{native: &fakeNative{local: true, marks: true}, terminal: terminalRoutes{tty: tty, tmux: tmux}}
-	if res, err := c.copy("local", copyOptions{osc52: config.OSC52Auto, terminal: terminalTmux}); err != nil || !res.native || res.terminal || len(tmux.sent) != 0 {
+	if res, err := c.copy("local", copyOptions{osc52: config.OSC52Auto, terminal: terminalKind{class: terminalTmux}}); err != nil || !res.native || res.terminal || len(tmux.sent) != 0 {
 		t.Fatalf("auto copy in a local tmux = %+v, %v (tmux %q)", res, err, tmux.sent)
 	}
 	// ...and with always, the terminal leg is routed the same way.
@@ -414,7 +419,7 @@ func TestClipboardRoutesEachCopy(t *testing.T) {
 	tmux.err = nil
 	c = &systemClipboard{native: &fakeNative{}, terminal: terminalRoutes{tty: tty, tmux: tmux}}
 	before := len(tty.sent) + len(tmux.sent)
-	_, err = c.copy("five", copyOptions{osc52: config.OSC52Auto, terminal: terminalOther})
+	_, err = c.copy("five", copyOptions{osc52: config.OSC52Auto, terminal: terminalKind{class: terminalOther}})
 	if !errors.Is(err, errTerminalNotTmux) || len(tty.sent)+len(tmux.sent) != before || c.held != nil {
 		t.Fatalf("inherited $TMUX copy: %v (tty %q, tmux %q)", err, tty.sent, tmux.sent)
 	}
@@ -422,7 +427,7 @@ func TestClipboardRoutesEachCopy(t *testing.T) {
 		t.Fatalf("status = %q", status)
 	}
 	c = &systemClipboard{native: &fakeNative{local: true, marks: true}, terminal: terminalRoutes{tty: tty, tmux: tmux}}
-	res, err = c.copy("six", copyOptions{osc52: config.OSC52Always, terminal: terminalOther})
+	res, err = c.copy("six", copyOptions{osc52: config.OSC52Always, terminal: terminalKind{class: terminalOther}})
 	if err != nil || !res.native || res.terminal || !errors.Is(res.termErr, errTerminalNotTmux) || len(tty.sent)+len(tmux.sent) != before {
 		t.Fatalf("always copy with an inherited $TMUX = %+v, %v", res, err)
 	}
@@ -452,7 +457,7 @@ func TestAlwaysModeTmuxLegKeepsItsWarnings(t *testing.T) {
 		{tmuxFixtures["3.0a two clients"], nil, "Copied password (also sent to 2 tmux clients via OSC 52)"},
 		{tmuxFixtures["3.3a grouped"], nil, "Copied password (also sent via tmux OSC 52)"},
 		{nested, nil, "Copied password (also sent via nested tmux OSC 52; outer tmux may keep a copy)"},
-		{"", errors.New("tmux: no server running"), "Copied password (also sent via OSC 52 through tmux, unverified)"},
+		{"", errors.New("tmux: no server running"), "Copied password (also sent via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy)"},
 		{tmuxFixtures["3.8 two clients"], nil, "Copied password (also sent via tmux OSC 52)"}, // load-buffer to one client
 	} {
 		f := &fakeTmux{probe: tc.probe, probeErr: tc.probeErr}

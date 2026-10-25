@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"strconv"
 
 	"github.com/charmbracelet/x/ansi"
 )
@@ -33,9 +35,27 @@ type terminalResult struct {
 	termName   string   // TERM of the tmux client, for configuration hints
 	clientID   string   // TERM and XTVERSION reply of the one client the copy reached, when known, to recognize it on another tty
 	attached   []string // with clientID: ttys of every client attached at copy time, none of which is that terminal on a new tty
+	plain      bool     // unverified: a plain OSC 52 followed the passthrough (clipboard_osc52 always)
+	version    string   // unverified: the tmux version XTVERSION reported, if any
 }
 
 func (r terminalResult) clearable() bool { return r.noClear == "" }
+
+// passthroughAlwaysAllowed reports a tmux that XTVERSION named as older
+// than 3.3, which has no allow-passthrough option and lets passthrough by.
+func (r terminalResult) passthroughAlwaysAllowed() bool {
+	m := tmuxReleaseRe.FindStringSubmatch(r.version)
+	if m == nil {
+		return false
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	return major < 3 || major == 3 && minor < 3
+}
+
+// tmuxReleaseRe matches a release number; next-3.6 is a development
+// version, newer than 3.5.
+var tmuxReleaseRe = regexp.MustCompile(`^(\d+)\.(\d+)`)
 
 // terminalClipboard sends copies to the terminal clipboard.
 type terminalClipboard interface {
@@ -45,16 +65,21 @@ type terminalClipboard interface {
 	clear(last terminalResult) (clearOutcome, error)
 }
 
-// terminalKind is what the terminal answered to XTVERSION. Inside tmux the
+// terminalClass is what the terminal answered to XTVERSION. Inside tmux the
 // answer comes from tmux itself, or not at all before 3.2: tmux does not
 // pass the query on to the terminal it runs in (measured on 3.0a to 3.8).
-type terminalKind int
+type terminalClass int
 
 const (
-	terminalUnknown terminalKind = iota // no answer, or none yet
-	terminalTmux                        // a name starting with "tmux "
-	terminalOther                       // any other name
+	terminalUnknown terminalClass = iota // no answer, or none yet
+	terminalTmux                         // a name starting with "tmux "
+	terminalOther                        // any other name
 )
+
+type terminalKind struct {
+	class terminalClass
+	tmux  string // terminalTmux: the version tmux reported, such as 3.5a
+}
 
 // terminalRoutes picks the terminal clipboard for a copy. $TMUX names a
 // tmux server keetui can query. Without it, a terminal that answers
@@ -63,6 +88,13 @@ type terminalRoutes struct {
 	tty    terminalClipboard
 	tmux   terminalClipboard // nil unless $TMUX is set
 	remote terminalClipboard // nil to treat a remote tmux as a plain terminal
+}
+
+// configurable is a route whose copies depend on the copy's options.
+type configurable interface {
+	// with returns the route for a copy: plain asks for a plain OSC 52
+	// next to passthrough that nothing confirms.
+	with(kind terminalKind, plain bool) terminalClipboard
 }
 
 func newTerminalRoutes(getenv func(string) string) terminalRoutes {
@@ -76,20 +108,24 @@ func newTerminalRoutes(getenv func(string) string) terminalRoutes {
 	return routes
 }
 
-func (r terminalRoutes) pick(kind terminalKind) terminalClipboard {
+func (r terminalRoutes) pick(kind terminalKind, plain bool) terminalClipboard {
+	route := r.tty
 	switch {
-	case r.tmux != nil && kind == terminalOther:
+	case r.tmux != nil && kind.class == terminalOther:
 		// A terminal started from a tmux pane inherits $TMUX, but so does
 		// a terminal multiplexer running inside the pane, which may hand a
 		// plain OSC 52 on to tmux. keetui cannot tell them apart, and
 		// tmux's queried state belongs to a pane keetui is not in.
 		return refusedTerminal{errTerminalNotTmux}
 	case r.tmux != nil:
-		return r.tmux
-	case kind == terminalTmux && r.remote != nil:
-		return r.remote
+		route = r.tmux
+	case kind.class == terminalTmux && r.remote != nil:
+		route = r.remote
 	}
-	return r.tty
+	if c, ok := route.(configurable); ok {
+		return c.with(kind, plain)
+	}
+	return route
 }
 
 var errTerminalNotTmux = errors.New("$TMUX is set, but the terminal isn't tmux (unset TMUX outside tmux)")
@@ -113,12 +149,21 @@ func (t ttyClipboard) clear(terminalResult) (clearOutcome, error) {
 }
 
 // remoteTmuxClipboard serves a terminal that answered XTVERSION as tmux
-// while $TMUX is unset, such as SSH from a tmux pane. That tmux cannot be
-// queried. Passthrough is the only route that leaves no paste buffer behind
-// in it, and nothing confirms that it is allowed.
+// while $TMUX is unset, such as SSH from a tmux pane, or sudo in one. That
+// tmux cannot be queried. Passthrough is the only route that leaves no
+// paste buffer behind in it, and nothing confirms that it is allowed; with
+// clipboard_osc52 always, a plain OSC 52 follows, which tmux forwards with
+// set-clipboard on, keeping a copy.
 type remoteTmuxClipboard struct {
-	write  func(string) error
-	settle func() // see passthroughSettle; nil in tests
+	write   func(string) error
+	settle  func() // see passthroughSettle; nil in tests
+	plain   bool
+	version string
+}
+
+func (r remoteTmuxClipboard) with(kind terminalKind, plain bool) terminalClipboard {
+	r.plain, r.version = plain, kind.tmux
+	return r
 }
 
 func (r remoteTmuxClipboard) copy(value []byte) (terminalResult, error) {
@@ -128,15 +173,16 @@ func (r remoteTmuxClipboard) copy(value []byte) (terminalResult, error) {
 	if r.settle != nil {
 		r.settle()
 	}
-	res := terminalResult{route: routeRemoteTmux, unverified: "the terminal reports tmux, but $TMUX is unset (tmux on the other end of SSH?)"}
-	return res, r.write(passthroughOSC52(value))
+	res := terminalResult{route: routeRemoteTmux, unverified: "the terminal reports tmux, but $TMUX is unset",
+		plain: r.plain, version: r.version}
+	return res, r.write(unverifiedOSC52(value, r.plain))
 }
 
-func (r remoteTmuxClipboard) clear(terminalResult) (clearOutcome, error) {
+func (r remoteTmuxClipboard) clear(last terminalResult) (clearOutcome, error) {
 	if r.settle != nil {
 		r.settle()
 	}
-	return clearRequested, r.write(passthroughOSC52(nil))
+	return clearRequested, r.write(unverifiedOSC52(nil, last.plain))
 }
 
 // tmux treats empty OSC 52 data as no copy at all, so an empty value could
@@ -147,6 +193,16 @@ var errEmptyTmuxCopy = errors.New("the value is empty; nothing sent through tmux
 // tmux forwards it to the terminal unchanged instead of interpreting it.
 func passthroughOSC52(value []byte) string {
 	return ansi.TmuxPassthrough(ansi.SetSystemClipboard(string(value)))
+}
+
+// unverifiedOSC52 is a copy (or clear) for a tmux that cannot confirm
+// passthrough: passthrough, then with plain a plain OSC 52.
+func unverifiedOSC52(value []byte, plain bool) string {
+	seq := passthroughOSC52(value)
+	if plain {
+		seq += ansi.SetSystemClipboard(string(value))
+	}
+	return seq
 }
 
 // writeTTY writes an escape sequence to the controlling terminal itself,
