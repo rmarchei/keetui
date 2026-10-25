@@ -141,14 +141,18 @@ func (l *linuxClipboard) write(value []byte, _ bool) (bool, error) {
 }
 
 // writeX11 copies through the in-process owner. When the owner fails (no
-// connection, a timeout, unconfirmed ownership) or the value would need an
-// INCR transfer, xclip or xsel makes an unmarked copy instead.
+// connection, unconfirmed ownership) or the value would need an INCR
+// transfer, xclip or xsel makes an unmarked copy instead, but not after a
+// timeout: they would wait for the same server.
 func (l *linuxClipboard) writeX11(value []byte) (tool string, marked bool, err error) {
 	if l.x11 == nil {
 		l.x11 = l.newX11()
 	}
 	if err = l.x11.Copy(value, true); err == nil {
 		return "x11", true, nil
+	}
+	if errors.Is(err, x11clip.ErrTimeout) {
+		return "", false, err
 	}
 	tool = x11Fallback(l.has)
 	switch tool {

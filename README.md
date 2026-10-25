@@ -411,13 +411,14 @@ If the X server stops answering, keetui still wipes its copy at once and keeps
 the clipboard, which is empty once the server answers again. At exit keetui
 waits about 5 seconds at most for the server, then leaves the empty copy to
 xclip, which takes the clipboard once the server answers. If the server does
-not answer keetui's connection, the first copy waits 2 seconds for it; later
+not answer keetui's connection, the first copy waits 2 seconds for it, then
+goes to the terminal with OSC 52 (unless `clipboard_osc52` is `never`)
+without trying xclip or xsel, which would wait for the same server; later
 copies do not wait for it again until it answers. A copy that falls back to
-xclip or xsel, which need the same server, waits at most 2 seconds more:
-keetui then stops the tool, so that the copy cannot reach the clipboard later
-without keetui knowing, and sends it with OSC 52 instead (unless
-`clipboard_osc52` is `never`). An empty copy that clears the clipboard is left
-to finish once the server answers. Reading the clipboard back to check a
+xclip or xsel for another reason waits at most 2 seconds for them: keetui then
+stops the tool, so that the copy cannot reach the clipboard later without
+keetui knowing, and sends it with OSC 52 instead. An empty copy that clears
+the clipboard is left to finish once the server answers. Reading the clipboard back to check a
 fallback copy also waits at most 2 seconds; without an answer keetui clears
 the copy anyway, and the status bar reports the timeout.
 

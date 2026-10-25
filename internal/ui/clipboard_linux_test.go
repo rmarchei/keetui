@@ -160,7 +160,7 @@ func TestX11CopiesThroughOwner(t *testing.T) {
 }
 
 func TestX11FallsBackToTools(t *testing.T) {
-	failures := []error{x11clip.ErrTimeout, x11clip.ErrNotOwner, x11clip.ErrTooLarge, errors.New("x11clip: cannot connect to :0")}
+	failures := []error{x11clip.ErrNotOwner, x11clip.ErrTooLarge, errors.New("x11clip: cannot connect to :0")}
 	for _, failure := range failures {
 		for _, tc := range []struct {
 			installed []string
@@ -184,14 +184,29 @@ func TestX11FallsBackToTools(t *testing.T) {
 		}
 	}
 
-	x, tools := &fakeX11{copyErr: x11clip.ErrTimeout}, &fakeTools{}
-	if _, err := newTestLinux(x11Env, x, tools).write([]byte("synthetic-secret"), true); !errors.Is(err, x11clip.ErrTimeout) {
+	x, tools := &fakeX11{copyErr: x11clip.ErrNotOwner}, &fakeTools{}
+	if _, err := newTestLinux(x11Env, x, tools).write([]byte("synthetic-secret"), true); !errors.Is(err, x11clip.ErrNotOwner) {
 		t.Fatalf("write without tools = %v", err)
 	}
 	tools = &fakeTools{installed: []string{"xclip"}, runErr: errors.New("exit status 1")}
 	_, err := newTestLinux(x11Env, x, tools).write([]byte("synthetic-secret"), true)
-	if !errors.Is(err, x11clip.ErrTimeout) || !strings.Contains(err.Error(), "xclip: exit status 1") || strings.Contains(err.Error(), "\n") {
+	if !errors.Is(err, x11clip.ErrNotOwner) || !strings.Contains(err.Error(), "xclip: exit status 1") || strings.Contains(err.Error(), "\n") {
 		t.Fatalf("write with a failing fallback = %q, want both causes on one line", err)
+	}
+}
+
+// A server that did not answer keetui's connection would keep xclip and
+// xsel waiting too: the copy fails at once and goes to the terminal.
+func TestX11TimeoutSkipsTools(t *testing.T) {
+	x, tools := &fakeX11{copyErr: x11clip.ErrTimeout}, &fakeTools{installed: []string{"xclip", "xsel"}}
+	if _, err := newTestLinux(x11Env, x, tools).write([]byte("synthetic-secret"), true); !errors.Is(err, x11clip.ErrTimeout) || len(tools.runs) != 0 {
+		t.Fatalf("write = %v, runs %q", err, tools.runs)
+	}
+	c, term := newFakeClipboard(nil)
+	c.native = newTestLinux(x11Env, x, tools)
+	res, err := c.copy("synthetic-secret", copyOptions{transient: true, osc52: config.OSC52Auto})
+	if err != nil || res.native || !res.terminal || len(term.sent) != 1 || len(tools.runs) != 0 {
+		t.Fatalf("copy = %+v, %v (terminal %q, runs %q)", res, err, term.sent, tools.runs)
 	}
 }
 
