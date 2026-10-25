@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -274,6 +275,29 @@ func TestLockInvalidatesClipboardAndDisplayTimers(t *testing.T) {
 	_, cmd = updated.Update(securityTickMsg{gen: oldTick, at: time.Now()})
 	if cmd != nil {
 		t.Fatal("stale display ticker restarted after lock")
+	}
+}
+
+// Styled segments end with a full reset; every cell after one, segments and
+// gaps alike, must still be drawn on the bar's background.
+func TestStatusBarKeepsItsBackgroundBehindStyledSegments(t *testing.T) {
+	m := copyForCountdown(t, createTestApp(t), "synthetic")
+	m.statusText = "Copied password!"
+	m.dirty = true
+	m.undoStack.push(undoAction{description: "edit"})
+	m.width = 100
+	bar := m.statusBar()
+
+	bg := strings.TrimSuffix(strings.TrimPrefix(
+		ansi.Style{}.BackgroundColor(statusBarBgStyle.GetBackground()).String(), "\x1b["), "m")
+	leading := regexp.MustCompile(`^(\x1b\[[0-9;:]*m)*`)
+	for _, piece := range strings.Split(bar, ansi.ResetStyle) {
+		if ansi.Strip(piece) == "" {
+			continue
+		}
+		if lead := leading.FindString(piece); !strings.Contains(lead, bg) {
+			t.Errorf("%q is drawn without the bar background (%s)", ansi.Strip(piece), bg)
+		}
 	}
 }
 

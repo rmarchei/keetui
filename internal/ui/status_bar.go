@@ -23,7 +23,18 @@ func (m AppModel) statusBar() string {
 	if security != "" {
 		content += strings.Repeat(" ", max(0, budget-lipgloss.Width(summary)-lipgloss.Width(security))) + security
 	}
-	return fitFrame(statusBarBgStyle.Width(width).Render(content), width, 1)
+	return fitFrame(statusBarBgStyle.Width(width).Render(onStatusBar(content)), width, 1)
+}
+
+// onStatusBar re-applies the bar's colors after every reset in s. Styled
+// segments end with a full reset, which would otherwise leave them, and the
+// gaps after them, on the terminal's own background.
+func onStatusBar(s string) string {
+	bar := ansi.Style{}.
+		ForegroundColor(statusBarBgStyle.GetForeground()).
+		BackgroundColor(statusBarBgStyle.GetBackground()).
+		String()
+	return strings.ReplaceAll(s, ansi.ResetStyle, ansi.ResetStyle+bar)
 }
 
 // Security indicators have reserved space. Fit whole context items in what
