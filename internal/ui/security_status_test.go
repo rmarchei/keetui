@@ -40,11 +40,15 @@ func (c *testClipboard) copy(value string, opts copyOptions) (copyResult, error)
 }
 
 func (c *testClipboard) release() (clearResult, error) {
+	held := c.held
 	outcome, err := c.releaseOutcome()
+	// Like systemClipboard: a local copy in a remote session went to a
+	// forwarded X display.
+	repaint := held && !c.terminalOnly && c.session.remote
 	if outcome == clearDone {
-		return clearResult{outcome: outcome, leg: c.leg}, err
+		return clearResult{outcome: outcome, leg: c.leg, repaint: repaint}, err
 	}
-	return clearResult{outcome: outcome}, err
+	return clearResult{outcome: outcome, repaint: repaint}, err
 }
 
 func (c *testClipboard) releaseOutcome() (clearOutcome, error) {

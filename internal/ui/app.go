@@ -1051,7 +1051,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, err := m.clipboardBackend().release()
 		m.forgetCopiedValue()
 		m.clipboardDeferred = result.pending() && err == nil
-		cmd := m.ensureSecurityTick()
+		cmd := tea.Batch(m.ensureSecurityTick(), repaintAfter(result))
 		text, isError := clearStatus(result, err)
 		if text == "" {
 			return m, cmd
@@ -1103,7 +1103,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.unlock.err = fmt.Errorf("locked due to inactivity")
 		m.state = viewUnlock
 		m.quitReturn = nil
-		return m, tea.Batch(m.unlock.Init(), m.ensureSecurityTick())
+		return m, tea.Batch(m.unlock.Init(), m.ensureSecurityTick(), repaintAfter(result))
 	}
 
 	return m.updateActive(msg)
@@ -1535,6 +1535,15 @@ func (m AppModel) handleSaveResult(msg saveResultMsg) (tea.Model, tea.Cmd) {
 func (m AppModel) saveBusy() (tea.Model, tea.Cmd) {
 	m.statusText, m.statusError, m.statusDetail = "Saving… please wait", false, ""
 	return m, nil
+}
+
+// repaintAfter redraws the whole screen after a clear that may have made
+// the ssh client print over the frame (see clearResult.repaint).
+func repaintAfter(r clearResult) tea.Cmd {
+	if r.repaint {
+		return tea.ClearScreen
+	}
+	return nil
 }
 
 // clearClipboardOnQuit clears the clipboard if a keetui copy is still

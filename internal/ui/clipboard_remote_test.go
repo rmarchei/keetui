@@ -465,21 +465,95 @@ func TestFailedRemoteNativeCopyRepaints(t *testing.T) {
 	}
 }
 
-// batchHas reports whether cmd, or a command in its batch, returns want.
+// batchHas reports whether cmd, or a command in its batch (nested ones
+// included), returns want. Timers, which do not return at once, are left
+// running.
 func batchHas(cmd tea.Cmd, want tea.Msg) bool {
 	if cmd == nil {
 		return false
 	}
-	msg := cmd()
+	result := make(chan tea.Msg, 1)
+	go func() { result <- cmd() }()
+	var msg tea.Msg
+	select {
+	case msg = <-result:
+	case <-time.After(100 * time.Millisecond):
+		return false
+	}
 	if batch, ok := msg.(tea.BatchMsg); ok {
 		for _, c := range batch {
-			if c != nil && c() == want {
+			if batchHas(c, want) {
 				return true
 			}
 		}
 		return false
 	}
 	return msg == want
+}
+
+// A clear that spoke to the local clipboard of a remote session, an X
+// display forwarded over SSH, repaints whatever its outcome: the ssh client
+// prints over the frame when that display has gone away, and keetui's
+// ownership check or clear may be what made it try to reconnect.
+func TestRemoteNativeClearRepaints(t *testing.T) {
+	remote := func() remoteSession { return remoteSession{remote: true, why: "SSH_CONNECTION is set"} }
+	native := &fakeNative{local: true, marks: true, forwarded: true}
+	c, _ := newFakeClipboard(native)
+	c.detect = remote
+	copyOnce := func() {
+		t.Helper()
+		if _, err := c.copy("synthetic", copyOptions{transient: true, osc52: config.OSC52Auto}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	copyOnce()
+	if r, err := c.release(); err != nil || r.outcome != clearDone || !r.repaint {
+		t.Fatalf("clear = %+v, %v", r, err)
+	}
+	copyOnce()
+	native.owned = false // the display went away, or another client copied
+	if r, err := c.release(); err != nil || r.outcome != clearChanged || !r.repaint {
+		t.Fatalf("clear of a lost copy = %+v, %v", r, err)
+	}
+	copyOnce()
+	native.clearErr = errors.New("x11clip: EOF")
+	if r, err := c.release(); err == nil || !r.repaint {
+		t.Fatalf("failed clear = %+v, %v", r, err)
+	}
+	native.clearErr = nil
+
+	// Locally, and for terminal-only copies, nothing asks for a repaint.
+	c.detect = nil
+	copyOnce()
+	if r, _ := c.release(); r.repaint {
+		t.Fatalf("local clear repaints: %+v", r)
+	}
+	c, _ = newFakeClipboard(&fakeNative{})
+	c.detect = remote
+	copyOnce()
+	if r, _ := c.release(); r.outcome != clearRequested || r.repaint {
+		t.Fatalf("terminal-only clear = %+v", r)
+	}
+
+	// The app repaints after the timed clear and after the auto-lock's.
+	for _, session := range []remoteSession{remote(), {why: "no SSH session found"}} {
+		m := createTestApp(t)
+		m.clipboard.(*testClipboard).session = session
+		m = copyForCountdown(t, m, "synthetic")
+		_, cmd := m.Update(clipboardClearMsg{gen: m.clipboardGen})
+		if got := batchHas(cmd, tea.ClearScreen()); got != session.remote {
+			t.Errorf("%+v: timed clear repaint = %v", session, got)
+		}
+		m = copyForCountdown(t, m, "synthetic")
+		m.lastActivity = m.lastActivity.Add(-10 * time.Minute)
+		updated, cmd := m.Update(autoLockMsg{gen: m.autoLockGen})
+		if updated.(AppModel).state != viewUnlock {
+			t.Fatal("database did not lock")
+		}
+		if got := batchHas(cmd, tea.ClearScreen()); got != session.remote {
+			t.Errorf("%+v: auto-lock repaint = %v", session, got)
+		}
+	}
 }
 
 func TestHerdrClearStatusInApp(t *testing.T) {

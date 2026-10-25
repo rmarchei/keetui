@@ -485,7 +485,8 @@ F1 shows what decided, and where the copy went. In a remote session:
   after keetui quits. The trade-off: once keetui exits, clipboard managers on
   your desktop that ignore the marker may restore their newest entry. If the
   forwarded X server is gone, the ssh client prints its error over the screen,
-  so keetui redraws the whole screen after a failed copy.
+  so keetui redraws the whole screen after a failed copy and after each clear
+  of a copy on that display.
 
 **herdr.** In a herdr pane keetui sends a plain OSC 52, which herdr hands to
 the client that last typed: a client running over SSH writes it to its

@@ -76,6 +76,10 @@ type clearResult struct {
 	outcome clearOutcome // keetui's copy: the local one, or a terminal-only one
 	leg     clearOutcome // the terminal copy sent next to a local one; clearNothing for none
 	legErr  error        // why the terminal leg's clear failed
+	// repaint asks for a full redraw: the clear spoke to the local clipboard
+	// in a remote session, an X display forwarded over SSH, and the ssh
+	// client prints over the frame when that display has gone away.
+	repaint bool
 }
 
 func (r clearResult) pending() bool { return r.outcome.pending() }
@@ -215,15 +219,16 @@ func (c *systemClipboard) release() (clearResult, error) {
 		return clearResult{outcome: outcome}, err
 	}
 	c.held = nil
+	repaint := h.result.session.remote
 	if !c.native.holds(h.matches, h.result.terminal) {
 		// Something else was copied since, which may have replaced the
 		// terminal's copy as well: neither is touched.
-		return clearResult{outcome: clearChanged}, nil
+		return clearResult{outcome: clearChanged, repaint: repaint}, nil
 	}
 	if err := c.native.clear(); err != nil {
-		return clearResult{}, fmt.Errorf("clear clipboard: %w", err)
+		return clearResult{repaint: repaint}, fmt.Errorf("clear clipboard: %w", err)
 	}
-	r := clearResult{outcome: clearDone}
+	r := clearResult{outcome: clearDone, repaint: repaint}
 	switch {
 	case !h.result.terminal:
 	case !h.result.via.clearable():
