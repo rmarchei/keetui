@@ -64,8 +64,12 @@ func (o *Overrides) sanitize() {
 	if o.ClipboardOSC52 != nil && !slices.Contains(OSC52Modes, *o.ClipboardOSC52) {
 		o.ClipboardOSC52 = nil
 	}
-	if o.DefaultPreset != nil && *o.DefaultPreset == "" {
-		o.DefaultPreset = nil
+	if o.DefaultPreset != nil {
+		if name, ok := CanonicalPreset(*o.DefaultPreset); ok {
+			o.DefaultPreset = &name
+		} else {
+			o.DefaultPreset = nil
+		}
 	}
 }
 

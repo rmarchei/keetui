@@ -582,3 +582,32 @@ func TestColorsAreValidatedOnLoadAndSurviveSaving(t *testing.T) {
 		t.Errorf("after saving: colors = %v, err %v", again.Colors, err)
 	}
 }
+
+// default_preset names a preset in any case; anything else means Strong,
+// not the picker's first entry, a 6-digit PIN.
+func TestDefaultPresetFallsBackToStrong(t *testing.T) {
+	for name, want := range map[string]string{"": "Strong", "strong": "Strong", "passphrase": "Passphrase", "PIN": "PIN", "bogus": "Strong"} {
+		if got := (Config{DefaultPreset: name}).Preset(); got != want {
+			t.Errorf("Preset(%q) = %q, want %q", name, got, want)
+		}
+	}
+	p := isolateConfig(t)
+	for stored, want := range map[string]string{"strong": "Strong", "bogus": ""} {
+		if err := os.WriteFile(p, []byte(`{"default_preset": "`+stored+`"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if cfg, err := Load(); err != nil || cfg.DefaultPreset != want {
+			t.Errorf("loading %q: %q, %v; want %q", stored, cfg.DefaultPreset, err, want)
+		}
+	}
+	for stored, want := range map[string]string{"pin": "PIN", "bogus": ""} {
+		o, err := ParseOverrides(`{"default_preset": "` + stored + `"}`)
+		got := "" // inherited
+		if o.DefaultPreset != nil {
+			got = *o.DefaultPreset
+		}
+		if err != nil || got != want {
+			t.Errorf("database setting %q: %q, %v; want %q", stored, got, err, want)
+		}
+	}
+}

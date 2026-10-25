@@ -423,3 +423,16 @@ func TestPresetNames(t *testing.T) {
 		t.Errorf("PresetNames length = %d, want %d", len(PresetNames), len(expected))
 	}
 }
+
+// A default preset named in another case, or not at all a preset, selects
+// Strong, never the list's first entry (PIN).
+func TestPresetPickerFallsBackToStrong(t *testing.T) {
+	for _, name := range []string{"strong", "bogus"} {
+		cfg := config.Default()
+		cfg.DefaultPreset = name
+		m := NewPresetPickerModel(cfg, "")
+		if got := m.presets[m.cursor].name; got != "Strong" {
+			t.Errorf("default_preset %q selects %q, want Strong", name, got)
+		}
+	}
+}

@@ -72,6 +72,19 @@ const (
 // OSC52Modes lists the valid clipboard_osc52 values.
 var OSC52Modes = []string{OSC52Auto, OSC52Always, OSC52Never}
 
+// PresetNames lists the password presets default_preset may name.
+var PresetNames = []string{"PIN", "Alphanumeric", "Strong", "Passphrase", "Custom"}
+
+// CanonicalPreset returns the preset a name means, ignoring case.
+func CanonicalPreset(name string) (string, bool) {
+	for _, preset := range PresetNames {
+		if strings.EqualFold(name, preset) {
+			return preset, true
+		}
+	}
+	return "", false
+}
+
 // OSC52Mode returns the terminal clipboard policy, defaulting to "auto".
 // OSC 52 copies cannot be marked as sensitive, and terminal multiplexers
 // and session recorders may keep them, so they are used only when needed.
@@ -152,12 +165,14 @@ func (c Config) BackupEnabled() bool {
 	return c.BackupOnSave != nil && *c.BackupOnSave
 }
 
-// Preset returns the configured default preset name, defaulting to "Strong".
+// Preset returns the configured default preset name, defaulting to
+// "Strong", also for a name that is no preset: falling back to the first
+// one would mean a 6-digit PIN.
 func (c Config) Preset() string {
-	if c.DefaultPreset == "" {
-		return "Strong"
+	if name, ok := CanonicalPreset(c.DefaultPreset); ok {
+		return name
 	}
-	return c.DefaultPreset
+	return "Strong"
 }
 
 // Theme returns the configured theme name, defaulting to "auto", which
@@ -298,6 +313,7 @@ func (c *Config) Sanitize() {
 	if c.PasswordLength < 8 {
 		c.PasswordLength = 20
 	}
+	c.DefaultPreset, _ = CanonicalPreset(c.DefaultPreset) // "": Strong
 }
 
 // Load reads config from ~/.config/keetui/config.json, falling back to defaults.

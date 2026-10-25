@@ -15,7 +15,7 @@ import (
 )
 
 // PresetNames lists the valid preset names for use in settings validation.
-var PresetNames = []string{"PIN", "Alphanumeric", "Strong", "Passphrase", "Custom"}
+var PresetNames = config.PresetNames
 
 const (
 	pickerModeList    = 0
