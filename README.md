@@ -168,7 +168,7 @@ Use `PageUp` / `PageDown` to read long unlock errors, and `j` / `k` or
 | `d` | Delete entry/group |
 | `i` | Database stats |
 | `I` | Password audit |
-| `c` | Settings |
+| `c` / `Ctrl+O` | Settings (`Ctrl+O` also on the unlock screen) |
 | `P` | Change master password |
 | `Ctrl+Z` | Undo last action |
 | `s` / `Ctrl+S` | Save database (edit path, select format) |
@@ -323,7 +323,11 @@ Use `keetui -config` to view current settings as JSON (including all keybindings
 keetui -config > ~/.config/keetui/config.json
 ```
 
-Settings can also be edited from the TUI (press `c` in the browser).
+Settings can also be edited from the TUI: press `c` in the browser, or
+`Ctrl+O` there or on the unlock screen, before any database is open. Opened
+from the unlock screen, settings cover the global options only (a database's
+own settings need it unlocked), the password typed so far is cleared, and
+leaving or saving returns to the unlock screen in the theme just chosen.
 Use `Space` or `Enter` to toggle booleans or open a choice picker. On numeric
 fields, `Enter` moves to the next setting; `Tab` and `Shift+Tab` always navigate.
 Only `Ctrl+S` saves settings. Numeric errors appear beside the field as you type. Choose

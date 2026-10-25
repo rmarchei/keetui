@@ -297,6 +297,7 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 	addReserved(browser, "ctrl+c", "")
 	addReserved(browser, "ctrl+z", "")
 	addReserved(browser, "ctrl+s", "save")
+	addReserved(browser, "ctrl+o", "show_settings")
 	addReserved(detail, "enter", "")
 	addReserved(detail, "esc", "back")
 	addReserved(detail, "left", "back")

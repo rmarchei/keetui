@@ -181,7 +181,7 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 | `keybindings` | (object) | Override default keybindings (see `keybindings.go` for keys) |
 
 - **CLI**: Run `keetui -config` to display the config file path and current settings as valid JSON.
-- **TUI**: Press `c` in the browser view to open the settings editor. Changes are saved to disk and take effect immediately.
+- **TUI**: Press `c` in the browser view, or `Ctrl+O` there or on the unlock screen (reserved in the keybinding validator), to open the settings editor. Changes are saved to disk and take effect immediately. Opened before a database is unlocked (`m.db == nil`), settings skip `setDatabase`, and both leaving and saving return to the unlock screen; the typed password is cleared on the way in.
 - If the config file does not exist, defaults are used. The file is created automatically when settings are saved from the TUI.
 - **Per-database settings**: `config.Overrides` (JSON under the KDBX metadata custom data key `KEETUI_SETTINGS`, read and written with `keepass.DB.CustomData`/`SetCustomData`) layer over the global config while a database is open. `AppModel.globalCfg` is the config file; `AppModel.cfg` is what is in effect (`globalCfg.Apply(dbOverrides)`, via `setOverrides`, cleared on lock). Only `config.json`'s global values may be saved to it: settings saves and the preset picker's default go through `ConfigSavedMsg`/`SetDefaultPresetMsg`, never `cfg.Save()` on the merged config. Changing database settings marks the database dirty. Theme, strength display and keybindings are global only.
 

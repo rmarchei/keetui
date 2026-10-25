@@ -166,3 +166,12 @@ func TestConfigBackwardCompatibility(t *testing.T) {
 		t.Errorf("Quit = %q, want %q", keys.Quit, "q")
 	}
 }
+
+func TestCtrlOIsReservedForTheSettings(t *testing.T) {
+	if err := (KeyBindings{ShowSettings: "ctrl+o"}).Merge(DefaultKeyBindings()).Validate(); err != nil {
+		t.Errorf("binding the settings to ctrl+o failed: %v", err)
+	}
+	if err := (KeyBindings{NewEntry: "ctrl+o"}).Merge(DefaultKeyBindings()).Validate(); err == nil {
+		t.Error("another action may take ctrl+o")
+	}
+}

@@ -68,7 +68,7 @@ func (m HelpModel) sections() []helpSection {
 			{k.CycleSort, "Sort"}, {k.FilterTag, "Filter by tag"},
 			{k.Cut, "Cut"}, {k.Paste, "Paste"},
 			{k.Save + "/ctrl+s", "Save / save as"}, {k.ShowStats, "Database info"},
-			{k.ShowAudit, "Password audit"}, {k.ShowSettings, "Settings"},
+			{k.ShowAudit, "Password audit"}, {k.ShowSettings + "/ctrl+o", "Settings"},
 			{k.ChangePassword, "Master password"}, {"ctrl+z", "Undo"},
 			{"?/F1", "Help"}, {k.Quit + "/ctrl+c", "Quit"},
 		}},

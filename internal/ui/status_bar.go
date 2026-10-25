@@ -54,6 +54,9 @@ func (m AppModel) statusSummary(width int) string {
 	filename := sanitizeDisplay(filepath.Base(m.filePath))
 	shortFilename := ansi.Truncate(filename, max(1, width/4), "…")
 	count := fmt.Sprintf("%d entries", m.entryCount)
+	if m.db == nil {
+		count = "" // settings opened from the unlock screen: nothing is open
+	}
 	join := func(parts ...string) string {
 		var present []string
 		for _, part := range parts {

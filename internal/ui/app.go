@@ -346,6 +346,13 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.recordActivity()
 		return m.openHelp()
 	}
+	// Ctrl+O opens the settings wherever they can be opened, including the
+	// unlock screen, whose password field takes every printable key. The
+	// password typed so far is not kept.
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "ctrl+o" && m.state == viewUnlock && !m.unlock.unlocking {
+		m.unlock.input.SetValue("")
+		return m, func() tea.Msg { return ShowSettingsMsg{} }
+	}
 
 	// Track user activity for auto-lock (key presses, mouse events, and pastes).
 	if m.state != viewUnlock {
@@ -817,7 +824,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ShowSettingsMsg:
 		m.settings = NewSettingsModel(m.globalCfg)
-		m.settings.setDatabase(m.dbOverrides, m.readOnly)
+		if m.db != nil {
+			m.settings.setDatabase(m.dbOverrides, m.readOnly)
+		}
 		m.state = viewSettings
 		return m, m.settings.Init()
 
@@ -851,6 +860,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setOverrides(*msg.Overrides)
 		} else {
 			m.setOverrides(m.dbOverrides)
+		}
+		if m.db == nil {
+			// Saved from the unlock screen: back to it, in the new theme.
+			m.state = viewUnlock
+			return m, m.unlock.Init()
 		}
 		m.browser.keys = m.cfg.Keys()
 		// Styles captured at construction time don't see ApplyTheme's
@@ -1016,6 +1030,11 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleSaveResult(msg)
 
 	case BackToBrowserMsg:
+		if m.db == nil {
+			// Settings opened from the unlock screen return to it.
+			m.state = viewUnlock
+			return m, m.unlock.Init()
+		}
 		m.state = viewBrowser
 		return m, func() tea.Msg { return RefreshMsg{} }
 

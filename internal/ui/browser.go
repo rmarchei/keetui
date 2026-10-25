@@ -874,7 +874,7 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return ShowAuditMsg{}
 			}
 
-		case m.keys.ShowSettings:
+		case m.keys.ShowSettings, "ctrl+o":
 			return m, func() tea.Msg {
 				return ShowSettingsMsg{}
 			}
