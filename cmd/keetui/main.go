@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -162,6 +163,16 @@ func main() {
 	// Block mutating batch operations in read-only mode
 	if *readOnly && (*importCSV != "" || *importXML != "" || (*mergeDB != "" && !*dryRun) || *upgradeKDBX4) {
 		fmt.Fprintln(os.Stderr, "Error: import, merge, and upgrade are not allowed in read-only mode")
+		os.Exit(1)
+	}
+
+	// A plaintext export must never replace a file the command reads.
+	if err := checkExportDestinations([]string{*exportCSV, *exportXML}, []namedPath{
+		{"the database", dbPath}, {"the key file", *keyFile},
+		{"the merge source", *mergeDB}, {"the merge key file", *mergeKeyFile},
+		{"the CSV import", *importCSV}, {"the XML import", *importXML},
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -360,6 +371,43 @@ func zeroBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+type namedPath struct{ name, path string }
+
+// checkExportDestinations refuses exports that would overwrite one of the
+// files the command reads, or each other: the export file is truncated
+// before anything is written, so the vault or key file would be lost.
+func checkExportDestinations(exports []string, inputs []namedPath) error {
+	for i, dest := range exports {
+		if dest == "" {
+			continue
+		}
+		for _, other := range exports[:i] {
+			if other != "" && sameFile(dest, other) {
+				return fmt.Errorf("the CSV and XML exports both go to %q", dest)
+			}
+		}
+		for _, in := range inputs {
+			if in.path != "" && sameFile(dest, in.path) {
+				return fmt.Errorf("refusing to export to %q: it is %s", dest, in.name)
+			}
+		}
+	}
+	return nil
+}
+
+// sameFile reports whether two paths name the same file: through links when
+// both exist, by absolute path otherwise.
+func sameFile(a, b string) bool {
+	ai, aerr := os.Stat(a)
+	bi, berr := os.Stat(b)
+	if aerr == nil && berr == nil {
+		return os.SameFile(ai, bi)
+	}
+	aa, aerr := filepath.Abs(a)
+	ba, berr := filepath.Abs(b)
+	return aerr == nil && berr == nil && aa == ba
 }
 
 func printMergePreview(result keepass.MergeResult) {

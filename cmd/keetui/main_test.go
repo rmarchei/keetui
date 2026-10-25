@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -52,5 +54,42 @@ func TestBatchOperationsUseTheDatabaseBackupSetting(t *testing.T) {
 	db.SetCustomData(config.OverridesKey, `{"backup_on_save":`)
 	if err := applyDatabaseSettings(db, config.Default()); err == nil || db.BackupOnSave {
 		t.Errorf("unreadable settings: backup %v, err %v; want the global off and an error", db.BackupOnSave, err)
+	}
+}
+
+// An export truncates its destination before writing: one that names a
+// file the command reads (through a hard link or a relative path too) would
+// replace the vault or its key file with plaintext.
+func TestExportRefusesToOverwriteInputs(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	vault := filepath.Join(dir, "vault.kdbx")
+	key := filepath.Join(dir, "vault.key")
+	for _, f := range []string{vault, key} {
+		if err := os.WriteFile(f, []byte("synthetic"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(dir, "link.kdbx")
+	if err := os.Link(vault, link); err != nil {
+		t.Fatal(err)
+	}
+	inputs := []namedPath{{"the database", vault}, {"the key file", key}, {"the merge source", ""}}
+	for _, tc := range []struct {
+		exports []string
+		want    string // "" when the exports are fine
+	}{
+		{[]string{vault, ""}, "it is the database"},
+		{[]string{"", "vault.kdbx"}, "it is the database"},
+		{[]string{link, ""}, "it is the database"},
+		{[]string{key, ""}, "it is the key file"},
+		{[]string{"out.csv", "out.csv"}, "both go to"},
+		{[]string{"out.csv", "out.xml"}, ""},
+		{[]string{"", ""}, ""},
+	} {
+		err := checkExportDestinations(tc.exports, inputs)
+		if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+			t.Errorf("exports %q: %v, want %q", tc.exports, err, tc.want)
+		}
 	}
 }
