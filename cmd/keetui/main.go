@@ -251,7 +251,7 @@ func main() {
 					fmt.Fprintf(os.Stderr, "Error analyzing merge: %v\n", err)
 					os.Exit(1)
 				}
-				printMergePreview(result)
+				printMergePreview(os.Stdout, result)
 			} else {
 				result, err := db.Merge(other)
 				if err != nil {
@@ -410,39 +410,43 @@ func sameFile(a, b string) bool {
 	return aerr == nil && berr == nil && aa == ba
 }
 
-func printMergePreview(result keepass.MergeResult) {
-	fmt.Println("Merge preview (dry run - no changes will be made):")
-	fmt.Println()
+// printMergePreview writes the merge preview. Names come from the
+// databases, possibly another person's: control characters in them would
+// reach the terminal as commands (clipboard writes, window titles).
+func printMergePreview(w io.Writer, result keepass.MergeResult) {
+	clean := ui.SanitizeDisplay
+	_, _ = fmt.Fprintln(w, "Merge preview (dry run - no changes will be made):")
+	_, _ = fmt.Fprintln(w)
 
 	if len(result.GroupActions) > 0 {
-		fmt.Println("Groups:")
+		_, _ = fmt.Fprintln(w, "Groups:")
 		for _, g := range result.GroupActions {
 			switch g.Action {
 			case "create":
-				fmt.Printf("  + CREATE  %s (in %s)\n", g.Name, g.ParentPath)
+				_, _ = fmt.Fprintf(w, "  + CREATE  %s (in %s)\n", clean(g.Name), clean(g.ParentPath))
 			case "exists":
-				fmt.Printf("  = EXISTS  %s (in %s)\n", g.Name, g.ParentPath)
+				_, _ = fmt.Fprintf(w, "  = EXISTS  %s (in %s)\n", clean(g.Name), clean(g.ParentPath))
 			}
 		}
-		fmt.Println()
+		_, _ = fmt.Fprintln(w)
 	}
 
 	if len(result.EntryActions) > 0 {
-		fmt.Println("Entries:")
+		_, _ = fmt.Fprintln(w, "Entries:")
 		for _, e := range result.EntryActions {
 			switch e.Action {
 			case "add":
-				fmt.Printf("  + ADD     %s (%s) [%s]\n", e.Title, e.UserName, e.GroupPath)
+				_, _ = fmt.Fprintf(w, "  + ADD     %s (%s) [%s]\n", clean(e.Title), clean(e.UserName), clean(e.GroupPath))
 			case "update":
-				fmt.Printf("  ~ UPDATE  %s (%s) [%s]\n", e.Title, e.UserName, e.GroupPath)
+				_, _ = fmt.Fprintf(w, "  ~ UPDATE  %s (%s) [%s]\n", clean(e.Title), clean(e.UserName), clean(e.GroupPath))
 			case "skip":
-				fmt.Printf("  = SKIP    %s (%s) [%s]\n", e.Title, e.UserName, e.GroupPath)
+				_, _ = fmt.Fprintf(w, "  = SKIP    %s (%s) [%s]\n", clean(e.Title), clean(e.UserName), clean(e.GroupPath))
 			}
 		}
-		fmt.Println()
+		_, _ = fmt.Fprintln(w)
 	}
 
-	fmt.Printf("Summary: %d to add, %d to update, %d unchanged, %d groups to create\n",
+	_, _ = fmt.Fprintf(w, "Summary: %d to add, %d to update, %d unchanged, %d groups to create\n",
 		result.EntriesAdded, result.EntriesUpdated, result.EntriesSkipped, result.GroupsCreated)
 }
 

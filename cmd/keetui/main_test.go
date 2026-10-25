@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,5 +92,20 @@ func TestExportRefusesToOverwriteInputs(t *testing.T) {
 		if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
 			t.Errorf("exports %q: %v, want %q", tc.exports, err, tc.want)
 		}
+	}
+}
+
+// The merge preview prints names from a database that may be someone
+// else's: their control sequences (OSC 52 clipboard writes, here) must not
+// reach the terminal.
+func TestMergePreviewSanitizesNames(t *testing.T) {
+	osc52 := "\x1b]52;c;c3ludGhldGlj\x07"
+	var out bytes.Buffer
+	printMergePreview(&out, keepass.MergeResult{
+		GroupActions: []keepass.MergeGroupAction{{Name: "Team" + osc52, ParentPath: "Root\x1b[2J", Action: "create"}},
+		EntryActions: []keepass.MergeEntryAction{{Title: "Mail" + osc52, UserName: "user\r", GroupPath: "Team", Action: "add"}},
+	})
+	if got := out.String(); strings.ContainsAny(got, "\x1b\x07\r") || !strings.Contains(got, "+ ADD     Mail") {
+		t.Errorf("preview = %q", got)
 	}
 }

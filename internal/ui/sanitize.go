@@ -33,6 +33,10 @@ func sanitizeDisplay(s string) string {
 	}, s)
 }
 
+// SanitizeDisplay is sanitizeDisplay for text the command line prints from
+// a database (the merge preview).
+func SanitizeDisplay(s string) string { return sanitizeDisplay(s) }
+
 // sanitizeNoteLines splits multi-line text into lines and sanitizes each,
 // preserving intentional line breaks while neutralizing everything else.
 func sanitizeNoteLines(s string) []string {
