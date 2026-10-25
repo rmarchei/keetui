@@ -59,3 +59,13 @@ func TestHelpView(t *testing.T) {
 		t.Error("View() should contain 'Keyboard Shortcuts'")
 	}
 }
+
+func TestHelpHeaderShowsTheVersion(t *testing.T) {
+	prev := Version
+	Version = "v9.8.7"
+	t.Cleanup(func() { Version = prev })
+	m := NewHelpModel(config.DefaultKeyBindings(), 80, 24)
+	if first, _, _ := strings.Cut(m.View().Content, "\n"); !strings.Contains(first, "v9.8.7") {
+		t.Errorf("help header = %q, want the version", first)
+	}
+}

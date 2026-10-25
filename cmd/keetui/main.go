@@ -275,6 +275,7 @@ func main() {
 		os.Exit(0)
 	}
 
+	ui.Version = version
 	app := ui.NewApp(dbPath, *keyFile, cfg, *readOnly)
 	p := tea.NewProgram(app)
 	// Bubble Tea does not handle SIGHUP (terminal closed, SSH dropped), which

@@ -14,6 +14,9 @@ import (
 type ShowHelpMsg struct{}
 type CloseHelpMsg struct{}
 
+// Version is keetui's version, shown in the help header; main sets it.
+var Version = "dev"
+
 const (
 	helpBrowser = iota
 	helpDetail
@@ -121,7 +124,7 @@ func (m HelpModel) header() string {
 		tabs = append(tabs, label)
 	}
 	width, _ := viewSize(m.width, m.height)
-	return header(width, "", "Keyboard Shortcuts") + "\n\n" + wrapContent(strings.Join(tabs, " "), width) + "\n\n"
+	return header(width, Version, "Keyboard Shortcuts") + "\n\n" + wrapContent(strings.Join(tabs, " "), width) + "\n\n"
 }
 
 func (m HelpModel) buildContent() string {
