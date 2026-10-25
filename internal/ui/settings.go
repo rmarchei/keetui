@@ -114,6 +114,7 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 		t := newTextInput()
 		t.Prompt = fmt.Sprintf("  %-24s", settingLabels[i]+":")
 		setInputPromptStyle(&t, promptStyle)
+		setInputTextStyle(&t, valueStyle)
 		t.SetWidth(10)
 		t.CharLimit = 5
 		inputs[i] = t
@@ -393,12 +394,12 @@ func (m SettingsModel) body() (string, []fieldRows) {
 			}
 			style := valueStyle
 			if i == m.focused {
-				style = focusedStyle.Bold(true)
+				style = selectedItemStyle
 			}
 			line := labelStyle.Width(0).Render(fmt.Sprintf("  %-24s", settingLabels[i]+":")) + style.Render(value)
-			b.WriteString(wrapContent(line, width))
+			b.WriteString(formRow(wrapContent(line, width), width, i == m.focused))
 		} else {
-			b.WriteString(m.inputs[i].View())
+			b.WriteString(formRow(m.inputs[i].View(), width, i == m.focused))
 		}
 		b.WriteString("\n")
 		b.WriteString(hiddenStyle.Render(wrapIndented(settingDescriptions[i], width, 2)) + "\n")

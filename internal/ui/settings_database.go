@@ -364,17 +364,17 @@ func (m SettingsModel) databaseBody() (string, []fieldRows) {
 		case v == "":
 			style := secondaryStyle
 			if focused {
-				style = focusedStyle.Bold(true)
+				style = selectedItemStyle
 			}
 			value = style.Render("[ inherit ]") + "  " + inherited
 		default:
 			style := valueStyle
 			if focused {
-				style = focusedStyle.Bold(true)
+				style = selectedItemStyle
 			}
 			value = style.Render("[ " + displayValue(i, v) + " ]")
 		}
-		b.WriteString(wrapContent(label+value, width) + "\n")
+		b.WriteString(formRow(wrapContent(label+value, width), width, focused) + "\n")
 		if problem := m.db.errors[i]; problem != "" {
 			b.WriteString(errorMsgStyle.Padding(0).Render(wrapIndented(problem, width, 2)) + "\n")
 		}

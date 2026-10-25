@@ -104,6 +104,18 @@ func selectedRow(row string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
+// formRow uses the two-cell form gutter for the same marker as lists. Replace
+// the gutter rather than inserting it, so labels, inputs and mouse targets stay
+// aligned as focus moves. Continuation lines share the field's background.
+func formRow(content string, width int, focused bool) string {
+	if !focused {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	lines[0] = selectionCursor + ansi.Cut(lines[0], 2, lipgloss.Width(lines[0]))
+	return selectedRow(strings.Join(lines, "\n"), width)
+}
+
 // header draws a screen's top bar: the app name, then where the user is
 // (crumbs, the last one bold), then optional state on the right. It uses the
 // status bar's colors, so the two bars frame the screen. A path too long for

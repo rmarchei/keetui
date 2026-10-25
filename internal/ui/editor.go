@@ -89,6 +89,7 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 		t := newTextInput()
 		t.Prompt = fmt.Sprintf("  %s: ", fieldLabels[i])
 		setInputPromptStyle(&t, labelStyle)
+		setInputTextStyle(&t, valueStyle)
 		t.SetWidth(50)
 		inputs[i] = t
 	}
@@ -139,7 +140,7 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 	}
 
 	m.inputs[0].Focus()
-	setInputTextStyle(&m.inputs[0], focusedStyle)
+	setInputTextStyle(&m.inputs[0], selectedItemStyle)
 	m.refreshStrength()
 	m.syncLayout()
 
@@ -150,12 +151,14 @@ func newCustomFieldInput(key, value string, protected bool) customFieldInput {
 	k := newTextInput()
 	k.Prompt = "  Key: "
 	setInputPromptStyle(&k, labelStyle)
+	setInputTextStyle(&k, valueStyle)
 	k.SetWidth(20)
 	k.SetValue(key)
 
 	v := newTextInput()
 	v.Prompt = "  Value: "
 	setInputPromptStyle(&v, labelStyle)
+	setInputTextStyle(&v, valueStyle)
 	v.SetWidth(40)
 	v.SetValue(value)
 	if protected {
@@ -379,10 +382,10 @@ func (m *EditorModel) updateFocus() tea.Cmd {
 		}
 		if i == m.focused {
 			cmds = append(cmds, m.inputs[i].Focus())
-			setInputTextStyle(&m.inputs[i], focusedStyle)
+			setInputTextStyle(&m.inputs[i], selectedItemStyle)
 		} else {
 			m.inputs[i].Blur()
-			setInputTextStyle(&m.inputs[i], blurredStyle)
+			setInputTextStyle(&m.inputs[i], valueStyle)
 		}
 	}
 	// Notes textarea focus
@@ -397,19 +400,19 @@ func (m *EditorModel) updateFocus() tea.Cmd {
 		valIdx := keyIdx + 1
 		if keyIdx == m.focused {
 			cmds = append(cmds, m.customInputs[ci].key.Focus())
-			setInputTextStyle(&m.customInputs[ci].key, focusedStyle)
+			setInputTextStyle(&m.customInputs[ci].key, selectedItemStyle)
 			m.customInputs[ci].value.Blur()
-			setInputTextStyle(&m.customInputs[ci].value, blurredStyle)
+			setInputTextStyle(&m.customInputs[ci].value, valueStyle)
 		} else if valIdx == m.focused {
 			m.customInputs[ci].key.Blur()
-			setInputTextStyle(&m.customInputs[ci].key, blurredStyle)
+			setInputTextStyle(&m.customInputs[ci].key, valueStyle)
 			cmds = append(cmds, m.customInputs[ci].value.Focus())
-			setInputTextStyle(&m.customInputs[ci].value, focusedStyle)
+			setInputTextStyle(&m.customInputs[ci].value, selectedItemStyle)
 		} else {
 			m.customInputs[ci].key.Blur()
-			setInputTextStyle(&m.customInputs[ci].key, blurredStyle)
+			setInputTextStyle(&m.customInputs[ci].key, valueStyle)
 			m.customInputs[ci].value.Blur()
-			setInputTextStyle(&m.customInputs[ci].value, blurredStyle)
+			setInputTextStyle(&m.customInputs[ci].value, valueStyle)
 		}
 	}
 	return tea.Batch(cmds...)
@@ -565,28 +568,22 @@ func (m EditorModel) body() (string, []fieldRows) {
 	for i := range m.inputs {
 		start := b.row
 		if i == fieldNotes {
-			// Render multi-line textarea for notes
-			b.WriteString(fmt.Sprintf("  %s\n", labelStyle.Render("Notes:")))
-			b.WriteString(m.notesInput.View())
-			b.WriteString("\n")
+			content := fmt.Sprintf("  %s\n%s", labelStyle.Render("Notes:"), m.notesInput.View())
+			b.WriteString(formRow(content, width, i == m.focused) + "\n")
 			rows = append(rows, fieldRows{start, b.row - 1})
 			continue
 		}
-		b.WriteString(m.inputs[i].View())
-		if i == fieldPassword && m.cfg.ShowPasswordStrength {
-			// Show password strength with character class breakdown
-			pw := m.inputs[fieldPassword].Value()
-			if pw != "" {
-				annotation := renderStrengthDetail(m.strength)
-				if lipgloss.Width(m.inputs[i].View())+2+lipgloss.Width(annotation) <= width {
-					b.WriteString("  ")
-				} else {
-					b.WriteString("\n")
-				}
-				b.WriteString(wrapContent(annotation, width))
+		content := m.inputs[i].View()
+		if i == fieldPassword && m.cfg.ShowPasswordStrength && m.inputs[i].Value() != "" {
+			annotation := renderStrengthDetail(m.strength)
+			if lipgloss.Width(content)+2+lipgloss.Width(annotation) <= width {
+				content += "  "
+			} else {
+				content += "\n"
 			}
+			content += wrapContent(annotation, width)
 		}
-		b.WriteString("\n")
+		b.WriteString(formRow(content, width, i == m.focused) + "\n")
 		rows = append(rows, fieldRows{start, b.row - 1})
 	}
 
@@ -594,13 +591,13 @@ func (m EditorModel) body() (string, []fieldRows) {
 		b.WriteString("\n")
 		b.WriteString(helpStyle.Render("  Custom Fields:"))
 		b.WriteString("\n")
-		for _, cf := range m.customInputs {
+		for i, cf := range m.customInputs {
 			start := b.row
-			b.WriteString(cf.key.View())
+			b.WriteString(formRow(cf.key.View(), width, m.focused == fixedFieldCount+i*2))
 			b.WriteString("\n")
 			rows = append(rows, fieldRows{start, start})
 			start++
-			b.WriteString(cf.value.View())
+			b.WriteString(formRow(cf.value.View(), width, m.focused == fixedFieldCount+i*2+1))
 			b.WriteString("\n")
 			rows = append(rows, fieldRows{start, start})
 			if cf.protected {
