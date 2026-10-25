@@ -292,6 +292,9 @@ func (m SettingsModel) updateDatabase(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab", "up":
 			return m.moveDatabaseFocus(-1), textinput.Blink
 		}
+		if msg.String() == "enter" && databaseChoices(i) == nil {
+			return m.moveDatabaseFocus(1), textinput.Blink
+		}
 		if m.db.readOnly {
 			m.status, m.isError = "This database is read-only: its settings can't be changed", true
 			return m, nil
@@ -308,9 +311,6 @@ func (m SettingsModel) updateDatabase(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.db.values[i].SetValue("")
 			}
 			return m, nil
-		}
-		if msg.String() == "enter" {
-			return m.save()
 		}
 	}
 	if databaseChoices(i) != nil || m.db.readOnly {
@@ -393,7 +393,11 @@ func (m SettingsModel) databaseFooter() string {
 		}
 		fmt.Fprintf(&b, "%s\n", wrapContent(style.Render(sanitizeDisplay(m.status)), width))
 	}
-	b.WriteString(renderHints(width, "ctrl+s: save", "esc: back", "F1: help", "space/enter: change", "backspace: inherit", "tab/shift+tab: navigate"))
+	action := "enter: next"
+	if databaseChoices(databaseSettingList[m.db.focus]) != nil {
+		action = "space/enter: change"
+	}
+	b.WriteString(renderHints(width, "ctrl+s: save", "esc: back", "F1: help", action, "backspace: inherit", "tab/shift+tab: navigate"))
 	return m.withSaveError(b.String())
 }
 

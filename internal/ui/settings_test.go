@@ -163,7 +163,7 @@ func TestSettingsValidationClipboard(t *testing.T) {
 			m := NewSettingsModel(config.Default())
 			m.width, m.height = 80, 24
 			m.inputs[settingClipboardClear].SetValue(tt.value)
-			updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 			m = updated.(SettingsModel)
 			if tt.wantErr {
 				if !m.isError {
@@ -199,7 +199,7 @@ func TestSettingsValidationAutoLock(t *testing.T) {
 			m := NewSettingsModel(config.Default())
 			m.width, m.height = 80, 24
 			m.inputs[settingAutoLock].SetValue(tt.value)
-			updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 			m = updated.(SettingsModel)
 			if tt.wantErr {
 				if !m.isError {
@@ -234,7 +234,7 @@ func TestSettingsValidationPasswordLength(t *testing.T) {
 			m := NewSettingsModel(config.Default())
 			m.width, m.height = 80, 24
 			m.inputs[settingPasswordLength].SetValue(tt.value)
-			updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 			m = updated.(SettingsModel)
 			if tt.wantErr {
 				if !m.isError {
@@ -268,7 +268,7 @@ func TestSettingsValidationBoolFields(t *testing.T) {
 			m := NewSettingsModel(config.Default())
 			m.width, m.height = 80, 24
 			m.inputs[bf.idx].SetValue("2")
-			updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 			m = updated.(SettingsModel)
 			if !m.isError {
 				t.Errorf("expected error for %s=2", bf.name)
@@ -298,7 +298,7 @@ func TestSettingsValidationTheme(t *testing.T) {
 			m := NewSettingsModel(config.Default())
 			m.width, m.height = 80, 24
 			m.inputs[settingTheme].SetValue(tt.value)
-			updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 			m = updated.(SettingsModel)
 			if tt.wantErr {
 				if !m.isError {
@@ -324,7 +324,7 @@ func TestSettingsValidationAllCharsetsDisabled(t *testing.T) {
 	m.inputs[settingPWDigits].SetValue("0")
 	m.inputs[settingPWSymbols].SetValue("0")
 
-	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 	m = updated.(SettingsModel)
 	if !m.isError {
 		t.Error("expected error when all charsets disabled")

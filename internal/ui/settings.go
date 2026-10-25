@@ -243,7 +243,7 @@ func (m SettingsModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if msg.String() == "enter" {
-				return m.save()
+				return m.moveFocus(1), textinput.Blink
 			}
 		}
 	}
@@ -428,7 +428,11 @@ func (m SettingsModel) footer() string {
 			fmt.Fprintf(&b, "%s\n", wrapContent(successStyle.Render(sanitizeDisplay(m.status)), width))
 		}
 	}
-	b.WriteString(renderHints(width, "ctrl+s: save", "esc: back", "F1: help", "space/enter: change", "tab/shift+tab: navigate"))
+	action := "enter: next"
+	if isToggleSetting(m.focused) || isChoiceSetting(m.focused) || m.focused == settingKeyBindings || m.focused == settingDatabase {
+		action = "space/enter: change"
+	}
+	b.WriteString(renderHints(width, "ctrl+s: save", "esc: back", "F1: help", action, "tab/shift+tab: navigate"))
 	return m.withSaveError(b.String())
 }
 

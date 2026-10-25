@@ -16,7 +16,7 @@ import (
 // openWithSettings unlocks a synthetic database that stores settings.
 func openWithSettings(t *testing.T, settings string) (AppModel, tea.Cmd) {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateSettingsConfig(t)
 	path := filepath.Join(t.TempDir(), "synthetic.kdbx")
 	db, err := keepass.Create(path, "synthetic")
 	if err != nil {
@@ -94,7 +94,7 @@ func TestUnreadableDatabaseSettingsFallBackToGlobal(t *testing.T) {
 // databaseEditor opens the settings and their "This database" editor.
 func databaseEditor(t *testing.T, o config.Overrides, readOnly bool) SettingsModel {
 	t.Helper()
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateSettingsConfig(t)
 	m := NewSettingsModel(config.Default())
 	m.setDatabase(o, readOnly)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
@@ -197,7 +197,7 @@ func TestReadOnlyDatabaseSettingsCannotChange(t *testing.T) {
 
 func TestSavedDatabaseSettingsGoIntoTheDatabase(t *testing.T) {
 	m := createTestApp(t)
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateSettingsConfig(t)
 	ten := 10
 	updated, _ := m.Update(ConfigSavedMsg{Cfg: config.Default(), Overrides: &config.Overrides{AutoLockMinutes: &ten}})
 	m = updated.(AppModel)
@@ -220,7 +220,7 @@ func TestSavedDatabaseSettingsGoIntoTheDatabase(t *testing.T) {
 
 func TestDefaultPresetChangesWhereItIsSet(t *testing.T) {
 	m := createTestApp(t)
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	isolateSettingsConfig(t)
 	updated, cmd := m.Update(SetDefaultPresetMsg{Name: "Passphrase"})
 	m = updated.(AppModel)
 	if global, err := config.Load(); err != nil || global.DefaultPreset != "Passphrase" || m.cfg.Preset() != "Passphrase" {

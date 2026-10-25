@@ -321,8 +321,9 @@ keetui -config > ~/.config/keetui/config.json
 ```
 
 Settings can also be edited from the TUI (press `c` in the browser).
-Use `Space` to toggle booleans or open the preset/theme picker, and `Ctrl+S`
-to save. Numeric errors appear beside the field as you type. Choose
+Use `Space` or `Enter` to toggle booleans or open a choice picker. On numeric
+fields, `Enter` moves to the next setting; `Tab` and `Shift+Tab` always navigate.
+Only `Ctrl+S` saves settings. Numeric errors appear beside the field as you type. Choose
 **Keybindings** to record a shortcut by pressing it; `Esc` cancels recording,
 and `Backspace` restores that action's default. Conflicting or reserved keys
 are rejected. While recording, navigation keys such as `Tab` and function keys
@@ -343,7 +344,7 @@ These settings can be set per database: clipboard clear time, terminal
 clipboard, auto-lock, password length and character sets, default preset,
 confirm on quit, and backup on save. The theme, the strength display and
 keybindings stay global. In the editor an empty setting inherits the global
-one, shown beside it; `Space`, `←` and `→` cycle a choice, and `Backspace`
+one, shown beside it; `Space`, `Enter`, `←` and `→` cycle a choice, and `Backspace`
 returns it to inherit. `Ctrl+S` saves the global settings to the config file
 and the database's into the database, which then counts as modified: save the
 database to keep them. The global settings note the ones the database
