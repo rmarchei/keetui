@@ -296,7 +296,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if bg, ok := msg.(tea.BackgroundColorMsg); ok {
-		lightBackground = !bg.IsDark()
+		lightBackground, backgroundKnown = !bg.IsDark(), true
 		if m.cfg.Theme() == "auto" {
 			ApplyTheme(GetTheme("auto"))
 			setInputPromptStyle(&m.browser.searchInput, focusedStyle)
@@ -1286,7 +1286,12 @@ func (m AppModel) updateView(state viewState, msg tea.Msg) (tea.Model, tea.Cmd) 
 }
 
 func (m AppModel) View() tea.View {
-	view := tea.NewView(m.viewContent())
+	content := m.viewContent()
+	if canvas, ok := canvasStyle(m.cfg.Theme()); ok {
+		width, _ := viewSize(m.width, m.height)
+		content = paintCanvas(content, width, canvas)
+	}
+	view := tea.NewView(content)
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeCellMotion
 	return view

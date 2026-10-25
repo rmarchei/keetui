@@ -201,7 +201,7 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - Entry counts must not score passwords. Stats/audit workers analyze a detached `HealthSnapshot`, never the mutable live DB. Cancel scans when leaving their view or locking/quitting, keep them alive under overlays, and reject stale results by generation.
 - Save keybindings as sparse overrides and refresh the browser's cached keys after settings changes. Loading repairs only conflicting overrides; navigation must not dismiss a failed settings-save warning (full details remain in F1 help).
 - Cross-view communication uses typed message structs (e.g., `type FooMsg struct{}`)
-- Styles are centralized in `internal/ui/styles.go`, themes in `internal/ui/themes.go`; `ApplyTheme` builds every style, so a new style needs a theme color there, not a literal. The `auto` theme follows the terminal background (`tea.RequestBackgroundColor` in `Init`, `lightBackground`); re-pull styles captured at construction when it changes
+- Styles are centralized in `internal/ui/styles.go`, themes in `internal/ui/themes.go`; `ApplyTheme` builds every style, so a new style needs a theme color there, not a literal. The `auto` theme follows the terminal background (`tea.RequestBackgroundColor` in `Init`, `lightBackground`); re-pull styles captured at construction when it changes. A theme chosen by name whose tone differs from the terminal's reported background is painted on its `Canvas` color (`canvasStyle`/`paintCanvas` in `AppModel.View`), so its text colors stay readable
 - Always run `gofmt -w .` before committing (enforced by pre-commit hook)
 
 ## Git Conventions

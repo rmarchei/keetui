@@ -1,6 +1,10 @@
 package ui
 
-import "charm.land/lipgloss/v2"
+import (
+	"strings"
+
+	"charm.land/lipgloss/v2"
+)
 
 // Theme defines a set of colors for the UI.
 type Theme struct {
@@ -16,6 +20,8 @@ type Theme struct {
 	StatusFg    string
 	SelectionBg string // the bar behind the selected row
 	SelectionFg string
+	Canvas      string // painted behind the screen on a terminal of the other tone
+	Light       bool   // designed for a light background
 }
 
 var builtinThemes = map[string]Theme{
@@ -32,6 +38,7 @@ var builtinThemes = map[string]Theme{
 		StatusFg:    "#FAFAFA",
 		SelectionBg: "#2F2A47",
 		SelectionFg: "#FFFFFF",
+		Canvas:      "#1C1C22",
 	},
 	"light": {
 		Primary:     "#5B21B6",
@@ -46,6 +53,8 @@ var builtinThemes = map[string]Theme{
 		StatusFg:    "#1F2937",
 		SelectionBg: "#EDE9FE",
 		SelectionFg: "#1F2937",
+		Canvas:      "#FAFAFA",
+		Light:       true,
 	},
 	"high-contrast": {
 		Primary:     "#FFFF00",
@@ -60,13 +69,38 @@ var builtinThemes = map[string]Theme{
 		StatusFg:    "#FFFFFF",
 		SelectionBg: "#444444",
 		SelectionFg: "#FFFF00",
+		Canvas:      "#000000",
 	},
 }
 
 // lightBackground is the terminal's answer to the background color query
-// (requested in Init); the auto theme follows it, and stays dark until, or
-// unless, the terminal answers.
-var lightBackground bool
+// (requested in Init), and backgroundKnown whether it answered. The auto
+// theme follows it, and stays dark until, or unless, the terminal answers.
+var lightBackground, backgroundKnown bool
+
+// canvasStyle paints a theme's own background and text color behind the
+// whole screen when it was chosen by name and the terminal reported a
+// background of the other tone, such as the light theme on a dark terminal;
+// ok is false when the terminal's own colors suit the theme.
+func canvasStyle(name string) (style lipgloss.Style, ok bool) {
+	t := GetTheme(name)
+	if name == "auto" || !backgroundKnown || t.Light == lightBackground {
+		return style, false
+	}
+	return lipgloss.NewStyle().Background(lipgloss.Color(t.Canvas)).Foreground(lipgloss.Color(t.Text)), true
+}
+
+// paintCanvas draws content, width cells wide, on style's colors: every
+// line is padded to the width, and the colors return after each styled
+// segment, while segments with a background of their own keep it.
+func paintCanvas(content string, width int, style lipgloss.Style) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		pad := strings.Repeat(" ", max(0, width-lipgloss.Width(line)))
+		lines[i] = style.Render(onBackground(line+pad, style))
+	}
+	return strings.Join(lines, "\n")
+}
 
 // GetTheme returns a theme by name: "auto" follows the terminal background,
 // and unknown names fall back to "dark".

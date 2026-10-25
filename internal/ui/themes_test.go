@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image/color"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -69,7 +70,7 @@ func TestThemeNames(t *testing.T) {
 
 func TestAutoThemeFollowsTerminalBackground(t *testing.T) {
 	t.Cleanup(func() {
-		lightBackground = false
+		lightBackground, backgroundKnown = false, false
 		ApplyTheme(GetTheme("dark"))
 	})
 	if got := GetTheme("auto"); got != GetTheme("dark") {
@@ -93,5 +94,47 @@ func TestAutoThemeFollowsTerminalBackground(t *testing.T) {
 	m.Update(tea.BackgroundColorMsg{Color: color.White})
 	if primaryColor != lipgloss.Color(GetTheme("dark").Primary) {
 		t.Errorf("explicit dark on a light background: primaryColor = %v, want dark", primaryColor)
+	}
+}
+
+func TestChosenThemePaintsItsBackgroundOnATerminalOfTheOtherTone(t *testing.T) {
+	t.Cleanup(func() {
+		lightBackground, backgroundKnown = false, false
+		ApplyTheme(GetTheme("dark"))
+	})
+	if _, ok := canvasStyle("light"); ok {
+		t.Fatal("painted before the terminal said what its background is")
+	}
+
+	m := createTestApp(t)
+	m.cfg.ThemeName = "light"
+	ApplyTheme(GetTheme("light"))
+	updated, _ := m.Update(tea.BackgroundColorMsg{Color: color.Black})
+	m = updated.(AppModel)
+	canvas, ok := canvasStyle("light")
+	if !ok {
+		t.Fatal("the light theme on a dark terminal is not painted")
+	}
+	view := m.View().Content
+	assertFrame(t, view, m.width, m.height)
+	for _, line := range strings.Split(view, "\n") {
+		if lipgloss.Width(line) != m.width {
+			t.Fatalf("painted line is %d cells, want %d", lipgloss.Width(line), m.width)
+		}
+		assertOnBackground(t, line, canvas)
+	}
+
+	for _, tc := range []struct {
+		theme string
+		light bool
+	}{{"auto", false}, {"auto", true}, {"dark", false}, {"light", true}} {
+		lightBackground = tc.light
+		if _, ok := canvasStyle(tc.theme); ok {
+			t.Errorf("%s on a light=%v terminal is painted; its own colors suit it", tc.theme, tc.light)
+		}
+	}
+	lightBackground = true
+	if _, ok := canvasStyle("dark"); !ok {
+		t.Error("the dark theme on a light terminal is not painted")
 	}
 }

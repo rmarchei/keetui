@@ -284,7 +284,7 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `password_digits` | true | Include digits (0-9) in generated passwords |
 | `password_symbols` | true | Include symbols (!@#$%^&*()-_=+) in generated passwords |
 | `default_preset` | `"Strong"` | Default password preset: `PIN`, `Alphanumeric`, `Strong`, `Passphrase`, `Custom` |
-| `theme` | `"auto"` | Color theme: `auto` (light or dark, following the terminal background; dark if the terminal does not say), `dark`, `light`, or `high-contrast` |
+| `theme` | `"auto"` | Color theme: `auto` (light or dark, following the terminal background; dark if the terminal does not say), `dark`, `light`, or `high-contrast`. A theme chosen by name paints its own background when the terminal reports one of the other tone, such as `light` on a dark terminal |
 | `confirm_quit` | true | Confirm before quitting, even without unsaved changes (`false`: disable) |
 | `backup_on_save` | false | Create a `.kdbx.bak` backup copy before each save |
 
