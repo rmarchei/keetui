@@ -620,6 +620,112 @@ func TestBrowserEmptySearchEnterCancels(t *testing.T) {
 	}
 }
 
+// startSearch opens the search and types query; "e" matches both entries.
+func startSearch(t *testing.T, m BrowserModel, query string) BrowserModel {
+	t.Helper()
+	updated, _ := m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	m = updated.(BrowserModel)
+	for _, r := range query {
+		updated, _ = m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = updated.(BrowserModel)
+	}
+	return m
+}
+
+func TestBrowserSearchArrowsNavigateWhileTyping(t *testing.T) {
+	m := NewBrowserModel(createTestUIDB(t))
+	m.width, m.height = 80, 24
+	m = startSearch(t, m, "e")
+	if len(m.items) != 2 {
+		t.Fatalf("results for %q = %d, want 2", "e", len(m.items))
+	}
+
+	press := func(code rune) {
+		t.Helper()
+		updated, _ := m.Update(tea.KeyPressMsg{Code: code})
+		m = updated.(BrowserModel)
+	}
+	for _, step := range []struct {
+		code rune
+		want int
+	}{{tea.KeyDown, 1}, {tea.KeyDown, 1}, {tea.KeyUp, 0}, {tea.KeyUp, 0}, {tea.KeyDown, 1}} {
+		press(step.code)
+		if m.cursor != step.want {
+			t.Fatalf("cursor = %d, want %d", m.cursor, step.want)
+		}
+	}
+	if !m.searching || m.searchInput.Value() != "e" {
+		t.Fatalf("searching = %v, query = %q after arrows; want still typing %q", m.searching, m.searchInput.Value(), "e")
+	}
+
+	// Typing refilters from the first result.
+	updated, _ := m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	m = updated.(BrowserModel)
+	if m.searchInput.Value() != "en" || m.cursor != 0 {
+		t.Errorf("query = %q, cursor = %d after typing; want %q, 0", m.searchInput.Value(), m.cursor, "en")
+	}
+}
+
+func TestBrowserSearchWheelNavigatesWhileTyping(t *testing.T) {
+	m := NewBrowserModel(createTestUIDB(t))
+	m.width, m.height = 80, 24
+	m = startSearch(t, m, "e")
+
+	updated, _ := m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	m = updated.(BrowserModel)
+	if m.cursor != 1 || !m.searching {
+		t.Errorf("cursor = %d, searching = %v after wheel; want 1, true", m.cursor, m.searching)
+	}
+}
+
+func TestBrowserSearchEnterOpensSelection(t *testing.T) {
+	m := NewBrowserModel(createTestUIDB(t))
+	m.width, m.height = 80, 24
+	m = startSearch(t, m, "e")
+	updated, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m = updated.(BrowserModel)
+	want := m.items[1].entry
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(BrowserModel)
+	if m.searching || m.searchQuery != "e" {
+		t.Errorf("searching = %v, searchQuery = %q after enter; want the committed search %q", m.searching, m.searchQuery, "e")
+	}
+	if cmd == nil {
+		t.Fatal("enter returned no command, want ViewEntryMsg")
+	}
+	if view, ok := cmd().(ViewEntryMsg); !ok || view.Entry.UUID != want.UUID {
+		t.Fatalf("enter sent %#v, want ViewEntryMsg for %q", cmd(), want.Title)
+	}
+
+	// Back from the entry refreshes the browser: the results stay, on the
+	// opened entry.
+	updated, _ = m.Update(RefreshMsg{})
+	m = updated.(BrowserModel)
+	if m.searchQuery != "e" || len(m.items) != 2 || m.items[m.cursor].entry.UUID != want.UUID {
+		t.Errorf("after back: query %q, %d results, cursor on %q; want %q, 2, %q",
+			m.searchQuery, len(m.items), m.items[m.cursor].entry.Title, "e", want.Title)
+	}
+}
+
+func TestBrowserSearchEnterWithoutResults(t *testing.T) {
+	m := NewBrowserModel(createTestUIDB(t))
+	m.width, m.height = 80, 24
+	m = startSearch(t, m, "zzz")
+	if len(m.items) != 0 {
+		t.Fatalf("results for %q = %d, want 0", "zzz", len(m.items))
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = updated.(BrowserModel)
+	if cmd != nil {
+		t.Errorf("enter with no results returned a command (%#v)", cmd())
+	}
+	if m.searching || m.searchQuery != "zzz" {
+		t.Errorf("searching = %v, searchQuery = %q; want the committed search %q", m.searching, m.searchQuery, "zzz")
+	}
+}
+
 func TestBrowserSearchRecycleBinDispatch(t *testing.T) {
 	db := createTestUIDB(t)
 	root := db.RootGroup()

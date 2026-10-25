@@ -219,7 +219,7 @@ When browsing inside the recycle bin group, these additional keys are available:
 
 ## Search
 
-Press `/` in the browser to search across all entries in the database. Matches filter by title, username, URL, notes, and custom fields. Fuzzy matching is supported — typing "git" will match "GitHub". Exact substring matches are shown first, followed by fuzzy matches. Press `Enter` to confirm the search results or `Esc` to cancel.
+Press `/` in the browser to search across all entries in the database. Matches filter by title, username, URL, notes, and custom fields. Fuzzy matching is supported — typing "git" will match "GitHub". Exact substring matches are shown first, followed by fuzzy matches. While you type, the arrow keys (or the mouse wheel) move through the results; `Enter` opens the selected entry, and going back from it returns to the results. `Esc` cancels the search.
 
 ## TOTP Support
 

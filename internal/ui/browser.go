@@ -517,44 +517,44 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseMsg:
-		if !m.searching {
-			mouse := msg.Mouse()
-			switch mouse.Button {
-			case tea.MouseLeft:
-				if _, click := msg.(tea.MouseClickMsg); !click {
-					break
-				}
-				// Calculate header lines: 1 newline + 1 title + 1 breadcrumb + 1 blank = 4
-				headerLines := 4
-				idx := mouse.Y - headerLines + m.offset
-				if mouse.Y >= headerLines && mouse.Y < headerLines+m.visibleHeight() && idx >= 0 && idx < len(m.items) {
-					if idx == m.cursor {
-						// Click on already-selected item: open it
-						item := m.items[m.cursor]
-						if item.isGroup {
-							m.stack[len(m.stack)-1].cursor = m.cursor
-							m.stack[len(m.stack)-1].offset = m.offset
-							m.stack = append(m.stack, stackFrame{group: item.group})
-							m.items = m.buildItemsWithDB(item.group)
-							m.cursor = 0
-							m.offset = 0
-						} else {
-							return m, func() tea.Msg {
-								return ViewEntryMsg{Entry: item.entry}
-							}
-						}
+		mouse := msg.Mouse()
+		switch mouse.Button {
+		case tea.MouseLeft:
+			// The search input shifts the list, so clicks wait until the
+			// search is committed.
+			if _, click := msg.(tea.MouseClickMsg); !click || m.searching {
+				break
+			}
+			// Calculate header lines: 1 newline + 1 title + 1 breadcrumb + 1 blank = 4
+			headerLines := 4
+			idx := mouse.Y - headerLines + m.offset
+			if mouse.Y >= headerLines && mouse.Y < headerLines+m.visibleHeight() && idx >= 0 && idx < len(m.items) {
+				if idx == m.cursor {
+					// Click on already-selected item: open it
+					item := m.items[m.cursor]
+					if item.isGroup {
+						m.stack[len(m.stack)-1].cursor = m.cursor
+						m.stack[len(m.stack)-1].offset = m.offset
+						m.stack = append(m.stack, stackFrame{group: item.group})
+						m.items = m.buildItemsWithDB(item.group)
+						m.cursor = 0
+						m.offset = 0
 					} else {
-						m.cursor = idx
+						return m, func() tea.Msg {
+							return ViewEntryMsg{Entry: item.entry}
+						}
 					}
+				} else {
+					m.cursor = idx
 				}
-			case tea.MouseWheelUp:
-				if m.cursor > 0 {
-					m.cursor--
-				}
-			case tea.MouseWheelDown:
-				if m.cursor < len(m.items)-1 {
-					m.cursor++
-				}
+			}
+		case tea.MouseWheelUp:
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case tea.MouseWheelDown:
+			if m.cursor < len(m.items)-1 {
+				m.cursor++
 			}
 		}
 		return m, nil
@@ -589,8 +589,28 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.offset = 0
 					return m, nil
 				}
+				// Commit the search and open the selected result; back from
+				// the entry returns to the committed results.
 				m.searching = false
 				m.searchInput.Blur()
+				if len(m.items) == 0 {
+					return m, nil
+				}
+				entry := m.items[m.cursor].entry
+				return m, func() tea.Msg {
+					return ViewEntryMsg{Entry: entry}
+				}
+			case "up":
+				// Arrows move through the results while typing; printable
+				// navigation keys (j/k) go to the query.
+				if m.cursor > 0 {
+					m.cursor--
+				}
+				return m, nil
+			case "down":
+				if m.cursor < len(m.items)-1 {
+					m.cursor++
+				}
 				return m, nil
 			case "ctrl+c":
 				return m, func() tea.Msg { return RequestQuitMsg{} }
@@ -1034,7 +1054,7 @@ func (m BrowserModel) View() tea.View {
 func (m BrowserModel) footerView() string {
 	var help string
 	if m.searching {
-		return renderHints(m.width, "enter: confirm", "esc: cancel", "F1: help")
+		return renderHints(m.width, "↑/↓: navigate", "enter: open", "esc: cancel", "F1: help")
 	} else if m.readOnly {
 		help = fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: sort  %s: tag  %s: info  %s: audit  %s: quit",
 			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
