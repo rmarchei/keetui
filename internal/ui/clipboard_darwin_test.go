@@ -58,7 +58,7 @@ func writeAsOtherApp(t *testing.T, name, text string) {
 
 func TestDarwinClipboardTracksOwnership(t *testing.T) {
 	name := privatePasteboard(t)
-	h := newHeldCopy([]byte("synthetic-secret"), copyResult{native: true})
+	h := newHeldCopy([]byte("synthetic-secret"), copyResult{native: true}, nil)
 	d := &darwinClipboard{}
 	if marked, err := d.write([]byte("synthetic-secret"), true); err != nil || !marked {
 		t.Fatalf("write = %v, %v", marked, err)

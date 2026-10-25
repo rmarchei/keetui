@@ -151,6 +151,7 @@ type AppModel struct {
 	readOnly        bool      // when true, all mutations are blocked
 	statusText      string    // transient status message for status bar
 	statusError     bool      // true if status message is an error
+	statusDetail    string    // F1 guidance for statusText
 
 	autoLockCheckAt     time.Time // next armed check (may be deferred by a save/retry)
 	clipboardGen        int
@@ -159,6 +160,8 @@ type AppModel struct {
 	securityTickGen     int
 	securityTickPending bool
 	clipboard           clipboardAccess // nil uses the OS backend; tests inject an isolated clipboard
+	clipboardDeferred   bool            // tmux would have dropped the clear; retried on the display tick
+	terminalKind        terminalKind    // what the terminal answered to XTVERSION
 	healthScanGen       int
 	healthScanView      viewState
 	healthScanCancel    context.CancelFunc
@@ -184,7 +187,10 @@ func NewApp(filePath, keyFilePath string, cfg config.Config, readOnly ...bool) A
 }
 
 func (m AppModel) Init() tea.Cmd {
-	return m.unlock.Init()
+	// A tmux reply with $TMUX unset means a tmux elsewhere (SSH from a tmux
+	// pane), which needs terminal copies wrapped; another name with $TMUX
+	// set means keetui is not directly in tmux. No reply changes nothing.
+	return tea.Batch(m.unlock.Init(), tea.RequestTerminalVersion)
 }
 
 // scheduleAutoLock arms the auto-lock timer for the full configured interval.
@@ -208,13 +214,19 @@ func (m *AppModel) scheduleAutoLockIn(d time.Duration) tea.Cmd {
 	}), m.ensureSecurityTick())
 }
 
-func (m *AppModel) scheduleClearClipboard() tea.Cmd {
+// cancelClearClipboard invalidates a pending clear without arming another.
+func (m *AppModel) cancelClearClipboard() tea.Cmd {
 	m.clipboardGen++
 	m.clipboardClearAt = time.Time{}
+	return m.ensureSecurityTick()
+}
+
+func (m *AppModel) scheduleClearClipboard() tea.Cmd {
 	d := m.cfg.ClipboardClearDuration()
 	if d == 0 {
-		return m.ensureSecurityTick()
+		return m.cancelClearClipboard()
 	}
+	m.clipboardGen++
 	m.securityNow = time.Now()
 	m.clipboardClearAt = m.securityNow.Add(d)
 	gen := m.clipboardGen
@@ -263,8 +275,21 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if now.After(m.securityNow) {
 			m.securityNow = now
 		}
+		if m.clipboardDeferred {
+			m.retryDeferredClear()
+		}
 		cmd := m.ensureSecurityTick()
 		return m, cmd
+	}
+	if version, ok := msg.(tea.TerminalVersionMsg); ok {
+		switch {
+		case strings.HasPrefix(version.Name, "tmux "):
+			m.terminalKind = terminalTmux
+		case version.Name != "" && m.terminalKind == terminalUnknown:
+			// Once tmux, always tmux: its routes never send a plain OSC 52.
+			m.terminalKind = terminalOther
+		}
+		return m, nil
 	}
 	// Handle window size globally
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
@@ -302,7 +327,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Capture a long status message before normal activity clears it.
 	if _, key := msg.(tea.KeyPressMsg); key && m.state == viewSettings && m.settings.recording {
 		m.recordActivity()
-		m.statusText = ""
+		m.statusText, m.statusDetail = "", ""
 		return m.updateActive(msg)
 	}
 	if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "f1" && m.state != viewUnlock && m.state != viewHelp {
@@ -315,14 +340,13 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case tea.KeyPressMsg, tea.MouseMsg, tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
 			m.recordActivity()
-			m.statusText = "" // clear transient status on interaction
+			m.statusText, m.statusDetail = "", "" // clear transient status on interaction
 		}
 	}
 
 	// Handle StatusMsg at the app level (show in status bar)
 	if sm, ok := msg.(StatusMsg); ok {
-		m.statusText = sm.Text
-		m.statusError = sm.IsError
+		m.statusText, m.statusError, m.statusDetail = sm.Text, sm.IsError, sm.Detail
 		return m, nil
 	}
 
@@ -997,13 +1021,22 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		res, err := m.clipboardBackend().copy(msg.Value, copyOptions{
 			transient: m.cfg.ClipboardClearDuration() > 0,
 			osc52:     m.cfg.OSC52Mode(),
+			terminal:  m.terminalKind,
 		})
 		if err != nil {
-			return m, statusCmd(fmt.Sprintf("Clipboard error: %s", err), true)
+			return m, statusDetailCmd(fmt.Sprintf("Clipboard error: %s", err), true, clipboardHelp(res, err))
 		}
 		m.clipboardHeld = true
-		clearCmd := m.scheduleClearClipboard()
-		return m, tea.Batch(statusCmd(copyStatus(msg.Field, res), false), clearCmd)
+		m.clipboardDeferred = false // the new copy replaced the old one
+		var clearCmd tea.Cmd
+		if res.autoClear() {
+			clearCmd = m.scheduleClearClipboard()
+		} else {
+			// Nothing can clear it (tmux load-buffer): show clip:off rather
+			// than a countdown to a clear that cannot happen.
+			clearCmd = m.cancelClearClipboard()
+		}
+		return m, tea.Batch(statusDetailCmd(copyStatus(msg.Field, res), false, clipboardHelp(res, nil)), clearCmd)
 
 	case clipboardClearMsg:
 		if msg.gen != m.clipboardGen || m.clipboardClearAt.IsZero() {
@@ -1011,18 +1044,17 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		outcome, err := m.clipboardBackend().release()
 		m.forgetCopiedValue()
-		switch {
-		case err != nil:
-			return m, statusCmd(fmt.Sprintf("Clipboard error: %s", err), true)
-		case outcome == clearDone:
-			return m, statusCmd("Clipboard cleared", false)
-		case outcome == clearChanged:
-			return m, statusCmd("Clipboard changed; left untouched", false)
-		case outcome == clearRequested:
-			// OSC 52 has no acknowledgement; do not claim a verified erase.
-			return m, statusCmd("Clipboard clear requested", false)
+		m.clipboardDeferred = outcome.pending() && err == nil
+		cmd := m.ensureSecurityTick()
+		text, isError := clearStatus(outcome, err)
+		if text == "" {
+			return m, cmd
 		}
-		return m, nil
+		detail := ""
+		if err == nil {
+			detail = clearDetail(outcome)
+		}
+		return m, tea.Batch(statusDetailCmd(text, isError, detail), cmd)
 
 	case OpenURLMsg:
 		if err := openURL(msg.URL); err != nil {
@@ -1055,8 +1087,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.dirty = false
 		}
-		_, _ = m.clipboardBackend().release()
+		outcome, err := m.clipboardBackend().release()
 		m.forgetCopiedValue()
+		m.clipboardDeferred = outcome.pending() && err == nil
 		m.autoLockCheckAt = time.Time{}
 		m.db = nil
 		m.undoStack.clear()
@@ -1064,7 +1097,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.unlock.err = fmt.Errorf("locked due to inactivity")
 		m.state = viewUnlock
 		m.quitReturn = nil
-		return m, m.unlock.Init()
+		return m, tea.Batch(m.unlock.Init(), m.ensureSecurityTick())
 	}
 
 	return m.updateActive(msg)
@@ -1090,6 +1123,9 @@ func (m AppModel) openHelp() (tea.Model, tea.Cmd) {
 	}
 	if m.statusText != "" {
 		m.help.message = sanitizeDisplay(m.statusText)
+		if m.statusDetail != "" {
+			m.help.message += "\n\n" + strings.Join(sanitizeNoteLines(m.statusDetail), "\n")
+		}
 		m.help.section = helpMessage
 	}
 	if m.state == viewSettings && m.settings.saveError != "" {
@@ -1466,8 +1502,7 @@ func (m AppModel) handleSaveAs(path string, upgrade bool) (tea.Model, tea.Cmd) {
 	}
 	m.state = viewBrowser
 	m.saving = true
-	m.statusText = "Saving…"
-	m.statusError = false
+	m.statusText, m.statusError, m.statusDetail = "Saving…", false, ""
 	db := m.db
 	return m, func() tea.Msg {
 		return saveResultMsg{err: db.SaveAs(path), path: path, upgrade: upgrade}
@@ -1492,7 +1527,7 @@ func (m AppModel) handleSaveResult(msg saveResultMsg) (tea.Model, tea.Cmd) {
 // Input stays gated until encryption finishes. Set feedback synchronously so
 // ignored shortcuts (including stats/audit) cannot look like a silent no-op.
 func (m AppModel) saveBusy() (tea.Model, tea.Cmd) {
-	m.statusText, m.statusError = "Saving… please wait", false
+	m.statusText, m.statusError, m.statusDetail = "Saving… please wait", false, ""
 	return m, nil
 }
 
@@ -1504,8 +1539,13 @@ func (m AppModel) clearClipboardOnQuit() {
 }
 
 func statusCmd(text string, isError bool) tea.Cmd {
+	return statusDetailCmd(text, isError, "")
+}
+
+// statusDetailCmd also carries guidance for F1 help.
+func statusDetailCmd(text string, isError bool, detail string) tea.Cmd {
 	return func() tea.Msg {
-		return StatusMsg{Text: text, IsError: isError}
+		return StatusMsg{Text: text, IsError: isError, Detail: detail}
 	}
 }
 

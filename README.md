@@ -337,7 +337,7 @@ git config core.hooksPath .githooks
 
 - **Clipboard auto-clear**: Copied passwords and TOTP codes are automatically cleared from the clipboard (configurable, default 15s), and marked as sensitive where the platform supports it (see [Clipboard](#clipboard))
 - **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered
-- **Live security status**: The status bar shows `clip:15s` until clipboard clearing and `lock:4:59` until auto-lock. The lock countdown is highlighted in its final 30 seconds; normal input resets inactivity. Copying again restarts the clipboard timer, even for the same value. `off` means a protection is disabled (`C:`/`L:` are compact labels on very narrow terminals). Clearing over OSC 52 cannot be verified; a local clipboard that has changed since the copy is left untouched.
+- **Live security status**: The status bar shows `clip:15s` until clipboard clearing and `lock:4:59` until auto-lock. The lock countdown is highlighted in its final 30 seconds; normal input resets inactivity. Copying again restarts the clipboard timer, even for the same value. `off` means a protection is disabled, or that nothing can clear the copy (some tmux setups, see [Clipboard](#clipboard)), and `clip:wait` that a clear waits for keetui's tmux pane to be visible to the terminal that got the copy (`C:`/`L:` are compact labels on very narrow terminals). Clearing over OSC 52 cannot be verified; a local clipboard that has changed since the copy is left untouched.
 - **Password generator**: Generates random passwords via `crypto/rand` with configurable character sets (uppercase, lowercase, digits, symbols)
 - **Backup on save**: When enabled, the original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback (disabled by default; enable via `backup_on_save` setting)
 - **Read-only mode**: Open with `--read-only` to browse a database without risk of accidental modification
@@ -435,24 +435,115 @@ says so.
 
 **Terminal clipboard (OSC 52).** Over SSH, or when no local clipboard is
 available, keetui sends the copy to the terminal with OSC 52 instead. These
-copies cannot be marked, and keetui cannot verify that they were cleared:
-
-- tmux with `set-clipboard on` keeps them in its paste buffers, which
-  clearing does not remove.
-- Session recorders (`script`, asciinema, `tmux pipe-pane`) and raw terminal
-  logs record them.
+copies cannot be marked, session recorders (`script`, asciinema, `tmux
+pipe-pane`) and raw terminal logs record them, and keetui cannot verify that
+they were cleared.
 
 `clipboard_osc52` controls this: `auto` (the default) uses OSC 52 only when
 needed, `always` also sends local copies to the terminal, and `never` disables
-it.
+it. With `auto`, a local tmux on macOS changes nothing: copies still go to
+the pasteboard. With `always`, the status bar also carries the terminal
+copy's warnings (several tmux clients, nested tmux, unverified), and the
+timed clear empties only the local clipboard: other terminals that got the
+copy keep it.
+
+**tmux.** Inside tmux, keetui never sends a plain OSC 52: with the default
+`set-clipboard external` tmux drops it, and with `on` it keeps it in a paste
+buffer that any pane can read back. For each copy and each clear, keetui asks
+tmux how to reach your terminal instead:
+
+- **Passthrough** (`set -g allow-passthrough on`, tmux 3.3 or later; always
+  allowed before): tmux forwards the copy unchanged without keeping it, and
+  keetui can clear it. tmux sends it to every client that shows keetui's
+  pane; with `all` (tmux 3.4 or later), to every client of a session that
+  holds keetui's window, grouped and linked sessions included. It forwards
+  nothing while keetui's pane is not visible: with `on`, while another
+  window is current or another pane of keetui's window is zoomed, and with
+  any setting while the pane is in copy mode (or another tmux mode,
+  `display-panes` included from tmux 3.8) or the client is suspended
+  (prefix C-z). A clear that falls due then waits (`clip:wait`) until the
+  pane is visible again or the client resumes. `all` lets it through past
+  another window or a zoomed pane, but not out of copy mode or to a
+  suspended client. Before tmux 3.2 nothing names a suspended client:
+  keetui notices a suspend only when it leaves no client awake, and only
+  once tmux has recounted its clients, which the next tmux command makes it
+  do, so a clear can be lost on a suspended terminal.
+
+  With `on`, tmux also drops passthrough while it shows a command prompt, a
+  message, a menu (before tmux 3.7), a popup (3.2) or `display-panes`
+  (before 3.8) on the terminal. keetui cannot see these, so a clear that falls due then is lost
+  although the status bar says it was requested. `all` lets copies and
+  clears through all of them.
+- **load-buffer** (tmux 3.2 or later): without passthrough, keetui passes the
+  copy on stdin into a randomly named buffer, which tmux sends to your
+  terminal and keetui deletes at once. tmux must know that your terminal
+  supports OSC 52; if it does not, add
+  `set -as terminal-features ',xterm-256color:clipboard'` with your outer
+  `TERM`. tmux cannot clear these copies: the status bar says so and shows
+  `clip:off`. keetui also uses this route when passthrough would reach other
+  clients too (a shared session, or with `all` a grouped or linked one), so
+  that the copy reaches only your terminal. Before tmux 3.2, or when tmux
+  does not know that your terminal supports OSC 52, such a copy goes
+  through passthrough to every one of them, and the status bar says how
+  many. In a popup nothing tells keetui which client shows it, so it uses
+  this route only while a single client is attached; tmux 3.3 to 3.6 ignore
+  passthrough from popups.
+- Otherwise nothing is copied, and the status bar says why.
+
+`set-clipboard` needs no change. In nested tmux, the outer tmux receives the
+copy as a plain OSC 52: it keeps it with its own `set-clipboard on`, drops it
+otherwise, and keetui can neither check nor clear it, so the status bar marks
+the copy unverified and warns about the outer tmux.
+
+A passthrough clear reaches whichever terminals show keetui's pane when it
+is sent, not necessarily the ones that got the copy, so keetui remembers
+which terminals tmux sent the copy to. While one of them is still attached
+but out of reach (suspended, or its session shows another window; with
+`all`, does not hold keetui's window), the clear waits (`clip:wait`)
+instead of missing it. It goes out once tmux would deliver it to every
+terminal that got the copy and is still attached, and also reaches any
+other terminal showing keetui's pane at that moment. keetui sends each
+clear only once: a second one could wipe something copied since. A copy
+that went to several terminals is cleared the same way; if some of them
+detached in the meantime, the clear goes to the others and the status bar
+says that a terminal that got the copy detached. A new copy replaces one
+whose clear is waiting, and its clear goes only to the terminals the new copy
+reached: a terminal that got only the earlier copy keeps it.
+
+If the terminal that got the copy has detached and another one is attached,
+keetui sends the clear only when it would reach a single terminal that
+reports the same `TERM` and terminal type (its XTVERSION reply) and was not
+attached yet when keetui copied, as the same terminal does when it reconnects
+over SSH on a new tty; the status bar then
+says the clear went to the reattached terminal. Otherwise, and whenever all
+the terminals a copy to several went to have detached, it does not send the
+clear, which would only wipe other terminals' clipboards, and the status bar
+says the copy was not cleared.
+
+Over SSH from a tmux pane, keetui recognizes tmux from the terminal's reply
+to XTVERSION (tmux 3.2 or later answers it) and sends copies through
+passthrough only; the status bar marks them unverified, because keetui
+cannot ask that tmux whether passthrough is on. An older tmux at the other
+end looks like a plain terminal and gets a plain OSC 52. The other way
+round, when `$TMUX` is set but the terminal answers XTVERSION with another
+name, keetui is not running directly in tmux: a terminal started from a tmux
+pane inherits `$TMUX`. keetui then sends nothing to the terminal and says
+so, because a terminal multiplexer running inside a tmux pane looks the same
+and could pass a plain OSC 52 on to tmux; unset `TMUX` in such a terminal.
+
+tmux hooks such as `after-load-buffer` and verbose logs (`tmux -vv`) still
+see copies. F1 shows the full status message together with these settings.
 
 **Clearing.** keetui clears only its own copy: if you have copied something
 else since, the clipboard is left untouched. It clears on the timer, on lock,
 on quit, and when the process is terminated (SIGTERM, SIGINT, or SIGHUP when
-the terminal is closed). After `kill -9`, a copy on macOS or Wayland, or an
-X11 fallback copy made with xclip or xsel, stays until something replaces it.
-keetui's own X11 copy ends with the process instead, and clipboard managers
-that ignore the marker may then restore it (see X11 details).
+the terminal is closed). A terminal clear that waits for keetui's tmux pane,
+or for the terminal that got the copy, keeps retrying after a lock and is
+tried once more when keetui exits. After `kill -9`, a copy on macOS or
+Wayland, an X11 fallback copy made with xclip or xsel, or a terminal copy
+stays until something replaces it. keetui's own X11 copy ends with the
+process instead, and clipboard managers that ignore the marker may then
+restore it (see X11 details).
 
 ## License
 

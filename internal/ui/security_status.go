@@ -21,7 +21,8 @@ func (m *AppModel) recordActivity() {
 }
 
 func (m AppModel) needsSecurityTick() bool {
-	return m.state != viewUnlock && m.db != nil &&
+	// A deferred terminal clear keeps retrying even after a lock.
+	return m.clipboardDeferred || m.state != viewUnlock && m.db != nil &&
 		(m.cfg.AutoLockDuration() > 0 || !m.clipboardClearAt.IsZero())
 }
 
@@ -52,6 +53,23 @@ func (m *AppModel) forgetCopiedValue() {
 	m.clipboardGen++
 	m.clipboardClearAt = time.Time{}
 	m.clipboardHeld = false
+}
+
+// retryDeferredClear sends a clear that tmux would have dropped (keetui's
+// pane not on screen, no client attached and awake, or the terminal that
+// got the copy out of reach) once it can get through. It runs on the
+// display tick, so it is no activity; it replaces only its own status
+// notice.
+func (m *AppModel) retryDeferredClear() {
+	outcome, err := m.clipboardBackend().release()
+	m.clipboardDeferred = outcome.pending() && err == nil
+	if pendingClearStatus(m.statusText) {
+		m.statusText, m.statusError = clearStatus(outcome, err)
+		m.statusDetail = ""
+		if err == nil {
+			m.statusDetail = clearDetail(outcome)
+		}
+	}
 }
 
 func (m AppModel) autoLockDeadline() time.Time {
@@ -89,9 +107,12 @@ func (m AppModel) securityStatus(width int) string {
 		clipLabel, lockLabel = "C:", "L:"
 	}
 	var parts []string
-	if !m.clipboardClearAt.IsZero() {
+	switch {
+	case !m.clipboardClearAt.IsZero():
 		parts = append(parts, valueStyle.Render(clipLabel+countdown(m.clipboardClearAt, now)))
-	} else if m.clipboardHeld {
+	case m.clipboardDeferred:
+		parts = append(parts, warnStyle.Padding(0).Render(clipLabel+"wait"))
+	case m.clipboardHeld:
 		parts = append(parts, warnStyle.Padding(0).Render(clipLabel+"off"))
 	}
 	if m.cfg.AutoLockDuration() == 0 {

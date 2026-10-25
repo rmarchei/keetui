@@ -50,22 +50,39 @@ func (f *fakeNative) clear() error {
 	return nil
 }
 
+// fakeTerminal records terminal copies; clears are recorded as "".
 type fakeTerminal struct {
-	sent []string
-	err  error
+	sent    []string
+	err     error
+	result  terminalResult
+	outcome clearOutcome // what clear reports; clearRequested when unset
 }
 
-func (t *fakeTerminal) write(s string) error {
+func (t *fakeTerminal) copy(value []byte) (terminalResult, error) {
 	if t.err != nil {
-		return t.err
+		return terminalResult{}, t.err
 	}
-	t.sent = append(t.sent, s)
-	return nil
+	t.sent = append(t.sent, string(value))
+	return t.result, nil
+}
+
+func (t *fakeTerminal) clear(terminalResult) (clearOutcome, error) {
+	if t.err != nil {
+		return clearRequested, t.err
+	}
+	outcome := t.outcome
+	if outcome == clearNothing {
+		outcome = clearRequested
+	}
+	if outcome == clearRequested {
+		t.sent = append(t.sent, "")
+	}
+	return outcome, nil
 }
 
 func newFakeClipboard(native *fakeNative) (*systemClipboard, *fakeTerminal) {
 	term := &fakeTerminal{}
-	c := &systemClipboard{terminal: term.write}
+	c := &systemClipboard{terminal: terminalRoutes{tty: term}}
 	if native != nil {
 		c.native = native
 	}
@@ -205,14 +222,14 @@ func TestClipboardFailedCopyKeepsPreviousCopy(t *testing.T) {
 
 func TestHeldCopyDoesNotKeepValue(t *testing.T) {
 	value := []byte("synthetic-secret-value")
-	h := newHeldCopy(value, copyResult{native: true})
+	h := newHeldCopy(value, copyResult{native: true}, nil)
 	if bytes.Contains(h.key, value) || bytes.Contains(h.sum, value) {
 		t.Fatal("held copy stores the value")
 	}
 	if !h.matches(value) || h.matches([]byte("synthetic-secret-valuf")) {
 		t.Fatal("keyed hash does not identify the copy")
 	}
-	if other := newHeldCopy(value, copyResult{}); bytes.Equal(other.sum, h.sum) {
+	if other := newHeldCopy(value, copyResult{}, nil); bytes.Equal(other.sum, h.sum) {
 		t.Fatal("keyed hash is not per copy")
 	}
 }

@@ -16,10 +16,13 @@ type testClipboard struct {
 	value         string // simulated clipboard contents
 	copied        string // keetui's outstanding copy
 	held          bool
-	terminalOnly  bool // an OSC 52-only session: clears cannot be verified
+	terminalOnly  bool           // an OSC 52-only session: clears cannot be verified
+	via           terminalResult // the route of terminal-only copies
+	outcomes      []clearOutcome // queued terminal clear outcomes; clearRequested after
 	writeErr      error
 	opts          copyOptions
 	reads, clears int
+	releases      int
 }
 
 func (c *testClipboard) copy(value string, opts copyOptions) (copyResult, error) {
@@ -28,7 +31,7 @@ func (c *testClipboard) copy(value string, opts copyOptions) (copyResult, error)
 	}
 	c.value, c.copied, c.held, c.opts = value, value, true, opts
 	if c.terminalOnly {
-		return copyResult{terminal: true}, nil
+		return copyResult{terminal: true, via: c.via}, nil
 	}
 	return copyResult{native: true, marked: true}, nil
 }
@@ -37,10 +40,20 @@ func (c *testClipboard) release() (clearOutcome, error) {
 	if !c.held {
 		return clearNothing, nil
 	}
+	c.releases++
 	c.held = false
 	if c.terminalOnly {
-		c.clears++
-		return clearRequested, nil
+		outcome := clearRequested
+		if len(c.outcomes) > 0 {
+			outcome, c.outcomes = c.outcomes[0], c.outcomes[1:]
+		}
+		// Like systemClipboard, a pending clear keeps the copy.
+		c.held = outcome.pending()
+		switch outcome {
+		case clearRequested, clearReattached, clearPartial:
+			c.clears++
+		}
+		return outcome, nil
 	}
 	c.reads++
 	if c.value != c.copied {

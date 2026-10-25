@@ -144,6 +144,7 @@ type RefreshMsg struct{}
 type StatusMsg struct {
 	Text    string
 	IsError bool
+	Detail  string // guidance shown below the message in F1 help
 }
 
 func NewBrowserModel(db *keepass.DB, keys ...config.KeyBindings) BrowserModel {
