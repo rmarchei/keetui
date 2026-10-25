@@ -64,12 +64,31 @@ type EditorModel struct {
 	offset        int
 	strength      keepass.StrengthResult // recomputed only when the password changes
 	rows          []fieldRows
+	loaded        [fixedFieldCount]loadedValue
+	loadedNotes   loadedValue
 }
 
 type customFieldInput struct {
 	key       textinput.Model
 	value     textinput.Model
 	protected bool
+	loadedKey loadedValue
+	loadedVal loadedValue
+}
+
+// loadedValue is a stored value and what its input shows of it. Inputs
+// replace tabs and newlines and drop other control characters (the notes
+// box writes each \r as a newline), so saving an unedited input would
+// alter the value: a multi-line SSH key in a protected field would be
+// flattened by a change to the title.
+type loadedValue struct{ raw, shown string }
+
+// keep returns the stored value while the input still shows it unedited.
+func (v loadedValue) keep(current string) string {
+	if current == v.shown {
+		return v.raw
+	}
+	return current
 }
 
 // SaveEntryMsg signals that the entry should be saved.
@@ -108,6 +127,7 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 	ta.SetHeight(4)
 	ta.SetWidth(54)
 	ta.CharLimit = 0 // no limit
+	ta.MaxHeight = 0 // no limit on lines either: the default 99 cuts long notes
 	// Disable Tab in textarea so our editor Tab navigation works.
 	km := ta.KeyMap
 	km.InsertNewline.SetEnabled(true)
@@ -124,12 +144,13 @@ func NewEditorModel(entry *keepass.Entry, groupUUID gokeepasslib.UUID, cfg confi
 	if entry != nil {
 		m.entryUUID = entry.UUID
 		m.tags = entry.Tags
-		inputs[fieldTitle].SetValue(entry.Title)
-		inputs[fieldUserName].SetValue(entry.UserName)
-		inputs[fieldPassword].SetValue(entry.Password)
-		inputs[fieldURL].SetValue(entry.URL)
+		for field, raw := range map[int]string{fieldTitle: entry.Title, fieldUserName: entry.UserName,
+			fieldPassword: entry.Password, fieldURL: entry.URL, fieldTOTP: entry.TOTP} {
+			inputs[field].SetValue(raw)
+			m.loaded[field] = loadedValue{raw, inputs[field].Value()}
+		}
 		m.notesInput.SetValue(entry.Notes)
-		inputs[fieldTOTP].SetValue(entry.TOTP)
+		m.loadedNotes = loadedValue{entry.Notes, m.notesInput.Value()}
 		if entry.Expires && !entry.ExpiryTime.IsZero() {
 			inputs[fieldExpiry].SetValue(entry.ExpiryTime.Local().Format("2006-01-02"))
 		}
@@ -166,7 +187,8 @@ func newCustomFieldInput(key, value string, protected bool) customFieldInput {
 		v.EchoCharacter = '*'
 	}
 
-	return customFieldInput{key: k, value: v, protected: protected}
+	return customFieldInput{key: k, value: v, protected: protected,
+		loadedKey: loadedValue{key, k.Value()}, loadedVal: loadedValue{value, v.Value()}}
 }
 
 func (m EditorModel) totalFields() int {
@@ -452,9 +474,17 @@ func (m *EditorModel) focusedProtectedCustomField() (*customFieldInput, bool) {
 	return nil, false
 }
 
+// value is what saving stores for a fixed field.
+func (m EditorModel) value(field int) string {
+	return m.loaded[field].keep(m.inputs[field].Value())
+}
+
 func (m EditorModel) save() (tea.Model, tea.Cmd) {
-	title := strings.TrimSpace(m.inputs[fieldTitle].Value())
-	if title == "" {
+	title := m.value(fieldTitle)
+	if title != m.loaded[fieldTitle].raw {
+		title = strings.TrimSpace(title) // edited
+	}
+	if strings.TrimSpace(title) == "" {
 		m.err = fmt.Errorf("title cannot be empty")
 		return m, nil
 	}
@@ -476,18 +506,18 @@ func (m EditorModel) save() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		entry := keepass.Entry{
 			Title:      title,
-			UserName:   m.inputs[fieldUserName].Value(),
-			Password:   m.inputs[fieldPassword].Value(),
-			URL:        m.inputs[fieldURL].Value(),
-			Notes:      m.notesInput.Value(),
-			TOTP:       m.inputs[fieldTOTP].Value(),
+			UserName:   m.value(fieldUserName),
+			Password:   m.value(fieldPassword),
+			URL:        m.value(fieldURL),
+			Notes:      m.loadedNotes.keep(m.notesInput.Value()),
+			TOTP:       m.value(fieldTOTP),
 			Expires:    hasExpiry,
 			ExpiryTime: expiryTime,
 			Tags:       m.tags,
 		}
 		for _, cf := range m.customInputs {
-			key := cf.key.Value()
-			val := cf.value.Value()
+			key := cf.loadedKey.keep(cf.key.Value())
+			val := cf.loadedVal.keep(cf.value.Value())
 			if key != "" {
 				entry.CustomFields = append(entry.CustomFields, keepass.CustomField{
 					Key:       key,

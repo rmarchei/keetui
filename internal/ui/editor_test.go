@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -385,5 +386,45 @@ func TestEditorView(t *testing.T) {
 	view := m.View().Content
 	if view == "" {
 		t.Error("View() should return non-empty string")
+	}
+}
+
+// Inputs show tabs and newlines as spaces, the notes box writes each \r as
+// a newline and kept only 99 lines: saving after an edit to the title must
+// store every other field exactly as it was.
+func TestEditorSaveKeepsUneditedValues(t *testing.T) {
+	sshKey := "-----BEGIN OPENSSH PRIVATE KEY-----\nc3ludGhldGlj\nLWtleQ==\n-----END OPENSSH PRIVATE KEY-----\n"
+	notes := "first\r\nsecond\twith a tab\r\n" + strings.Repeat("more\n", 120) + "last"
+	entry := keepass.Entry{
+		Title:        "Server",
+		UserName:     "admin\t",
+		Password:     "synthetic\tpass\x01word",
+		Notes:        notes,
+		CustomFields: []keepass.CustomField{{Key: "SSH key", Value: sshKey, Protected: true}},
+	}
+	m := NewEditorModel(&entry, gokeepasslib.UUID{}, config.Default())
+	m.width, m.height = 80, 24
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'X', Text: "X"})
+	m = next.(EditorModel)
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("ctrl+s should produce a save command")
+	}
+	got := cmd().(SaveEntryMsg).Entry
+	if got.Title != "ServerX" {
+		t.Errorf("title = %q, want the edit", got.Title)
+	}
+	if got.UserName != entry.UserName || got.Password != entry.Password || got.Notes != notes {
+		t.Errorf("saved %q / %q / %d bytes of notes, want the stored values", got.UserName, got.Password, len(got.Notes))
+	}
+	if len(got.CustomFields) != 1 || got.CustomFields[0].Value != sshKey || !got.CustomFields[0].Protected {
+		t.Errorf("custom fields = %+v, want the key unchanged", got.CustomFields)
+	}
+
+	// An edited field stores what the input holds.
+	m.inputs[fieldPassword].SetValue("replaced")
+	_, cmd = m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	if got := cmd().(SaveEntryMsg).Entry; got.Password != "replaced" || got.Notes != notes {
+		t.Errorf("after editing the password: %q, notes kept %v", got.Password, got.Notes == notes)
 	}
 }
