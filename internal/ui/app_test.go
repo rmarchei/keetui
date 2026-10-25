@@ -759,6 +759,41 @@ func TestAutoLockLocksAfterIdle(t *testing.T) {
 	}
 }
 
+// Locking forgets the screens showing the database, and messages from
+// commands that were still running (back from history, a copy) neither
+// reopen the entry nor touch the closed database.
+func TestLockedAppIgnoresLateNavigation(t *testing.T) {
+	m := createTestApp(t)
+	m.clipboard = &testClipboard{}
+	entry := m.db.RootGroup().Groups[0].Entries[0]
+	for _, msg := range []tea.Msg{ViewEntryMsg{Entry: entry}, ShowHistoryMsg{EntryTitle: entry.Title, EntryUUID: entry.UUID}} {
+		updated, _ := m.Update(msg)
+		m = updated.(AppModel)
+	}
+	if m.state != viewHistory {
+		t.Fatalf("state = %d, want the history", m.state)
+	}
+	m.lastActivity = time.Now().Add(-time.Hour)
+	updated, _ := m.Update(autoLockMsg{gen: m.autoLockGen})
+	m = updated.(AppModel)
+	if m.state != viewUnlock || m.detail.entry.Password != "" || m.browser.db != nil {
+		t.Fatalf("after the lock: state %d, detail keeps %q, browser keeps the database %v",
+			m.state, m.detail.entry.Password, m.browser.db != nil)
+	}
+	for _, msg := range []tea.Msg{
+		BackToDetailMsg{},
+		ShowHistoryMsg{EntryTitle: entry.Title, EntryUUID: entry.UUID},
+		ViewEntryMsg{Entry: entry},
+		CopyToClipboardMsg{Field: "Password", Value: entry.Password},
+	} {
+		updated, cmd := m.Update(msg)
+		m = updated.(AppModel)
+		if m.state != viewUnlock || cmd != nil {
+			t.Errorf("%T after the lock: state %d, command %v", msg, m.state, cmd != nil)
+		}
+	}
+}
+
 func TestAutoLockSaveFailureAbortsLock(t *testing.T) {
 	m := createTestApp(t)
 	m.dirty = true

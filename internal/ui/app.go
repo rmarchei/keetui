@@ -267,6 +267,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.db == nil && needsDatabase(msg) {
+		// Sent by a command still running when the database was locked: it
+		// would reopen an entry the lock closed, or use a database no
+		// longer open.
+		return m, nil
+	}
 	if tick, ok := msg.(securityTickMsg); ok {
 		if tick.gen != m.securityTickGen || !m.securityTickPending {
 			return m, nil
@@ -1141,6 +1147,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clipboardDeferred = result.pending() && err == nil
 		m.autoLockCheckAt = time.Time{}
 		m.db = nil
+		m.dropDatabaseViews()
 		m.setOverrides(config.Overrides{})
 		m.undoStack.clear()
 		m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
@@ -1151,6 +1158,32 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m.updateActive(msg)
+}
+
+// needsDatabase reports a message that acts on the open database or shows
+// what is in it.
+func needsDatabase(msg tea.Msg) bool {
+	switch msg.(type) {
+	case ViewEntryMsg, EditEntryMsg, NewEntryMsg, NewGroupMsg, RenameGroupMsg, RenameGroupStartMsg,
+		DeleteEntryMsg, DeleteGroupMsg, confirmDeleteEntryMsg, confirmDeleteGroupMsg,
+		PermanentlyDeleteEntryMsg, PermanentlyDeleteGroupMsg, confirmPermanentDeleteEntryMsg, confirmPermanentDeleteGroupMsg,
+		RestoreEntryMsg, RestoreGroupMsg, EmptyRecycleBinMsg, confirmEmptyRecycleBinMsg, ToggleFavoriteMsg,
+		DuplicateEntryMsg, PasteEntryMsg, PasteGroupMsg, ChangePasswordStartMsg, ChangePasswordMsg,
+		ShowAuditMsg, ShowStatsMsg, ShowPresetPickerMsg, GeneratedPasswordMsg, CancelPresetMsg, SetDefaultPresetMsg,
+		ShowHistoryMsg, BackToDetailMsg, hibpResultMsg, ExtractAttachmentMsg, confirmExtractAttachmentMsg,
+		DeleteAttachmentMsg, confirmDeleteAttachmentMsg, AddAttachmentMsg, SaveEntryMsg, SaveGroupMsg,
+		SaveAsStartMsg, SaveAsMsg, confirmSaveAsMsg, CopyToClipboardMsg, OpenURLMsg:
+		return true
+	}
+	return false
+}
+
+// dropDatabaseViews forgets the screens that show what is in the database,
+// as locking closes it: none may come back without unlocking.
+func (m *AppModel) dropDatabaseViews() {
+	m.browser, m.detail, m.editor, m.history = BrowserModel{}, DetailModel{}, EditorModel{}, HistoryModel{}
+	m.groupInput, m.confirm, m.password, m.pathInput = GroupInputModel{}, ConfirmModel{}, PasswordModel{}, PathInputModel{}
+	m.stats, m.audit, m.presetPicker = StatsModel{}, AuditModel{}, PresetPickerModel{}
 }
 
 func (m AppModel) openHelp() (tea.Model, tea.Cmd) {
