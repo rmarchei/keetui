@@ -406,13 +406,15 @@ func (m DetailModel) layout() (string, []fieldRows) {
 	field("%s %s", label("Username:"), valueStyle.Render(sanitizeDisplay(m.entry.UserName)))
 
 	pw := maskedValue
+	pwStyle := hiddenStyle
 	if m.revealedFields["builtin:password"] {
 		pw = sanitizeDisplay(m.entry.Password)
+		pwStyle = valueStyle
 	}
 	if m.cfg.ShowPasswordStrength {
-		field("%s %s  %s", label("Password:"), hiddenStyle.Render(pw), renderStrength(m.strength))
+		field("%s %s  %s", label("Password:"), pwStyle.Render(pw), renderStrength(m.strength))
 	} else {
-		field("%s %s", label("Password:"), hiddenStyle.Render(pw))
+		field("%s %s", label("Password:"), pwStyle.Render(pw))
 	}
 
 	field("%s %s", label("URL:"), valueStyle.Render(sanitizeDisplay(m.entry.URL)))

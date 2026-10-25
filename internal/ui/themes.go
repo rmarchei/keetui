@@ -27,8 +27,8 @@ type Theme struct {
 var builtinThemes = map[string]Theme{
 	"dark": {
 		Primary:     "#7D56F4",
-		Label:       "#A1A1AA",
-		Muted:       "#626262",
+		Label:       "#B8B8C2",
+		Muted:       "#A1A1AA",
 		Success:     "#04B575",
 		Error:       "#FF4444",
 		Warn:        "#FFAA00",
@@ -42,8 +42,8 @@ var builtinThemes = map[string]Theme{
 	},
 	"light": {
 		Primary:     "#5B21B6",
-		Label:       "#6B7280",
-		Muted:       "#9CA3AF",
+		Label:       "#535D6E",
+		Muted:       "#687080",
 		Success:     "#059669",
 		Error:       "#DC2626",
 		Warn:        "#D97706",
