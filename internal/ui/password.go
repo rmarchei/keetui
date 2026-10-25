@@ -114,8 +114,7 @@ func (m PasswordModel) View() tea.View {
 	sizeInput(&m.newInput, width)
 	sizeInput(&m.confirmInput, width)
 
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(" Change Master Password "))
+	b.WriteString(header(width, "", "Change Master Password"))
 	b.WriteString("\n\n")
 
 	start := strings.Count(wrapContent(b.String(), width), "\n")

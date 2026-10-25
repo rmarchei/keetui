@@ -13,6 +13,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -190,7 +191,7 @@ func (m AppModel) Init() tea.Cmd {
 	// A tmux reply with $TMUX unset means a tmux elsewhere (SSH from a tmux
 	// pane), which needs terminal copies wrapped; another name with $TMUX
 	// set means keetui is not directly in tmux. No reply changes nothing.
-	return tea.Batch(m.unlock.Init(), tea.RequestTerminalVersion)
+	return tea.Batch(m.unlock.Init(), tea.RequestTerminalVersion, tea.RequestBackgroundColor)
 }
 
 // scheduleAutoLock arms the auto-lock timer for the full configured interval.
@@ -291,6 +292,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if bg, ok := msg.(tea.BackgroundColorMsg); ok {
+		lightBackground = !bg.IsDark()
+		if m.cfg.Theme() == "auto" {
+			ApplyTheme(GetTheme("auto"))
+			setInputPromptStyle(&m.browser.searchInput, focusedStyle)
+		}
+		return m, nil
+	}
 	// Handle window size globally
 	if wsm, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = wsm.Width
@@ -380,6 +389,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				prompt = "You have unsaved changes. Quit anyway?"
 			}
 			m.confirm = NewConfirmModel(m.state, prompt, func() tea.Msg { return quitMsg{} })
+			if m.dirty {
+				m.confirm = m.confirm.Destructive()
+			}
 			m.state = viewConfirm
 			return m, nil
 		}
@@ -462,14 +474,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case DeleteEntryMsg:
 		m.confirm = NewConfirmModel(viewBrowser, fmt.Sprintf("Delete entry '%s'?", msg.Name), func() tea.Msg {
 			return confirmDeleteEntryMsg{UUID: msg.EntryUUID}
-		})
+		}).Destructive()
 		m.state = viewConfirm
 		return m, nil
 
 	case DeleteGroupMsg:
 		m.confirm = NewConfirmModel(viewBrowser, fmt.Sprintf("Delete group '%s' and all its contents?", msg.Name), func() tea.Msg {
 			return confirmDeleteGroupMsg{UUID: msg.GroupUUID}
-		})
+		}).Destructive()
 		m.state = viewConfirm
 		return m, nil
 
@@ -576,14 +588,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PermanentlyDeleteEntryMsg:
 		m.confirm = NewConfirmModel(viewBrowser, fmt.Sprintf("Permanently delete entry '%s'?", msg.Name), func() tea.Msg {
 			return confirmPermanentDeleteEntryMsg{UUID: msg.EntryUUID}
-		})
+		}).Destructive()
 		m.state = viewConfirm
 		return m, nil
 
 	case PermanentlyDeleteGroupMsg:
 		m.confirm = NewConfirmModel(viewBrowser, fmt.Sprintf("Permanently delete group '%s' and all its contents?", msg.Name), func() tea.Msg {
 			return confirmPermanentDeleteGroupMsg{UUID: msg.GroupUUID}
-		})
+		}).Destructive()
 		m.state = viewConfirm
 		return m, nil
 
@@ -650,7 +662,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case EmptyRecycleBinMsg:
 		m.confirm = NewConfirmModel(viewBrowser, "Empty the recycle bin? This cannot be undone.", func() tea.Msg {
 			return confirmEmptyRecycleBinMsg{}
-		})
+		}).Destructive()
 		m.state = viewConfirm
 		return m, nil
 
@@ -881,7 +893,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.confirm = NewConfirmModel(viewDetail, fmt.Sprintf("Overwrite existing file %q?", destPath), func() tea.Msg {
 				return resolved
-			})
+			}).Destructive()
 			m.state = viewConfirm
 			return m, nil
 		}
@@ -901,7 +913,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case DeleteAttachmentMsg:
 		m.confirm = NewConfirmModel(viewDetail, fmt.Sprintf("Delete attachment %q?", msg.Name), func() tea.Msg {
 			return confirmDeleteAttachmentMsg(msg)
-		})
+		}).Destructive()
 		m.state = viewConfirm
 		return m, nil
 
@@ -980,7 +992,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				resolved := confirmSaveAsMsg(msg)
 				m.confirm = NewConfirmModel(viewBrowser, fmt.Sprintf("Overwrite existing file %q?", target), func() tea.Msg {
 					return resolved
-				})
+				}).Destructive()
 				m.state = viewConfirm
 				return m, nil
 			}
@@ -1270,10 +1282,30 @@ func (m AppModel) View() tea.View {
 }
 
 func (m AppModel) viewContent() string {
-	var view string
-	switch m.state {
-	case viewUnlock:
+	if m.state == viewUnlock {
 		return fitFrame(m.unlock.View().Content, m.width, m.height)
+	}
+	if m.height <= 1 {
+		return fitFrame(m.statusBar(), m.width, m.height)
+	}
+	return fitFrame(m.stateContent(m.state), m.width, m.viewHeight()) + "\n" + m.statusBar()
+}
+
+// confirmView draws the confirmation over the screen it returns to, dimmed,
+// so the question stays next to what it is about.
+func (m AppModel) confirmView() string {
+	under := ""
+	if s := m.confirm.returnState; s != viewConfirm && s != viewNone && s != viewUnlock {
+		under = ansi.Strip(fitFrame(m.stateContent(s), m.width, m.viewHeight()))
+	}
+	d := m.confirm.dialog()
+	return overlay(hiddenStyle.Render(fitFrame(under, m.width, m.viewHeight())), d.box, d.x, d.y)
+}
+
+// stateContent renders the view of state, above the status bar.
+func (m AppModel) stateContent(state viewState) string {
+	var view string
+	switch state {
 	case viewBrowser:
 		view = m.browser.View().Content
 	case viewDetail:
@@ -1283,7 +1315,7 @@ func (m AppModel) viewContent() string {
 	case viewGroupInput:
 		view = m.groupInput.View().Content
 	case viewConfirm:
-		view = m.confirm.View().Content
+		view = m.confirmView()
 	case viewPassword:
 		view = m.password.View().Content
 	case viewStats:
@@ -1301,10 +1333,7 @@ func (m AppModel) viewContent() string {
 	case viewPresetPicker:
 		view = m.presetPicker.View().Content
 	}
-	if m.height <= 1 {
-		return fitFrame(m.statusBar(), m.width, m.height)
-	}
-	return fitFrame(view, m.width, m.viewHeight()) + "\n" + m.statusBar()
+	return view
 }
 
 func (m *AppModel) refreshEntryCount() {

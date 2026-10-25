@@ -154,10 +154,11 @@ func (c Config) Preset() string {
 	return c.DefaultPreset
 }
 
-// Theme returns the configured theme name, defaulting to "dark".
+// Theme returns the configured theme name, defaulting to "auto", which
+// follows the terminal's background.
 func (c Config) Theme() string {
 	if c.ThemeName == "" {
-		return "dark"
+		return "auto"
 	}
 	return c.ThemeName
 }

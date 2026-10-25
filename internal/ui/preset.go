@@ -353,8 +353,7 @@ func (m PresetPickerModel) View() tea.View {
 func (m PresetPickerModel) viewList() string {
 	var b strings.Builder
 	width, height := viewSize(m.width, m.height)
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(" Generate Password "))
+	b.WriteString(header(width, "", "Generate Password"))
 	b.WriteString("\n\n")
 
 	defaultPreset := m.cfg.Preset()
@@ -397,8 +396,7 @@ func (m PresetPickerModel) viewCustom() string {
 	var b strings.Builder
 	width, height := viewSize(m.width, m.height)
 	sizeInput(&m.lengthInput, width)
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(" Generate Password — Custom "))
+	b.WriteString(header(width, "", "Generate Password", "Custom"))
 	b.WriteString("\n\n")
 
 	b.WriteString(m.lengthInput.View())
@@ -451,8 +449,7 @@ func (m PresetPickerModel) viewCustom() string {
 func (m PresetPickerModel) viewPreview() string {
 	var b strings.Builder
 	width, height := viewSize(m.width, m.height)
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(fmt.Sprintf(" Generate Password — %s ", m.lastPresetName)))
+	b.WriteString(header(width, "", "Generate Password", m.lastPresetName))
 	b.WriteString("\n\n")
 
 	pw := m.generatedPassword

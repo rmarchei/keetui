@@ -66,7 +66,7 @@ var settingDescriptions = [settingCount]string{
 	"Include digits in generated passwords",
 	"Include symbols in generated passwords",
 	"Choose the default password generation preset",
-	"Choose the color theme",
+	"Choose the color theme; auto follows the terminal background",
 	"Confirm before quitting, even without unsaved changes",
 	"Create a .kdbx.bak backup before each save",
 	"Record shortcuts by pressing keys; conflicts are checked immediately",
@@ -334,8 +334,7 @@ func (m SettingsModel) body() (string, []fieldRows) {
 	var rows []fieldRows
 	width, _ := viewSize(m.width, m.height)
 
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(" Settings "))
+	b.WriteString(header(width, "", "Settings"))
 	b.WriteString("\n\n")
 
 	b.WriteString(fmt.Sprintf("  %s %s\n\n",

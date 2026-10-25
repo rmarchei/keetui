@@ -129,77 +129,13 @@ func (m DetailModel) selectableFields() []selectableField {
 }
 
 // fieldAtLine returns the selectable field index for a given content line number.
-// Returns (index, true) if the line corresponds to a selectable field, or (0, false) otherwise.
 func (m DetailModel) fieldAtLine(line int) (int, bool) {
-	if line < 0 {
-		return 0, false
-	}
-	fieldIdx := 0
-	currentLine := 0
-
-	// Username (1 line)
-	if line == currentLine {
-		return fieldIdx, true
-	}
-	fieldIdx++
-	currentLine++
-
-	// Password (1 line)
-	if line == currentLine {
-		return fieldIdx, true
-	}
-	fieldIdx++
-	currentLine++
-
-	// URL (1 line)
-	if line == currentLine {
-		return fieldIdx, true
-	}
-	fieldIdx++
-	currentLine++
-
-	// TOTP (1 line, optional)
-	if m.entry.TOTP != "" {
-		if line == currentLine {
-			return fieldIdx, true
+	_, rows := m.layout()
+	for i, r := range rows {
+		if line >= r.start && line <= r.end {
+			return i, true
 		}
-		fieldIdx++
-		currentLine++
 	}
-
-	// Notes (1 label line + visible body lines, optional)
-	if m.entry.Notes != "" {
-		totalNotesLines := 1 + m.notesBodyLines() // label + body
-		if line == currentLine {
-			return fieldIdx, true // click on "Notes:" label
-		}
-		if line > currentLine && line < currentLine+totalNotesLines {
-			return fieldIdx, true // click on notes body
-		}
-		fieldIdx++
-		currentLine += totalNotesLines
-	}
-
-	// Non-selectable timestamp lines
-	if !m.entry.CreationTime.IsZero() {
-		currentLine++
-	}
-	if !m.entry.ModificationTime.IsZero() {
-		currentLine++
-	}
-	if m.entry.Expires {
-		currentLine++
-	}
-
-	// Custom fields (1 line each)
-	for range m.entry.CustomFields {
-		if line == currentLine {
-			return fieldIdx, true
-		}
-		fieldIdx++
-		currentLine++
-	}
-
 	return 0, false
 }
 
@@ -271,69 +207,11 @@ func (m DetailModel) notesBodyLines() int {
 
 // lineForField returns the content line number for the given selectable field index.
 func (m DetailModel) lineForField(fieldIdx int) int {
-	idx := 0
-	line := 0
-
-	// Username (1 line)
-	if idx == fieldIdx {
-		return line
+	_, rows := m.layout()
+	if fieldIdx < 0 || fieldIdx >= len(rows) {
+		return 0
 	}
-	idx++
-	line++
-
-	// Password (1 line)
-	if idx == fieldIdx {
-		return line
-	}
-	idx++
-	line++
-
-	// URL (1 line)
-	if idx == fieldIdx {
-		return line
-	}
-	idx++
-	line++
-
-	// TOTP (optional, 1 line)
-	if m.entry.TOTP != "" {
-		if idx == fieldIdx {
-			return line
-		}
-		idx++
-		line++
-	}
-
-	// Notes (optional, 1 label line + visible body lines)
-	if m.entry.Notes != "" {
-		if idx == fieldIdx {
-			return line
-		}
-		idx++
-		line += 1 + m.notesBodyLines()
-	}
-
-	// Timestamps (non-selectable)
-	if !m.entry.CreationTime.IsZero() {
-		line++
-	}
-	if !m.entry.ModificationTime.IsZero() {
-		line++
-	}
-	if m.entry.Expires {
-		line++
-	}
-
-	// Custom fields (1 line each)
-	for range m.entry.CustomFields {
-		if idx == fieldIdx {
-			return line
-		}
-		idx++
-		line++
-	}
-
-	return line
+	return rows[fieldIdx].start
 }
 
 // refreshContentAndFollow rebuilds the viewport content and scrolls to keep
@@ -440,7 +318,7 @@ func (m DetailModel) headerView() string {
 	if title == "" {
 		title = "(untitled)"
 	}
-	return "\n" + titleStyle.Render(fmt.Sprintf(" %s ", title)) + "\n"
+	return header(m.width, "", title) + "\n\n"
 }
 
 func (m DetailModel) footerView() string {
@@ -493,149 +371,129 @@ func truncateString(s string, maxWidth int) string {
 	return ansi.Truncate(s, maxWidth, "…")
 }
 
-// truncateLabel shortens a field label to fit within the labelStyle fixed width.
-// labelStyle has Width(12), so any label longer than that overflows and wraps.
-// The full label is shown in the footer when the field is selected.
-func truncateLabel(label string) string {
-	// labelStyle uses a fixed Width — truncate label text to fit
-	styleWidth := labelStyle.GetWidth()
-	if styleWidth <= 0 {
-		return label
-	}
-	return truncateString(label, styleWidth)
-}
-
 // buildContent returns the scrollable body content (everything between title and help bar).
 func (m DetailModel) buildContent() string {
-	var b strings.Builder
+	content, _ := m.layout()
+	return content
+}
 
-	// field writes a selectable field's row: the selected one gets the marker
-	// and the selection bar.
-	fieldIdx := 0
+// layout renders the body in sections (credentials, notes, custom fields,
+// attachments, then timestamps) and records the rows of every selectable
+// field, so that clicks and scrolling follow the drawn layout.
+func (m DetailModel) layout() (string, []fieldRows) {
+	var b lineBuilder
+	var rows []fieldRows
+	labelWidth := m.labelWidth()
+	label := func(text string) string {
+		return labelStyle.Width(labelWidth).Render(truncateString(text, labelWidth))
+	}
+
+	// field writes a selectable field's first row: the selected one gets the
+	// marker and the selection bar. Rows written before the next field, such
+	// as the body of the notes, belong to it too.
 	field := func(format string, args ...any) {
 		row := fmt.Sprintf(format, args...)
-		if fieldIdx == m.selectedField {
+		if len(rows) == m.selectedField {
 			row = selectedRow(selectionCursor+row, m.width)
 		} else {
 			row = "  " + row
 		}
-		fieldIdx++
+		rows = append(rows, fieldRows{b.row, b.row})
 		b.WriteString(row + "\n")
 	}
+	extendField := func() { rows[len(rows)-1].end = b.row - 1 }
 
-	field("%s %s",
-		labelStyle.Render("Username:"),
-		valueStyle.Render(sanitizeDisplay(m.entry.UserName)))
+	field("%s %s", label("Username:"), valueStyle.Render(sanitizeDisplay(m.entry.UserName)))
 
 	pw := maskedValue
 	if m.revealedFields["builtin:password"] {
 		pw = sanitizeDisplay(m.entry.Password)
 	}
 	if m.cfg.ShowPasswordStrength {
-		strengthStr := renderStrength(m.strength)
-		field("%s %s  %s",
-			labelStyle.Render("Password:"),
-			hiddenStyle.Render(pw),
-			strengthStr)
+		field("%s %s  %s", label("Password:"), hiddenStyle.Render(pw), renderStrength(m.strength))
 	} else {
-		field("%s %s",
-			labelStyle.Render("Password:"),
-			hiddenStyle.Render(pw))
+		field("%s %s", label("Password:"), hiddenStyle.Render(pw))
 	}
 
-	field("%s %s",
-		labelStyle.Render("URL:"),
-		valueStyle.Render(sanitizeDisplay(m.entry.URL)))
+	field("%s %s", label("URL:"), valueStyle.Render(sanitizeDisplay(m.entry.URL)))
 
 	if m.entry.TOTP != "" {
-		if m.revealedFields["builtin:totp"] {
-			field("%s %s",
-				labelStyle.Render("TOTP:"),
-				valueStyle.Render(sanitizeDisplay(m.entry.TOTP)))
-		} else if m.totpCode != "" {
-			field("%s %s  %s",
-				labelStyle.Render("TOTP:"),
-				valueStyle.Render(groupDigits(m.totpCode)),
+		switch {
+		case m.revealedFields["builtin:totp"]:
+			field("%s %s", label("TOTP:"), valueStyle.Render(sanitizeDisplay(m.entry.TOTP)))
+		case m.totpCode != "":
+			field("%s %s  %s", label("TOTP:"), valueStyle.Render(groupDigits(m.totpCode)),
 				totpCountdown(m.totpRemain, int(m.entry.TOTPPeriod())))
-		} else {
+		default:
 			// TOTP secret exists but code generation failed; show masked
-			field("%s %s",
-				labelStyle.Render("TOTP:"),
-				hiddenStyle.Render(maskedValue))
+			field("%s %s", label("TOTP:"), hiddenStyle.Render(maskedValue))
 		}
 	}
 
+	if m.entry.Expires {
+		expiry := m.entry.ExpiryTime.Local().Format("2006-01-02 15:04")
+		value := hiddenStyle.Render(expiry)
+		if m.entry.IsExpired() {
+			value = errorMsgStyle.Padding(0).Render(expiry + " (EXPIRED)")
+		}
+		b.WriteString("  " + label("Expires:") + " " + value + "\n")
+	}
+
 	if m.entry.Notes != "" {
-		field("%s",
-			labelStyle.Render("Notes:"))
+		b.WriteString("\n")
+		field("%s", label("Notes:"))
 		noteLines := sanitizeNoteLines(m.entry.Notes)
 		show := noteLines
 		if len(noteLines) > maxNoteLines && !m.notesExpanded {
 			show = noteLines[:maxNoteLines]
 		}
-		indent := strings.Repeat(" ", 13)
 		for _, line := range show {
-			fmt.Fprintf(&b, "  %s%s\n", indent, valueStyle.Render(line))
+			b.WriteString("    " + valueStyle.Render(line) + "\n")
 		}
 		if len(noteLines) > maxNoteLines && !m.notesExpanded {
-			fmt.Fprintf(&b, "  %s%s\n", indent,
-				helpStyle.Render(fmt.Sprintf("(%d more lines — %s to expand)", len(noteLines)-maxNoteLines, m.keys.TogglePassword)))
+			b.WriteString("    " + helpStyle.Render(fmt.Sprintf("(%d more lines — %s to expand)",
+				len(noteLines)-maxNoteLines, m.keys.TogglePassword)) + "\n")
+		}
+		extendField()
+	}
+
+	if len(m.entry.CustomFields) > 0 {
+		b.WriteString("\n" + sectionStyle.Render("  Custom fields") + "\n")
+		for _, cf := range m.entry.CustomFields {
+			val := sanitizeDisplay(cf.Value)
+			if cf.Protected && !m.revealedFields["custom:"+cf.Key] {
+				val = maskedValue
+			}
+			field("%s %s", label(sanitizeDisplay(cf.Key)+":"), valueStyle.Render(val))
 		}
 	}
 
+	if len(m.attachments) > 0 {
+		heading := "Attachments"
+		if m.attachMode {
+			heading = "Attachments (select)"
+		}
+		b.WriteString("\n" + sectionStyle.Render("  "+heading) + "\n")
+		for i, a := range m.attachments {
+			name := valueStyle.Render(sanitizeDisplay(a.Name))
+			size := hiddenStyle.Render(formatAttachmentSize(a.Size))
+			if m.attachMode && i == m.attachIdx {
+				b.WriteString(selectedRow("  "+selectionCursor+selectedItemStyle.Render(sanitizeDisplay(a.Name))+"  "+size, m.width) + "\n")
+			} else {
+				b.WriteString("    " + name + "  " + size + "\n")
+			}
+		}
+	}
+
+	var stamps []string
 	if !m.entry.CreationTime.IsZero() {
-		fmt.Fprintf(&b, "  %s %s\n",
-			labelStyle.Render("Created:"),
-			hiddenStyle.Render(m.entry.CreationTime.Local().Format("2006-01-02 15:04:05")))
+		stamps = append(stamps, "Created "+m.entry.CreationTime.Local().Format("2006-01-02 15:04"))
 	}
 	if !m.entry.ModificationTime.IsZero() {
-		fmt.Fprintf(&b, "  %s %s\n",
-			labelStyle.Render("Modified:"),
-			hiddenStyle.Render(m.entry.ModificationTime.Local().Format("2006-01-02 15:04:05")))
+		stamps = append(stamps, "Modified "+m.entry.ModificationTime.Local().Format("2006-01-02 15:04"))
 	}
-	if m.entry.Expires {
-		expiryStr := m.entry.ExpiryTime.Local().Format("2006-01-02 15:04:05")
-		if m.entry.IsExpired() {
-			fmt.Fprintf(&b, "  %s %s\n",
-				labelStyle.Render("Expires:"),
-				errorMsgStyle.Render(expiryStr+" (EXPIRED)"))
-		} else {
-			fmt.Fprintf(&b, "  %s %s\n",
-				labelStyle.Render("Expires:"),
-				hiddenStyle.Render(expiryStr))
-		}
-	}
-
-	for _, cf := range m.entry.CustomFields {
-		val := sanitizeDisplay(cf.Value)
-		if cf.Protected && !m.revealedFields["custom:"+cf.Key] {
-			val = maskedValue
-		}
-		label := truncateLabel(sanitizeDisplay(cf.Key) + ":")
-		field("%s %s",
-			labelStyle.Render(label),
-			valueStyle.Render(val))
-	}
-
-	// Attachments
-	if len(m.attachments) > 0 {
-		label := "Attachments:"
-		if m.attachMode {
-			label = "Attachments (select):"
-		}
-		fmt.Fprintf(&b, "\n  %s\n", helpStyle.Render(label))
-		for i, a := range m.attachments {
-			cursor := "  "
-			nameStyle := valueStyle
-			if m.attachMode && i == m.attachIdx {
-				cursor = selectionCursor
-				nameStyle = selectedItemStyle
-			}
-			fmt.Fprintf(&b, "  %s%s (%s)\n",
-				cursor,
-				nameStyle.Render(sanitizeDisplay(a.Name)),
-				hiddenStyle.Render(formatAttachmentSize(a.Size)))
-		}
+	if len(stamps) > 0 {
+		b.WriteString("\n" + hiddenStyle.Render("  "+strings.Join(stamps, " · ")) + "\n")
 	}
 
 	if m.addingAttachment || m.extractingAttachment {
@@ -644,7 +502,20 @@ func (m DetailModel) buildContent() string {
 		b.WriteString("\n")
 	}
 
-	return b.String()
+	return b.String(), rows
+}
+
+// labelWidth fits the longest label shown, within limits: longer custom
+// field names are cut, and the footer names the selected field in full.
+func (m DetailModel) labelWidth() int {
+	width := lipgloss.Width("Username:")
+	if m.entry.Expires {
+		width = max(width, lipgloss.Width("Expires:"))
+	}
+	for _, cf := range m.entry.CustomFields {
+		width = max(width, lipgloss.Width(sanitizeDisplay(cf.Key)+":"))
+	}
+	return min(width, max(10, min(24, m.width/3)))
 }
 
 func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -850,8 +721,8 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// When notes are expanded, scroll within the notes body before
 			// moving to the next field so the user can read all content.
 			if m.notesExpanded && m.selectedField < len(fields) && fields[m.selectedField].label == "Notes" {
-				notesStart := m.lineForField(m.selectedField)
-				notesEnd := notesStart + 1 + m.notesBodyLines()
+				_, rows := m.layout()
+				notesEnd := rows[m.selectedField].end + 1
 				if m.viewport.YOffset()+m.viewport.Height() < notesEnd {
 					m.viewport.ScrollDown(1)
 					return m, nil

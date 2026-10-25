@@ -133,8 +133,7 @@ func (m PathInputModel) View() tea.View {
 	width, _ := viewSize(m.width, m.height)
 	sizeInput(&m.input, width)
 
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(" Save As "))
+	b.WriteString(header(width, "", "Save As"))
 	b.WriteString("\n\n")
 	b.WriteString(m.input.View())
 	b.WriteString("\n")

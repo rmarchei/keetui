@@ -84,12 +84,11 @@ func (m GroupInputModel) View() tea.View {
 	width, _ := viewSize(m.width, m.height)
 	sizeInput(&m.input, width)
 
-	b.WriteString("\n")
-	title := " New Group "
+	title := "New Group"
 	if m.renaming {
-		title = " Rename Group "
+		title = "Rename Group"
 	}
-	b.WriteString(titleStyle.Render(title))
+	b.WriteString(header(width, "", title))
 	b.WriteString("\n\n")
 	b.WriteString(m.input.View())
 	b.WriteString("\n\n")

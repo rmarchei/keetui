@@ -1,11 +1,11 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ConfirmModel shows a yes/no confirmation prompt.
@@ -14,8 +14,15 @@ type ConfirmModel struct {
 	message     string
 	onConfirm   tea.Cmd
 	selected    bool // false = No, true = Yes
+	destructive bool // Yes loses data: drawn in the error color
 	width       int
 	height      int
+}
+
+// Destructive marks a dialog whose Yes deletes or overwrites something.
+func (m ConfirmModel) Destructive() ConfirmModel {
+	m.destructive = true
+	return m
 }
 
 // The return target is required: creating a dialog cannot accidentally reuse
@@ -42,14 +49,12 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
-			width, _ := viewSize(m.width, m.height)
-			buttonRow := 4 + lipgloss.Height(wrapContent("  "+sanitizeDisplay(m.message), width))
-			if msg.Y == buttonRow {
-				// No button roughly at x < 14, Yes button after
-				if msg.X < 14 {
-					m.selected = false
-					return m, func() tea.Msg { return CancelEditMsg{} }
-				}
+			d := m.dialog()
+			switch {
+			case d.no.contains(msg.X, msg.Y):
+				m.selected = false
+				return m, func() tea.Msg { return CancelEditMsg{} }
+			case d.yes.contains(msg.X, msg.Y):
 				m.selected = true
 				return m, m.onConfirm
 			}
@@ -80,24 +85,65 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m ConfirmModel) View() tea.View {
-	var b strings.Builder
-	width, _ := viewSize(m.width, m.height)
+	width, height := viewSize(m.width, m.height)
+	d := m.dialog()
+	return tea.NewView(overlay(fitFrame("", width, height), d.box, d.x, d.y))
+}
 
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(" Confirm "))
-	b.WriteString("\n\n")
-	fmt.Fprintf(&b, "%s\n\n", wrapContent("  "+sanitizeDisplay(m.message), width))
+// cells is a rectangle of terminal cells.
+type cells struct{ x, y, w, h int }
 
-	var no, yes string
-	if m.selected {
-		yes = focusedStyle.Bold(true).Render("  [>Yes ]")
-		no = helpStyle.Render("  [ No ]")
-	} else {
-		no = focusedStyle.Bold(true).Render("  [>No ]")
-		yes = helpStyle.Render("  [ Yes ]")
+func (c cells) contains(x, y int) bool {
+	return x >= c.x && x < c.x+c.w && y >= c.y && y < c.y+c.h
+}
+
+// confirmDialog is the rendered dialog box, its top-left corner, and where
+// its buttons are, all in the view's cells.
+type confirmDialog struct {
+	box     string
+	x, y    int
+	no, yes cells
+}
+
+// dialog lays the box out centered in the view: the message, the buttons
+// (the focused one filled; Yes in the error color when it destroys data),
+// then the shortcuts.
+func (m ConfirmModel) dialog() confirmDialog {
+	width, height := viewSize(m.width, m.height)
+	const padX, padY = 3, 1
+	inner := min(max(lipgloss.Width(sanitizeDisplay(m.message)), 36), max(1, width-2-2*padX-2))
+
+	button := func(label string, focused, danger bool) string {
+		style := secondaryStyle.Padding(0, 2)
+		if focused {
+			style = titleStyle.Padding(0, 2).Underline(true)
+			if danger {
+				style = style.Background(errorColor)
+			}
+		}
+		return style.Render(label)
 	}
-	fmt.Fprintf(&b, "  %s  %s\n", no, yes)
+	no := button("No", !m.selected, false)
+	yes := button("Yes", m.selected, m.destructive)
+	message := valueStyle.Render(wrapContent(sanitizeDisplay(m.message), inner))
+	hints := ansi.Truncate(strings.TrimSpace(renderHints(inner+1, "y: yes", "n/esc: no", "tab: switch")), inner, "…")
+	body := message + "\n\n" + no + "  " + yes + "\n\n" + hints
 
-	b.WriteString("\n")
-	return tea.NewView(screen(b.String(), renderHints(width, "y: yes", "n/esc: no", "tab: toggle", "enter: confirm", "F1: help"), m.width, m.height, 0))
+	border := primaryColor
+	if m.destructive {
+		border = errorColor
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(border).
+		Padding(padY, padX).
+		Render(lipgloss.NewStyle().Width(inner).Render(body))
+
+	d := confirmDialog{box: box}
+	d.x = max(0, (width-lipgloss.Width(box))/2)
+	d.y = max(0, (height-lipgloss.Height(box))/3)
+	row := d.y + 1 + padY + lipgloss.Height(message) + 1
+	d.no = cells{d.x + 1 + padX, row, lipgloss.Width(no), 1}
+	d.yes = cells{d.no.x + d.no.w + 2, row, lipgloss.Width(yes), 1}
+	return d
 }

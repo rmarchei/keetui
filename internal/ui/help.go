@@ -99,14 +99,14 @@ func (m HelpModel) sections() []helpSection {
 func (m HelpModel) header() string {
 	var tabs []string
 	for i, section := range m.sections() {
-		label := section.title
+		label := helpStyle.Render(" " + section.title + " ")
 		if i == m.section {
-			label = "[" + label + "]"
+			label = selectedRowStyle.Bold(true).Render(" " + section.title + " ")
 		}
 		tabs = append(tabs, label)
 	}
 	width, _ := viewSize(m.width, m.height)
-	return titleStyle.Render(" Keyboard Shortcuts ") + "\n" + wrapContent(strings.Join(tabs, "  "), width) + "\n\n"
+	return header(width, "", "Keyboard Shortcuts") + "\n\n" + wrapContent(strings.Join(tabs, " "), width) + "\n\n"
 }
 
 func (m HelpModel) buildContent() string {

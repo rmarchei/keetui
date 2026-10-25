@@ -104,6 +104,64 @@ func selectedRow(row string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
+// header draws a screen's top bar: the app name, then where the user is
+// (crumbs, the last one bold), then optional state on the right. It uses the
+// status bar's colors, so the two bars frame the screen. A path too long for
+// the bar loses its leading crumbs first.
+func header(width int, right string, crumbs ...string) string {
+	width, _ = viewSize(width, 1)
+	bar := statusBarBgStyle.Padding(0)
+	chip := titleStyle.Render("keetui")
+	sep := secondaryStyle.Render(" › ")
+	right = ansi.Truncate(sanitizeDisplay(right), max(0, width/3), "…")
+	if right != "" {
+		right = secondaryStyle.Render(right) + " "
+	}
+	render := func(crumbs []string, elided bool) string {
+		parts := make([]string, 0, len(crumbs)+1)
+		if elided {
+			parts = append(parts, "…")
+		}
+		for i, crumb := range crumbs {
+			crumb = sanitizeDisplay(crumb)
+			if i == len(crumbs)-1 {
+				crumb = lipgloss.NewStyle().Bold(true).Render(crumb)
+			}
+			parts = append(parts, crumb)
+		}
+		if len(parts) == 0 {
+			return chip
+		}
+		return chip + " " + strings.Join(parts, sep)
+	}
+	budget := width - lipgloss.Width(right)
+	left := render(crumbs, false)
+	for elided := 1; lipgloss.Width(left) > budget-1 && elided < len(crumbs); elided++ {
+		left = render(crumbs[elided:], true)
+	}
+	left = ansi.Truncate(left, max(0, budget-1), "…")
+	gap := strings.Repeat(" ", max(1, width-lipgloss.Width(left)-lipgloss.Width(right)))
+	return fitFrame(bar.Width(width).Render(onBackground(left+gap+right, bar)), width, 1)
+}
+
+// overlay draws box over background with its top-left corner at cell
+// (x, y); the background shows around it.
+func overlay(background, box string, x, y int) string {
+	rows := strings.Split(background, "\n")
+	for i, line := range strings.Split(box, "\n") {
+		row := y + i
+		if row < 0 || row >= len(rows) {
+			continue
+		}
+		under := rows[row]
+		left := ansi.Cut(under, 0, x)
+		left += strings.Repeat(" ", max(0, x-lipgloss.Width(left)))
+		right := ansi.Cut(under, x+lipgloss.Width(line), lipgloss.Width(under))
+		rows[row] = left + ansi.ResetStyle + line + ansi.ResetStyle + right
+	}
+	return strings.Join(rows, "\n")
+}
+
 func wrapContent(content string, width int) string {
 	return ansi.Wrap(content, max(width, 1), "")
 }

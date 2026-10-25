@@ -43,7 +43,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Keyboard shortcut help overlay (`?` key)
 - Save changes back to the `.kdbx` file, or save as a new file path
 - Auto-lock after 5 minutes of inactivity
-- Color themes -- dark, light, and high-contrast presets via config or settings UI
+- Color themes -- dark, light, and high-contrast presets, or auto (follows the terminal background), via config or settings UI
 - Configurable keybindings and settings via `~/.config/keetui/config.json`
 
 ## Installation
@@ -266,7 +266,7 @@ Settings are stored in `~/.config/keetui/config.json`:
   "password_digits": true,
   "password_symbols": true,
   "default_preset": "Strong",
-  "theme": "dark",
+  "theme": "auto",
   "confirm_quit": true,
   "backup_on_save": false
 }
@@ -284,7 +284,7 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `password_digits` | true | Include digits (0-9) in generated passwords |
 | `password_symbols` | true | Include symbols (!@#$%^&*()-_=+) in generated passwords |
 | `default_preset` | `"Strong"` | Default password preset: `PIN`, `Alphanumeric`, `Strong`, `Passphrase`, `Custom` |
-| `theme` | `"dark"` | Color theme: `dark`, `light`, or `high-contrast` |
+| `theme` | `"auto"` | Color theme: `auto` (light or dark, following the terminal background; dark if the terminal does not say), `dark`, `light`, or `high-contrast` |
 | `confirm_quit` | true | Confirm before quitting, even without unsaved changes (`false`: disable) |
 | `backup_on_save` | false | Create a `.kdbx.bak` backup copy before each save |
 

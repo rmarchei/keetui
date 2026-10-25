@@ -139,8 +139,8 @@ func TestSettingsInitialValues(t *testing.T) {
 	if v := m.inputs[settingPasswordStrength].Value(); v != "1" {
 		t.Errorf("password strength = %q, want %q", v, "1")
 	}
-	if v := m.inputs[settingTheme].Value(); v != "dark" {
-		t.Errorf("theme = %q, want %q", v, "dark")
+	if v := m.inputs[settingTheme].Value(); v != "auto" {
+		t.Errorf("theme = %q, want %q", v, "auto")
 	}
 }
 

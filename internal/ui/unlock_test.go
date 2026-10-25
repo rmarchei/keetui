@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestUnlockRejectsEmpty(t *testing.T) {
@@ -79,5 +81,30 @@ func TestUnlockView(t *testing.T) {
 	}
 	if !strings.Contains(view, "test.kdbx") {
 		t.Error("View() should contain file path")
+	}
+}
+
+func TestUnlockCardIsCenteredUnlessTheErrorNeedsScrolling(t *testing.T) {
+	m := NewUnlockModel("/vaults/synthetic.kdbx", "")
+	m.width, m.height = 100, 30
+	view := m.View().Content
+	assertFrame(t, view, m.width, m.height)
+	card, fits := m.card()
+	if !fits {
+		t.Fatal("the card should fit 100x30")
+	}
+	if col := column(t, view, "keetui"); col < 20 {
+		t.Errorf("card starts at column %d, want it centered", col)
+	}
+	if !strings.Contains(ansi.Strip(card), "synthetic.kdbx") || strings.Contains(ansi.Strip(view), "pgup/pgdown") {
+		t.Error("card hides the file, or offers to scroll an error it shows whole")
+	}
+
+	m.err = errors.New(strings.Repeat("Synthetic diagnosis detail. ", 60))
+	if _, fits := m.card(); fits {
+		t.Fatal("an error taller than the screen must not use the card")
+	}
+	if plain := ansi.Strip(m.View().Content); !strings.Contains(plain, "pgup/pgdown error") || !strings.Contains(plain, "synthetic.kdbx") {
+		t.Errorf("long error lost the scrolling hint or the file:\n%s", plain)
 	}
 }

@@ -322,13 +322,17 @@ func (m BrowserModel) inRecycleBin() bool {
 	return false
 }
 
-func (m BrowserModel) breadcrumb() string {
-	var parts []string
+// crumbs are the names of the groups from the root to the current one.
+func (m BrowserModel) crumbs() []string {
+	parts := make([]string, 0, len(m.stack))
 	for _, f := range m.stack {
-		parts = append(parts, sanitizeDisplay(f.group.Name))
+		parts = append(parts, f.group.Name)
 	}
-	return strings.Join(parts, " > ")
+	return parts
 }
+
+// browserHeaderRows are the rows above the list: the header bar and a gap.
+const browserHeaderRows = 2
 
 func (m BrowserModel) Init() tea.Cmd {
 	return nil
@@ -336,8 +340,8 @@ func (m BrowserModel) Init() tea.Cmd {
 
 func (m BrowserModel) visibleHeight() int {
 	_, height := viewSize(m.width, m.height)
-	// Four header rows, two position-counter rows, and measured hints.
-	h := height - 6 - lipgloss.Height(m.footerView())
+	// Header rows, two position-counter rows, and measured hints.
+	h := height - browserHeaderRows - 2 - lipgloss.Height(m.footerView())
 	if m.searching {
 		h -= 2 // search input line
 	}
@@ -527,10 +531,8 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if _, click := msg.(tea.MouseClickMsg); !click || m.searching {
 				break
 			}
-			// Calculate header lines: 1 newline + 1 title + 1 breadcrumb + 1 blank = 4
-			headerLines := 4
-			idx := mouse.Y - headerLines + m.offset
-			if mouse.Y >= headerLines && mouse.Y < headerLines+m.visibleHeight() && idx >= 0 && idx < len(m.items) {
+			idx := mouse.Y - browserHeaderRows + m.offset
+			if mouse.Y >= browserHeaderRows && mouse.Y < browserHeaderRows+m.visibleHeight() && idx >= 0 && idx < len(m.items) {
 				if idx == m.cursor {
 					// Click on already-selected item: open it
 					item := m.items[m.cursor]
@@ -956,24 +958,17 @@ func (m *BrowserModel) updateSearchInput(msg tea.Msg) tea.Cmd {
 func (m BrowserModel) View() tea.View {
 	var b strings.Builder
 
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(" keetui "))
-	b.WriteString("\n")
 	if m.searchQuery != "" && !m.searching {
-		b.WriteString(breadcrumbStyle.Render(fmt.Sprintf("Search: %q", m.searchQuery)))
+		b.WriteString(header(m.width, "", fmt.Sprintf("Search: %q", m.searchQuery)))
 	} else {
-		bc := m.breadcrumb()
 		var indicators []string
 		if m.sortBy != sortByName {
 			indicators = append(indicators, "sort: "+m.sortBy.String())
 		}
 		if m.tagFilter != "" {
-			indicators = append(indicators, "tag: "+sanitizeDisplay(m.tagFilter))
+			indicators = append(indicators, "tag: "+m.tagFilter)
 		}
-		if len(indicators) > 0 {
-			bc += hiddenStyle.Render("  [" + strings.Join(indicators, ", ") + "]")
-		}
-		b.WriteString(breadcrumbStyle.Render(bc))
+		b.WriteString(header(m.width, strings.Join(indicators, "  "), m.crumbs()...))
 	}
 	b.WriteString("\n\n")
 

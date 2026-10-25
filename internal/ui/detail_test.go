@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
@@ -381,6 +382,18 @@ func TestTruncateString(t *testing.T) {
 	}
 }
 
+// labelLine returns the content line on which label is drawn.
+func labelLine(t *testing.T, m DetailModel, label string) int {
+	t.Helper()
+	for i, line := range strings.Split(ansi.Strip(m.buildContent()), "\n") {
+		if strings.HasPrefix(strings.TrimLeft(line, " ▸"), label) {
+			return i
+		}
+	}
+	t.Fatalf("label %q not drawn", label)
+	return -1
+}
+
 func TestLineForField(t *testing.T) {
 	entry := keepass.Entry{
 		Title:    "Test",
@@ -396,28 +409,11 @@ func TestLineForField(t *testing.T) {
 	m := NewDetailModel(entry, config.Default())
 	m.SetSize(80, 24)
 
-	// username=0, password=1, URL=2, notes=3, field1=4, field2=5
-	// Lines: username(0), password(1), URL(2), notes label(3), note body(4,5),
-	//        timestamps may add lines, then custom fields
-
-	if line := m.lineForField(0); line != 0 {
-		t.Errorf("lineForField(0) = %d, want 0 (username)", line)
-	}
-	if line := m.lineForField(1); line != 1 {
-		t.Errorf("lineForField(1) = %d, want 1 (password)", line)
-	}
-	if line := m.lineForField(2); line != 2 {
-		t.Errorf("lineForField(2) = %d, want 2 (URL)", line)
-	}
-	if line := m.lineForField(3); line != 3 {
-		t.Errorf("lineForField(3) = %d, want 3 (notes)", line)
-	}
-	// After notes: 1 label + 2 body lines = 3 lines (lines 3-5)
-	// Custom fields should be after notes + any timestamps
-	line4 := m.lineForField(4)
-	line5 := m.lineForField(5)
-	if line5 <= line4 {
-		t.Errorf("lineForField(5)=%d should be > lineForField(4)=%d", line5, line4)
+	// Each field maps to the line its label is drawn on.
+	for i, label := range []string{"Username:", "Password:", "URL:", "Notes:", "field1:", "field2:"} {
+		if got, want := m.lineForField(i), labelLine(t, m, label); got != want {
+			t.Errorf("lineForField(%d) = %d, want %d (%s)", i, got, want, label)
+		}
 	}
 }
 
@@ -593,33 +589,26 @@ func TestLineForFieldBigNotes(t *testing.T) {
 	m.SetSize(80, 24)
 
 	// Fields: username(0), password(1), URL(2), TOTP(3), Notes(4), cf1(5)
-	// Lines when collapsed:
-	//   0: username, 1: password, 2: URL, 3: TOTP, 4: Notes label,
-	//   5-9: 5 body lines, 10: hint line
-	//   then timestamps, then custom fields
-
-	if line := m.lineForField(3); line != 3 {
-		t.Errorf("lineForField(3/TOTP) = %d, want 3", line)
-	}
-	if line := m.lineForField(4); line != 4 {
-		t.Errorf("lineForField(4/Notes) = %d, want 4", line)
+	for i, label := range []string{"TOTP:", "Notes:", "cf1:"} {
+		if got, want := m.lineForField(i+3), labelLine(t, m, label); got != want {
+			t.Errorf("lineForField(%d) = %d, want %d (%s)", i+3, got, want, label)
+		}
 	}
 
-	// Notes takes 1 label + 5 body + 1 hint = 7 lines (4..10)
-	// Custom field should be after notes + timestamps
+	// Collapsed notes take the label, 5 body lines and the hint.
 	cfLine := m.lineForField(5)
-	if cfLine <= 10 {
-		t.Errorf("lineForField(5/cf1) = %d, should be > 10 (after truncated notes)", cfLine)
+	if notes := m.lineForField(4); cfLine <= notes+6 {
+		t.Errorf("lineForField(5/cf1) = %d, should follow the collapsed notes at %d..%d", cfLine, notes, notes+6)
 	}
 
-	// After expanding, notes take 1 label + 20 body = 21 lines (4..24)
+	// Expanded, they take the label and all 20 body lines.
 	m.notesExpanded = true
 	cfLineExpanded := m.lineForField(5)
-	if cfLineExpanded <= 24 {
-		t.Errorf("lineForField(5/cf1) expanded = %d, should be > 24", cfLineExpanded)
+	if notes := m.lineForField(4); cfLineExpanded <= notes+20 {
+		t.Errorf("lineForField(5/cf1) expanded = %d, should follow the notes at %d..%d", cfLineExpanded, notes, notes+20)
 	}
-	if cfLineExpanded <= cfLine {
-		t.Errorf("custom field line should increase after expanding notes: collapsed=%d expanded=%d", cfLine, cfLineExpanded)
+	if got, want := cfLineExpanded, labelLine(t, m, "cf1:"); got != want {
+		t.Errorf("expanded lineForField(5/cf1) = %d, drawn on %d", got, want)
 	}
 }
 
@@ -627,26 +616,19 @@ func TestFieldAtLineBigNotes(t *testing.T) {
 	m := NewDetailModel(bigNotesEntry(), config.Default())
 	m.SetSize(80, 24)
 
-	// Line 3 = TOTP
-	if idx, ok := m.fieldAtLine(3); !ok || idx != 3 {
-		t.Errorf("fieldAtLine(3) = (%d, %v), want (3, true) for TOTP", idx, ok)
+	totp, notes := labelLine(t, m, "TOTP:"), labelLine(t, m, "Notes:")
+	if idx, ok := m.fieldAtLine(totp); !ok || idx != 3 {
+		t.Errorf("fieldAtLine(%d) = (%d, %v), want (3, true) for TOTP", totp, idx, ok)
 	}
-
-	// Line 4 = Notes label
-	if idx, ok := m.fieldAtLine(4); !ok || idx != 4 {
-		t.Errorf("fieldAtLine(4) = (%d, %v), want (4, true) for Notes label", idx, ok)
-	}
-
-	// Lines 5-9 = Notes body (should also map to Notes field)
-	for line := 5; line <= 9; line++ {
+	// The label, 5 body lines and the hint all select the notes.
+	for line := notes; line <= notes+6; line++ {
 		if idx, ok := m.fieldAtLine(line); !ok || idx != 4 {
-			t.Errorf("fieldAtLine(%d) = (%d, %v), want (4, true) for Notes body", line, idx, ok)
+			t.Errorf("fieldAtLine(%d) = (%d, %v), want (4, true) for Notes", line, idx, ok)
 		}
 	}
-
-	// Line 10 = hint line (inside notes total)
-	if idx, ok := m.fieldAtLine(10); !ok || idx != 4 {
-		t.Errorf("fieldAtLine(10) = (%d, %v), want (4, true) for Notes hint", idx, ok)
+	// The gap before the notes selects nothing.
+	if idx, ok := m.fieldAtLine(notes - 1); ok {
+		t.Errorf("fieldAtLine(%d) = %d, want no field for the gap above the notes", notes-1, idx)
 	}
 }
 

@@ -147,13 +147,12 @@ func (m *AuditModel) moveUp() {
 
 func (m AuditModel) View() tea.View {
 	if m.loading {
-		body := "\n" + titleStyle.Render(" Password Audit ") + "\n\n" + helpStyle.Render("  Analyzing passwords…")
+		body := header(m.width, "", "Password Audit") + "\n\n" + helpStyle.Render("  Analyzing passwords…")
 		return tea.NewView(screen(wrapContent(body, m.width), m.footer(), m.width, m.height, 0))
 	}
 	var b strings.Builder
 
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(" Password Audit "))
+	b.WriteString(header(m.width, "", "Password Audit"))
 	b.WriteString("\n\n")
 
 	total := m.result.TotalIssues()

@@ -168,8 +168,8 @@ func TestBrowserMouseEventTypes(t *testing.T) {
 	m := NewBrowserModel(createTestUIDB(t))
 	m.width, m.height = 100, 30
 	for _, msg := range []tea.Msg{
-		tea.MouseMotionMsg{Button: tea.MouseLeft, X: 4, Y: 5},
-		tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 4, Y: 5},
+		tea.MouseMotionMsg{Button: tea.MouseLeft, X: 4, Y: browserHeaderRows + 1},
+		tea.MouseReleaseMsg{Button: tea.MouseLeft, X: 4, Y: browserHeaderRows + 1},
 	} {
 		updated, cmd := m.Update(msg)
 		m = updated.(BrowserModel)
@@ -177,12 +177,12 @@ func TestBrowserMouseEventTypes(t *testing.T) {
 			t.Fatal("motion/release was treated as a click")
 		}
 	}
-	updated, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 4, Y: 5})
+	updated, _ := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 4, Y: browserHeaderRows + 1})
 	m = updated.(BrowserModel)
 	if m.cursor != 1 {
 		t.Fatal("click did not select the second row")
 	}
-	_, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 4, Y: 5})
+	_, cmd := m.Update(tea.MouseClickMsg{Button: tea.MouseLeft, X: 4, Y: browserHeaderRows + 1})
 	if cmd == nil {
 		t.Fatal("click on selected entry did not open it")
 	}

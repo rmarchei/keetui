@@ -555,12 +555,11 @@ func (m EditorModel) body() (string, []fieldRows) {
 	var rows []fieldRows
 	width, _ := viewSize(m.width, m.height)
 
-	b.WriteString("\n")
 	action := "Edit Entry"
 	if m.isNew {
 		action = "New Entry"
 	}
-	b.WriteString(titleStyle.Render(fmt.Sprintf(" %s ", action)))
+	b.WriteString(header(m.width, "", action))
 	b.WriteString("\n\n")
 
 	for i := range m.inputs {

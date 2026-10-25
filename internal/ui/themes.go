@@ -63,8 +63,20 @@ var builtinThemes = map[string]Theme{
 	},
 }
 
-// GetTheme returns a theme by name, falling back to "dark" for unknown names.
+// lightBackground is the terminal's answer to the background color query
+// (requested in Init); the auto theme follows it, and stays dark until, or
+// unless, the terminal answers.
+var lightBackground bool
+
+// GetTheme returns a theme by name: "auto" follows the terminal background,
+// and unknown names fall back to "dark".
 func GetTheme(name string) Theme {
+	if name == "auto" {
+		name = "dark"
+		if lightBackground {
+			name = "light"
+		}
+	}
 	if t, ok := builtinThemes[name]; ok {
 		return t
 	}
@@ -73,7 +85,7 @@ func GetTheme(name string) Theme {
 
 // ThemeNames returns the list of available built-in theme names.
 func ThemeNames() []string {
-	return []string{"dark", "light", "high-contrast"}
+	return []string{"auto", "dark", "light", "high-contrast"}
 }
 
 // ApplyTheme updates all global style variables to use the given theme's colors.
@@ -91,10 +103,6 @@ func ApplyTheme(t Theme) {
 		Bold(true).
 		Foreground(lipgloss.Color(t.TitleFg)).
 		Background(primaryColor).
-		Padding(0, 1)
-
-	breadcrumbStyle = lipgloss.NewStyle().
-		Foreground(mutedColor).
 		Padding(0, 1)
 
 	itemStyle = lipgloss.NewStyle().

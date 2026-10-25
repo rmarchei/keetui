@@ -74,8 +74,7 @@ func (m StatsModel) body() string {
 	var b strings.Builder
 	width, _ := viewSize(m.width, m.height)
 
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(" Database Info "))
+	b.WriteString(header(width, "", "Database Info"))
 	b.WriteString("\n\n")
 	if m.loading {
 		b.WriteString(helpStyle.Render("  Analyzing passwords…"))

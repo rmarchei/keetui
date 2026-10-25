@@ -64,7 +64,7 @@ func (m SettingsModel) updatePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m SettingsModel) pickerView() string {
 	width, height := viewSize(m.width, m.height)
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(" "+settingLabels[m.focused]+" ") + "\n\n")
+	b.WriteString(header(width, "", "Settings", settingLabels[m.focused]) + "\n\n")
 	for i, choice := range m.choices() {
 		cursor, style := "  ", valueStyle
 		if i == m.choice {
@@ -164,7 +164,7 @@ func (m SettingsModel) withSaveError(footer string) string {
 func (m SettingsModel) bindingsView() string {
 	width, height := viewSize(m.width, m.height)
 	var b lineBuilder
-	b.WriteString(titleStyle.Render(" Keybindings ") + "\n\n")
+	b.WriteString(header(width, "", "Settings", "Keybindings") + "\n\n")
 	rows := make([]fieldRows, 0, len(m.bindings.Bindings()))
 	for i, binding := range m.bindings.Bindings() {
 		row := b.row

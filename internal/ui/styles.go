@@ -19,8 +19,7 @@ var (
 	errorColor   color.Color
 	warnColor    color.Color
 
-	titleStyle      lipgloss.Style // title bar
-	breadcrumbStyle lipgloss.Style // breadcrumb / path
+	titleStyle lipgloss.Style // the app name in the header bar
 
 	// List items
 	itemStyle         lipgloss.Style

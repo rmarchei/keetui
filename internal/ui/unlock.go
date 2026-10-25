@@ -110,8 +110,7 @@ func (m UnlockModel) header() string {
 	var b strings.Builder
 	width, _ := viewSize(m.width, m.height)
 
-	b.WriteString("\n")
-	b.WriteString(titleStyle.Render(" keetui "))
+	b.WriteString(header(width, "", "Unlock"))
 	b.WriteString("\n\n")
 	fmt.Fprintf(&b, "  File: %s\n", pathLabel(m.filePath, width-8))
 	if m.keyFilePath != "" {
@@ -132,15 +131,57 @@ func (m UnlockModel) errorContent() string {
 
 func (m UnlockModel) footer() string {
 	hints := []string{"enter: unlock"}
-	if m.err != nil {
+	if _, fits := m.card(); m.err != nil && !fits {
 		// Scrolling is the only way to read a long error: keep it ahead of quit.
 		hints = append(hints, "pgup/pgdown: error")
 	}
 	return renderHints(m.width, append(hints, "ctrl+c: quit")...)
 }
 
+// card lays the form out as a box centered above the footer, its border in
+// the error color after a failed attempt. fits is false when the box, error
+// included, does not fit the screen whole: the plain layout, whose error
+// scrolls, takes over.
+func (m UnlockModel) card() (card string, fits bool) {
+	width, height := viewSize(m.width, m.height)
+	inner := min(56, width-12)
+	if inner < 30 {
+		return "", false
+	}
+	sizeInput(&m.input, inner)
+	label := func(text string) string { return labelStyle.Width(5).Render(text) }
+	lines := []string{titleStyle.Render("keetui"), "", label("File") + " " + pathLabel(m.filePath, inner-6)}
+	if m.keyFilePath != "" {
+		lines = append(lines, label("Key")+" "+pathLabel(m.keyFilePath, inner-6))
+	}
+	lines = append(lines, "", m.input.View())
+	border := primaryColor
+	switch {
+	case m.unlocking:
+		lines = append(lines, "", helpStyle.Render("Unlocking…"))
+	case m.err != nil:
+		border = errorColor
+		lines = append(lines, "", errorMsgStyle.Padding(0).Render(wrapContent("Error: "+sanitizeDisplay(m.err.Error()), inner)))
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(border).
+		Padding(1, 3).
+		Render(lipgloss.NewStyle().Width(inner).Render(strings.Join(lines, "\n")))
+	available := height - 1 // the footer's row
+	if lipgloss.Height(box) > available {
+		return "", false
+	}
+	pad := strings.Repeat(" ", (width-lipgloss.Width(box))/2)
+	top := strings.Repeat("\n", (available-lipgloss.Height(box))/2)
+	return top + pad + strings.ReplaceAll(box, "\n", "\n"+pad), true
+}
+
 func (m UnlockModel) View() tea.View {
 	width, height := viewSize(m.width, m.height)
+	if card, fits := m.card(); fits {
+		return tea.NewView(screen(card, m.footer(), width, height, 0))
+	}
 	sizeInput(&m.input, max(1, width-2))
 	header := m.header()
 	body := header
