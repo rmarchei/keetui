@@ -64,16 +64,17 @@ go build -o keetui ./cmd/keetui
 
 CI, release builds, and container-based Make targets use **Go 1.27.3**.
 macOS binaries built with this toolchain require **macOS 13 Ventura or newer**.
-The module retains Go 1.26.0 as its minimum source version; local builds without
-a container use the installed Go compiler.
+The module retains Go 1.26.0 as its minimum source version. Make targets use
+the installed Go toolchain by default; an installed container runtime is used
+only when explicitly selected with `CONTAINER_RUNTIME`.
 
 ```sh
-make                  # build for current OS/arch (uses container if available)
-make test             # run tests with race detector (uses container if available)
-make lint             # gofmt check + golangci-lint (uses container if available)
-make check            # run lint + test (uses container if available)
-make all              # cross-compile all platforms (requires docker/podman/container)
-make linux-amd64      # build a single target
+make                  # build for current OS/arch using local Go
+make test             # run tests locally with the race detector
+make lint             # local gofmt check + golangci-lint (must be installed)
+make check            # run local lint + test
+make all              # cross-compile all platforms using local Go
+make linux-amd64      # cross-compile a single target using local Go
 make install          # install to /usr/local/bin
 make clean            # remove built binaries
 ```
@@ -82,8 +83,9 @@ Binaries are written to `dist/`. Override variables as needed:
 
 ```sh
 VERSION=v1.0.0 make
-CONTAINER_RUNTIME=podman make
-CONTAINER_RUNTIME= make       # skip container, use local go
+make CONTAINER_RUNTIME=podman     # opt into a running Podman VM
+make all CONTAINER_RUNTIME=docker # cross-compile using a running Docker daemon
+make CONTAINER_RUNTIME=           # force local Go if the variable is set in your environment
 ```
 
 ## Usage

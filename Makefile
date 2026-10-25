@@ -10,41 +10,25 @@ LDFLAGS  := -s -w -X main.version=$(VERSION)
 
 PLATFORMS := darwin-amd64 darwin-arm64 linux-amd64 linux-arm64
 
-# Auto-detect container runtime (docker, podman, or container); override with CONTAINER_RUNTIME=
-CONTAINER_RUNTIME ?= $(shell command -v docker 2>/dev/null || command -v podman 2>/dev/null || command -v container 2>/dev/null)
+# Use the installed Go toolchain by default. Opt into a running container
+# runtime explicitly, for example: make CONTAINER_RUNTIME=podman
+CONTAINER_RUNTIME ?=
 
 HOST_OS   := $(shell uname -s | tr '[:upper:]' '[:lower:]')
-HOST_ARCH := $(shell uname -m | sed 's/x86_64/amd64/')
-
-CROSS_PLATFORMS := $(filter-out $(HOST_OS)-$(HOST_ARCH),$(PLATFORMS))
+HOST_ARCH := $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
 
 GO_SOURCES := $(shell find cmd internal -name '*.go') go.mod go.sum Makefile
 
 PREFIX   ?= /usr/local
 
-.PHONY: build test lint check all clean install $(CROSS_PLATFORMS)
+.PHONY: build test lint check all clean install $(PLATFORMS)
 
 build: $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH)
-
-$(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH): $(GO_SOURCES)
-	@mkdir -p $(DIST)
-	@if [ -n "$(CONTAINER_RUNTIME)" ]; then \
-		$(CONTAINER_RUNTIME) run --rm \
-			-v $(CURDIR):/src \
-			-w /src \
-			-e CGO_ENABLED=0 \
-			-e GOOS=$(HOST_OS) \
-			-e GOARCH=$(HOST_ARCH) \
-			$(GOIMAGE) \
-			go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH) $(CMD); \
-	else \
-		CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH) $(CMD); \
-	fi
 
 test:
 	@if [ -n "$(CONTAINER_RUNTIME)" ]; then \
 		$(CONTAINER_RUNTIME) run --rm \
-			-v $(CURDIR):/src \
+			-v "$(CURDIR):/src" \
 			-w /src \
 			$(GOIMAGE) \
 			go test -race ./...; \
@@ -55,12 +39,12 @@ test:
 lint:
 	@if [ -n "$(CONTAINER_RUNTIME)" ]; then \
 		$(CONTAINER_RUNTIME) run --rm \
-			-v $(CURDIR):/src \
+			-v "$(CURDIR):/src" \
 			-w /src \
 			$(GOIMAGE) \
 			sh -c 'test -z "$$(gofmt -l .)" || (echo "Files not formatted:"; gofmt -l .; exit 1)'; \
 		$(CONTAINER_RUNTIME) run --rm \
-			-v $(CURDIR):/src \
+			-v "$(CURDIR):/src" \
 			-w /src \
 			$(LINTIMAGE) \
 			golangci-lint run ./...; \
@@ -71,24 +55,29 @@ lint:
 
 check: lint test
 
-all: build $(CROSS_PLATFORMS)
+all: $(PLATFORMS)
 
+# Share one recipe between native builds and cross-compilation.
 define BUILD_PLATFORM
 $(1): $(DIST)/$(APP)-$(1)
 $(DIST)/$(APP)-$(1): $(GO_SOURCES)
-	@if [ -z "$(CONTAINER_RUNTIME)" ]; then echo "Error: No container runtime found. Install docker or podman." >&2; exit 1; fi
 	@mkdir -p $(DIST)
-	$(CONTAINER_RUNTIME) run --rm \
-		-v $(CURDIR):/src \
-		-w /src \
-		-e CGO_ENABLED=0 \
-		-e GOOS=$(word 1,$(subst -, ,$(1))) \
-		-e GOARCH=$(word 2,$(subst -, ,$(1))) \
-		$(GOIMAGE) \
-		go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/$(APP)-$(1) $(CMD)
+	@if [ -n "$(CONTAINER_RUNTIME)" ]; then \
+		$(CONTAINER_RUNTIME) run --rm \
+			-v "$(CURDIR):/src" \
+			-w /src \
+			-e CGO_ENABLED=0 \
+			-e GOOS=$(word 1,$(subst -, ,$(1))) \
+			-e GOARCH=$(word 2,$(subst -, ,$(1))) \
+			$(GOIMAGE) \
+			go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/$(APP)-$(1) $(CMD); \
+	else \
+		CGO_ENABLED=0 GOOS=$(word 1,$(subst -, ,$(1))) GOARCH=$(word 2,$(subst -, ,$(1))) \
+			go build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST)/$(APP)-$(1) $(CMD); \
+	fi
 endef
 
-$(foreach p,$(CROSS_PLATFORMS),$(eval $(call BUILD_PLATFORM,$(p))))
+$(foreach p,$(PLATFORMS),$(eval $(call BUILD_PLATFORM,$(p))))
 
 install: $(DIST)/$(APP)-$(HOST_OS)-$(HOST_ARCH)
 	install -d $(PREFIX)/bin

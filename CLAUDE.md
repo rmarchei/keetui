@@ -132,7 +132,8 @@ newer; the generated Homebrew formula declares that requirement.
 ```sh
 go build ./...                          # check compilation
 go build -o keetui ./cmd/keetui         # build binary
-make                                    # build via Makefile (uses container if available)
+make                                    # build locally with the installed Go toolchain
+make CONTAINER_RUNTIME=podman            # opt into a running container runtime
 ```
 
 ### Running
