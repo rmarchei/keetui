@@ -15,7 +15,6 @@ import (
 // Columns: Group, Title, Username, Password, URL, Notes, TOTP, Attachments
 func (d *DB) ExportCSV(w io.Writer) error {
 	writer := csv.NewWriter(w)
-	defer writer.Flush()
 
 	// Write header
 	if err := writer.Write([]string{"Group", "Title", "Username", "Password", "URL", "Notes", "TOTP", "Attachments"}); err != nil {
@@ -25,7 +24,15 @@ func (d *DB) ExportCSV(w io.Writer) error {
 	// Paths are root-relative (empty for root-level entries) so a round
 	// trip does not depend on the source root group's name.
 	root := d.RootGroup()
-	return d.writeGroupCSV(writer, &root, "")
+	if err := d.writeGroupCSV(writer, &root, ""); err != nil {
+		return err
+	}
+	// The writer buffers: a small export is written, or fails, only here.
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return fmt.Errorf("write CSV: %w", err)
+	}
+	return nil
 }
 
 func (d *DB) writeGroupCSV(w *csv.Writer, g *Group, path string) error {
@@ -81,6 +88,9 @@ func (d *DB) ExportCSVFile(path string) (err error) {
 	defer func() {
 		if cerr := f.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("close CSV file: %w", cerr)
+		}
+		if err != nil {
+			_ = os.Remove(path) // a partial plaintext export
 		}
 	}()
 	return d.ExportCSV(f)
@@ -228,6 +238,9 @@ func (d *DB) ExportXMLFile(path string) (err error) {
 	defer func() {
 		if cerr := f.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("close XML file: %w", cerr)
+		}
+		if err != nil {
+			_ = os.Remove(path) // a partial plaintext export
 		}
 	}()
 	return d.ExportXML(f)

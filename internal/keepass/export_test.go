@@ -2,6 +2,7 @@ package keepass
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -653,5 +654,25 @@ func TestXMLRoundTripKeepsProtection(t *testing.T) {
 				t.Errorf("%s: %q protected = %v (found %v), want %v", name, key, p, ok, w)
 			}
 		}
+	}
+}
+
+// failingWriter fails every write, as a full disk does.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("no space left on device") }
+
+// The CSV writer buffers, so a small export fails only at its final flush,
+// which must not report success.
+func TestExportCSVReportsWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	createTestDB(t, dbPath, "testmaster")
+	db, err := Open(dbPath, "testmaster")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := db.ExportCSV(failingWriter{}); err == nil || !strings.Contains(err.Error(), "no space left") {
+		t.Fatalf("ExportCSV = %v, want the write error", err)
 	}
 }
