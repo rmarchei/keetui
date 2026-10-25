@@ -21,6 +21,7 @@ import (
 //     SSH passes it on to its own terminal, while a local one writes this
 //     machine's clipboard unmarked. With clients at both ends, a local one
 //     that had input just now (the copy's keypress) keeps the copy here.
+//     A local copy goes to that client's display (herdrDesktop).
 //  2. In tmux, the session environment, which tmux refreshes on attach while
 //     panes keep the environment they started with. In tmux started from a
 //     herdr pane, both count: the session is remote if either says so.
@@ -35,6 +36,30 @@ type remoteSession struct {
 	herdr    bool    // clients of keetui's herdr server were found
 	herdrSSH bool    // one of them runs over SSH, or herdr --remote is attached (even when a local one decided)
 	tmux     tmuxEnv // the tmux session environment; nil unless tmux answered
+	desktop  herdrDesktop
+}
+
+// herdrDesktop is the display of the local herdr client the user typed on
+// last, when herdr clients decided that the session is local. herdr panes
+// keep the environment their server started with, which names no display,
+// or an old one, when the server was started over SSH (by herdr --remote,
+// say) or from another desktop session; the client's is the desktop's.
+type herdrDesktop struct {
+	pid int
+	env []string // those of desktopVars that the client has set
+}
+
+// desktopVars name a display and what it takes to reach it.
+var desktopVars = []string{"WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DISPLAY", "XAUTHORITY"}
+
+func desktopOf(p procInfo) herdrDesktop {
+	d := herdrDesktop{pid: p.pid}
+	for _, name := range desktopVars {
+		if v := envValue(p.env, name); v != "" {
+			d.env = append(d.env, name+"="+v)
+		}
+	}
+	return d
 }
 
 // procInfo is a process of keetui's user.
@@ -172,8 +197,8 @@ func (d sessionDetector) herdrSession() remoteSession {
 		v := d.getenv(name)
 		return v, v != ""
 	})
-	var local []int // pids of local clients
-	remote := ""    // why the first remote client counts
+	var local []procInfo // local clients
+	remote := ""         // why the first remote client counts
 	for _, p := range procs {
 		kind := herdrInvocation(p.args)
 		if p.pid == d.pid || kind == herdrOther {
@@ -194,14 +219,19 @@ func (d sessionDetector) herdrSession() remoteSession {
 				remote = fmt.Sprintf("a herdr client runs over SSH (pid %d)", p.pid)
 			}
 		default:
-			local = append(local, p.pid)
+			local = append(local, p)
 		}
 	}
-	switch {
-	case remote == "" && len(local) == 0:
-		return remoteSession{}
-	case remote == "":
-		return remoteSession{herdr: true, why: fmt.Sprintf("every herdr client runs locally (%d found)", len(local))}
+	if len(local) == 0 {
+		if remote == "" {
+			return remoteSession{}
+		}
+		return remoteSession{remote: true, herdr: true, herdrSSH: true, why: remote}
+	}
+	typed, at, read := d.lastTyped(local)
+	if remote == "" {
+		return remoteSession{herdr: true, desktop: desktopOf(typed),
+			why: fmt.Sprintf("every herdr client runs locally (%d found)", len(local))}
 	}
 	// Clients at both ends: herdr gives the copy to the one that last had
 	// input. A local one that had input just now typed the copy's keypress,
@@ -210,13 +240,23 @@ func (d sessionDetector) herdrSession() remoteSession {
 	if d.now != nil {
 		now = d.now
 	}
-	for _, pid := range local {
-		if at, ok := d.procs.lastInput(pid); ok && now().Sub(at) <= localInputWindow {
-			return remoteSession{herdr: true, herdrSSH: true,
-				why: fmt.Sprintf("a herdr client here (pid %d) had input just now, while %s", pid, remote)}
-		}
+	if read && now().Sub(at) <= localInputWindow {
+		return remoteSession{herdr: true, herdrSSH: true, desktop: desktopOf(typed),
+			why: fmt.Sprintf("a herdr client here (pid %d) had input just now, while %s", typed.pid, remote)}
 	}
 	return remoteSession{remote: true, herdr: true, herdrSSH: true, why: remote}
+}
+
+// lastTyped returns the client whose terminal had input last, and when;
+// read is false, and the client the first, when no terminal could be read.
+func (d sessionDetector) lastTyped(clients []procInfo) (typed procInfo, at time.Time, read bool) {
+	typed = clients[0]
+	for _, p := range clients {
+		if t, ok := d.procs.lastInput(p.pid); ok && (!read || t.After(at)) {
+			typed, at, read = p, t, true
+		}
+	}
+	return typed, at, read
 }
 
 // sameHerdrServer reports whether a herdr client attaches to keetui's

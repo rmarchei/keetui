@@ -110,13 +110,15 @@ type nativeClipboard interface {
 
 // nativeRoute is where a copy goes on the local clipboard.
 type nativeRoute struct {
-	ok           bool   // the local clipboard is the user's
-	alsoTerminal bool   // with auto, the terminal gets the copy too: the user may not be able to paste the local one
-	dest         string // where the copy goes, for F1
-	why          string // with !ok: why the local clipboard is not used, for F1
-	display      string // Linux: the X display the copy goes to; "" for Wayland
-	authority    string // Linux: the X authority file for display; "" for keetui's own
-	forwarded    bool   // display is one that the SSH session forwards
+	ok           bool     // the local clipboard is the user's
+	alsoTerminal bool     // with auto, the terminal gets the copy too: the user may not be able to paste the local one
+	dest         string   // where the copy goes, for F1
+	why          string   // with !ok: why the local clipboard is not used, for F1
+	display      string   // Linux: the X display the copy goes to; "" for Wayland
+	authority    string   // Linux: the X authority file for display; "" for keetui's own
+	forwarded    bool     // display is one that the SSH session forwards
+	client       int      // Linux: the herdr client whose display the copy goes to (see localRoute); 0 for keetui's own
+	env          []string // Linux: what the clipboard tools need set to reach the client's display
 }
 
 var errNoClipboard = errors.New("no clipboard available")
@@ -567,6 +569,11 @@ func localHelp(r copyResult) string {
 		lines = append(lines, fmt.Sprintf("Copying to %s failed: %s", l.dest, r.nativeErr))
 	case !l.ok && l.why != "":
 		lines = append(lines, l.why)
+	}
+	if l.client != 0 {
+		lines = append(lines, fmt.Sprintf("That is the display of herdr client pid %d (%s), where you typed: "+
+			"herdr panes keep the environment the herdr server started with, and keetui's names no display or another one.",
+			l.client, strings.Join(l.env, " ")))
 	}
 	switch s := r.session; {
 	case s.why == "":

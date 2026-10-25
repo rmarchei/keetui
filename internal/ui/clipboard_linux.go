@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,10 +37,11 @@ type linuxClipboard struct {
 	// clipboard.
 	run    func(env []string, input []byte, name string, args ...string) error
 	runX   func(env []string, input []byte, name string, args ...string) error
-	output func(name string, args ...string) ([]byte, error)
+	output func(env []string, name string, args ...string) ([]byte, error)
 	newX11 func(display, authority string) x11Owner
 
 	tool      string   // backend of the last write: wl-copy, x11, xclip or xsel
+	env       []string // the route's env for the last write, for the tools that check and clear it
 	x11       *x11Slot // the owner of the last X11 copy
 	owners    []*x11Slot
 	byContent bool // holds matched another client's copy of the value
@@ -140,14 +142,7 @@ func x11Fallback(has func(string) bool) string {
 // panes, while sshd writes the forwarded display's cookie to ~/.Xauthority.
 func (l *linuxClipboard) route(s remoteSession) nativeRoute {
 	if !s.remote {
-		switch linuxTool(l.getenv, l.has) {
-		case "wl-copy":
-			return nativeRoute{ok: true, dest: "the Wayland clipboard (" + l.getenv("WAYLAND_DISPLAY") + ")"}
-		case "x11":
-			display := l.getenv("DISPLAY")
-			return nativeRoute{ok: true, display: display, dest: "X display " + display}
-		}
-		return nativeRoute{why: "No local clipboard: neither WAYLAND_DISPLAY nor DISPLAY is set."}
+		return l.localRoute(s.desktop)
 	}
 	display, from, authority := l.getenv("DISPLAY"), "DISPLAY", ""
 	if v, known := s.tmux.lookup("DISPLAY"); known {
@@ -175,6 +170,56 @@ func (l *linuxClipboard) route(s remoteSession) nativeRoute {
 		dest: "the X display your SSH session forwards (" + display + ")"}
 }
 
+// localRoute picks this machine's clipboard. In a herdr pane, that is the
+// one on the display of the herdr client the user typed on (see
+// herdrDesktop), when it differs from keetui's: without a display of its
+// own, keetui would leave the copy to herdr, whose client writes it
+// unmarked, and an old one may be gone.
+func (l *linuxClipboard) localRoute(c herdrDesktop) nativeRoute {
+	clientEnv := func(name string) string {
+		if v := envValue(c.env, name); v != "" || name != "XDG_RUNTIME_DIR" {
+			return v
+		}
+		return l.getenv(name) // the same user's
+	}
+	tool, getenv, client := linuxTool(l.getenv, l.has), l.getenv, 0
+	if t := linuxTool(clientEnv, l.has); t != "" && (t != tool || clientEnv(displayVar[t]) != l.getenv(displayVar[t])) {
+		tool, getenv, client = t, clientEnv, c.pid
+	}
+	switch tool {
+	case "wl-copy":
+		wayland := getenv("WAYLAND_DISPLAY")
+		r := nativeRoute{ok: true, client: client, dest: "the Wayland clipboard (" + wayland + ")"}
+		if client != 0 {
+			r.env = []string{"WAYLAND_DISPLAY=" + wayland}
+			if dir := getenv("XDG_RUNTIME_DIR"); dir != "" {
+				r.env = append(r.env, "XDG_RUNTIME_DIR="+dir)
+			}
+		}
+		return r
+	case "x11":
+		display := getenv("DISPLAY")
+		r := nativeRoute{ok: true, client: client, display: display, dest: "X display " + display}
+		if client != 0 {
+			// The client's X clients read ~/.Xauthority without XAUTHORITY.
+			r.authority = getenv("XAUTHORITY")
+			if r.authority == "" && l.getenv("HOME") != "" {
+				r.authority = filepath.Join(l.getenv("HOME"), ".Xauthority")
+			}
+			r.env = []string{"DISPLAY=" + display}
+			if r.authority != "" {
+				r.env = append(r.env, "XAUTHORITY="+r.authority)
+			}
+		}
+		return r
+	}
+	return nativeRoute{why: "No local clipboard: neither WAYLAND_DISPLAY nor DISPLAY is set."}
+}
+
+// displayVar names the variable that names the display of each of
+// linuxTool's choices.
+var displayVar = map[string]string{"wl-copy": "WAYLAND_DISPLAY", "x11": "DISPLAY"}
+
 // forwardedDisplay reports a display as sshd forwards it: a host other than
 // unix and a display number of at least 10 (X11DisplayOffset), as in
 // localhost:10.0 or, with X11UseLocalhost no, hostname:10.0.
@@ -190,7 +235,7 @@ func forwardedDisplay(display string) bool {
 
 func (l *linuxClipboard) wlSensitive() bool {
 	l.sensitiveOnce.Do(func() {
-		out, err := l.output("wl-copy", "--help")
+		out, err := l.output(nil, "wl-copy", "--help")
 		l.sensitive = err == nil && bytes.Contains(out, []byte("--sensitive"))
 	})
 	return l.sensitive
@@ -214,7 +259,7 @@ func (l *linuxClipboard) write(value []byte, _ bool, r nativeRoute) (bool, error
 		if l.wlSensitive() {
 			args, marked = append(args, "--sensitive"), true
 		}
-		err = l.run(wlEnv(l.getenv), value, "wl-copy", args...)
+		err = l.run(wlEnv(r.env, l.getenv), value, "wl-copy", args...)
 	case "x11":
 		tool, marked, err = l.writeX11(value, r)
 	default:
@@ -223,7 +268,7 @@ func (l *linuxClipboard) write(value []byte, _ bool, r nativeRoute) (bool, error
 	if err != nil {
 		return false, err
 	}
-	l.tool, l.byContent = tool, false
+	l.tool, l.env, l.byContent = tool, r.env, false
 	return marked, nil
 }
 
@@ -247,15 +292,16 @@ func (l *linuxClipboard) writeX11(value []byte, r nativeRoute) (tool string, mar
 	if r.forwarded || errors.Is(err, x11clip.ErrTimeout) {
 		return "", false, err
 	}
-	// Only local routes get here, whose display is keetui's $DISPLAY.
+	// Only local routes get here, whose display is keetui's $DISPLAY or a
+	// herdr client's, which r.env names.
 	tool = x11Fallback(l.has)
 	switch tool {
 	case "xclip":
-		if ferr := l.runX(nil, value, "xclip", "-selection", "clipboard"); ferr != nil {
+		if ferr := l.runX(toolEnv(r.env), value, "xclip", "-selection", "clipboard"); ferr != nil {
 			return "", false, fmt.Errorf("%w; %w", err, ferr)
 		}
 	case "xsel":
-		if ferr := l.runX(nil, value, "xsel", "--clipboard", "--input"); ferr != nil {
+		if ferr := l.runX(toolEnv(r.env), value, "xsel", "--clipboard", "--input"); ferr != nil {
 			return "", false, fmt.Errorf("%w; %w", err, ferr)
 		}
 	default:
@@ -309,11 +355,11 @@ func (l *linuxClipboard) holds(matches func([]byte) bool, alsoTerminal bool) boo
 		clear(out)
 		return l.byContent
 	case "wl-copy":
-		out, err = l.output("wl-paste", "--no-newline", "--type", "text")
+		out, err = l.output(toolEnv(l.env), "wl-paste", "--no-newline", "--type", "text")
 	case "xclip":
-		out, err = l.output("xclip", "-selection", "clipboard", "-o")
+		out, err = l.output(toolEnv(l.env), "xclip", "-selection", "clipboard", "-o")
 	case "xsel":
-		out, err = l.output("xsel", "--clipboard", "--output")
+		out, err = l.output(toolEnv(l.env), "xsel", "--clipboard", "--output")
 	default:
 		return false
 	}
@@ -329,7 +375,7 @@ func (l *linuxClipboard) holds(matches func([]byte) bool, alsoTerminal bool) boo
 func (l *linuxClipboard) clear() error {
 	switch l.tool {
 	case "wl-copy":
-		return l.run(nil, nil, "wl-copy", "--clear")
+		return l.run(toolEnv(l.env), nil, "wl-copy", "--clear")
 	case "x11":
 		switch {
 		case l.gone:
@@ -345,7 +391,7 @@ func (l *linuxClipboard) clear() error {
 		l.x11.owner.Blank()
 		return nil
 	case "xclip":
-		return l.runX(nil, nil, "xclip", "-selection", "clipboard")
+		return l.runX(toolEnv(l.env), nil, "xclip", "-selection", "clipboard")
 	case "xsel":
 		return l.clearXsel()
 	}
@@ -360,9 +406,9 @@ func (l *linuxClipboard) clearXsel() error {
 		return nil
 	}
 	if l.has("xclip") {
-		return l.runX(nil, nil, "xclip", "-selection", "clipboard")
+		return l.runX(toolEnv(l.env), nil, "xclip", "-selection", "clipboard")
 	}
-	return l.runX(nil, nil, "xsel", "--clipboard", "--clear")
+	return l.runX(toolEnv(l.env), nil, "xsel", "--clipboard", "--clear")
 }
 
 // close runs at exit. The X server drops keetui's clipboard with its
@@ -385,10 +431,13 @@ func (l *linuxClipboard) close() {
 // handOff gives the clipboard to an empty xclip copy and waits until xclip,
 // which takes the clipboard after forking, owns it, so that it never goes
 // ownerless in between. Only displays keetui reached locally get here,
-// whose authority file is keetui's own.
+// whose authority file is keetui's own or a herdr client's.
 func (l *linuxClipboard) handOff(s *x11Slot) {
 	done := make(chan error, 1)
 	env := envWith("DISPLAY=" + s.display)
+	if s.authority != "" {
+		env = envWith("DISPLAY="+s.display, "XAUTHORITY="+s.authority)
+	}
 	go func() { done <- l.runX(env, nil, "xclip", "-selection", "clipboard") }()
 	deadline := time.After(handOffTimeout)
 	select {
@@ -461,13 +510,15 @@ func pipeDetached(env []string, input []byte, name string, args ...string) error
 	return nil
 }
 
-// outputBounded runs a tool that reads the clipboard, for at most
-// x11ToolTimeout: the read runs in the UI's update (timer, lock, quit), and
-// xclip and xsel wait without a limit for a server that does not answer.
-func outputBounded(name string, args ...string) ([]byte, error) {
+// outputBounded runs a tool that reads the clipboard, with env (nil:
+// keetui's), for at most x11ToolTimeout: the read runs in the UI's update
+// (timer, lock, quit), and xclip and xsel wait without a limit for a server
+// that does not answer.
+func outputBounded(env []string, name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), x11ToolTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
 	cmd.WaitDelay = x11ToolTimeout
 	out, err := cmd.Output()
 	if ctx.Err() != nil {
@@ -477,11 +528,25 @@ func outputBounded(name string, args ...string) ([]byte, error) {
 	return out, err
 }
 
-// wlEnv points wl-copy's temporary copy of stdin at the per-user runtime
-// directory (a tmpfs) instead of /tmp, which may be disk-backed.
-func wlEnv(getenv func(string) string) []string {
-	if dir := getenv("XDG_RUNTIME_DIR"); dir != "" {
-		return envWith("TMPDIR=" + dir)
+// toolEnv is the environment of a clipboard tool reaching a route's display:
+// keetui's with the route's env set, or nil for keetui's own.
+func toolEnv(set []string) []string {
+	if len(set) == 0 {
+		return nil
 	}
-	return nil
+	return envWith(set...)
+}
+
+// wlEnv is wl-copy's environment for a copy. It points wl-copy's temporary
+// copy of stdin at the per-user runtime directory (a tmpfs) instead of
+// /tmp, which may be disk-backed.
+func wlEnv(set []string, getenv func(string) string) []string {
+	dir := envValue(set, "XDG_RUNTIME_DIR")
+	if dir == "" {
+		dir = getenv("XDG_RUNTIME_DIR")
+	}
+	if dir != "" {
+		set = append(slices.Clip(set), "TMPDIR="+dir)
+	}
+	return toolEnv(set)
 }

@@ -121,8 +121,9 @@ func (f *fakeTools) run(env []string, input []byte, name string, args ...string)
 	return nil
 }
 
-func (f *fakeTools) output(name string, args ...string) ([]byte, error) {
+func (f *fakeTools) output(env []string, name string, args ...string) ([]byte, error) {
 	f.runs = append(f.runs, name+" "+strings.Join(args, " "))
+	f.envs = append(f.envs, env)
 	if name == "wl-copy" {
 		return []byte("Options: --sensitive"), nil
 	}
@@ -345,7 +346,7 @@ func TestOutputBoundedIsBounded(t *testing.T) {
 	// The child keeps stdout open after the tool is killed.
 	script := `sleep 30 & echo $! >"$1"; exec sleep 30`
 	start := time.Now()
-	out, err := outputBounded("/bin/sh", "-c", script, "sh", ids)
+	out, err := outputBounded(nil, "/bin/sh", "-c", script, "sh", ids)
 	if !errors.Is(err, errToolTimeout) || out != nil {
 		t.Fatalf("outputBounded = %q, %v, want errToolTimeout", out, err)
 	}
@@ -354,7 +355,7 @@ func TestOutputBoundedIsBounded(t *testing.T) {
 	}
 	child := readPID(t, ids)
 	t.Cleanup(func() { _ = syscall.Kill(child, syscall.SIGKILL) })
-	if out, err := outputBounded("/bin/sh", "-c", "printf synthetic"); err != nil || string(out) != "synthetic" {
+	if out, err := outputBounded(nil, "/bin/sh", "-c", "printf synthetic"); err != nil || string(out) != "synthetic" {
 		t.Fatalf("outputBounded = %q, %v", out, err)
 	}
 }

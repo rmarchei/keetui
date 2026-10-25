@@ -622,8 +622,14 @@ F1 shows what decided, and where the copy went. In a remote session:
 the client that last typed: a client running over SSH writes it to its
 terminal, while a local client writes this machine's clipboard itself, with
 plain `wl-copy`, `xclip` or `pbcopy`, unmarked, so clipboard history keeps
-it. herdr ignores an empty OSC 52, so keetui clears a
-terminal copy by copying a single space over it, and only while a herdr
+it. So keetui copies locally whenever it can. A herdr pane keeps the
+environment its server started with, which names no display, or an old
+one, when the server was started over SSH (by `herdr --remote` attaching,
+say) or from another desktop session; for a local copy on Linux keetui then
+uses the display of the herdr client you typed on (its `WAYLAND_DISPLAY`,
+or its `DISPLAY` and `XAUTHORITY`), so the copy stays marked instead of
+going to herdr, and F1 names that client. herdr ignores an empty OSC 52,
+so keetui clears a terminal copy by copying a single space over it, and only while a herdr
 client runs over SSH at that moment; otherwise it sends nothing, since the
 space would land on this machine's clipboard, and the status bar says the
 copy was not cleared. Like any OSC 52 clear, the space also replaces

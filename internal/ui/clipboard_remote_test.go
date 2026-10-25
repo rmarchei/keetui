@@ -888,6 +888,14 @@ func TestHerdrClientsAtBothEndsFollowTheLocalKeypress(t *testing.T) {
 			t.Errorf("%s: remote %v, herdr %v, herdrSSH %v, why %q; want remote %v and why containing %q",
 				tc.name, s.remote, s.herdr, s.herdrSSH, s.why, tc.remote, tc.why)
 		}
+		// A local copy goes to the display of the client that typed.
+		wantDesktop := herdrDesktop{pid: 201, env: []string{"DISPLAY=:0"}}
+		if tc.remote {
+			wantDesktop = herdrDesktop{}
+		}
+		if s.desktop.pid != wantDesktop.pid || !slices.Equal(s.desktop.env, wantDesktop.env) {
+			t.Errorf("%s: desktop %+v, want %+v", tc.name, s.desktop, wantDesktop)
+		}
 	}
 
 	// Only clients at the other end: remote, however fresh any input.
@@ -905,5 +913,39 @@ func TestHerdrClientsAtBothEndsFollowTheLocalKeypress(t *testing.T) {
 	if s := detect(tmuxEnvVars, []procInfo{local, sshClient}, map[int]time.Time{201: now}, overSSH); !s.remote ||
 		!strings.Contains(s.why, "tmux session was last attached over SSH") {
 		t.Errorf("tmux attached over ssh in a herdr pane decided %v: %q", s.remote, s.why)
+	}
+}
+
+// With every herdr client local, a copy goes to the display of the one
+// that typed last, which herdr would hand the copy to: only the display
+// variables of its environment are kept.
+func TestHerdrLocalCopyFollowsTheClientThatTyped(t *testing.T) {
+	env := map[string]string{"HERDR_ENV": "1", "HERDR_SOCKET_PATH": "/home/u/.config/herdr/herdr.sock", "HOME": "/home/u"}
+	const bin = "/usr/bin/herdr"
+	first := procInfo{pid: 201, exe: bin, args: []string{"herdr"},
+		env: []string{"HOME=/home/u", "WAYLAND_DISPLAY=wayland-1", "XDG_RUNTIME_DIR=/run/user/1000", "SECRET_TOKEN=synthetic"}}
+	second := procInfo{pid: 204, exe: "/home/u/.local/bin/herdr", args: []string{"herdr"},
+		env: []string{"HOME=/home/u", "DISPLAY=:1", "XAUTHORITY=/run/user/1000/xauth"}}
+	now := time.Date(2026, 10, 25, 22, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name   string
+		inputs map[int]time.Time
+		want   herdrDesktop
+	}{
+		{"the second typed last", map[int]time.Time{201: now.Add(-time.Minute), 204: now.Add(-time.Second)},
+			herdrDesktop{pid: 204, env: []string{"DISPLAY=:1", "XAUTHORITY=/run/user/1000/xauth"}}},
+		{"the first typed last", map[int]time.Time{201: now.Add(-time.Second), 204: now.Add(-time.Hour)},
+			herdrDesktop{pid: 201, env: []string{"WAYLAND_DISPLAY=wayland-1", "XDG_RUNTIME_DIR=/run/user/1000"}}},
+		{"only one terminal readable", map[int]time.Time{204: now.Add(-time.Hour)},
+			herdrDesktop{pid: 204, env: []string{"DISPLAY=:1", "XAUTHORITY=/run/user/1000/xauth"}}},
+		{"no terminal readable", nil,
+			herdrDesktop{pid: 201, env: []string{"WAYLAND_DISPLAY=wayland-1", "XDG_RUNTIME_DIR=/run/user/1000"}}},
+	} {
+		d := testDetector(env, &fakeProcs{procs: []procInfo{first, second}, inputs: tc.inputs, parents: localChain()}, nil)
+		d.now = func() time.Time { return now }
+		s := d.detect()
+		if s.remote || !s.herdr || s.desktop.pid != tc.want.pid || !slices.Equal(s.desktop.env, tc.want.env) {
+			t.Errorf("%s: remote %v, herdr %v, desktop %+v; want %+v", tc.name, s.remote, s.herdr, s.desktop, tc.want)
+		}
 	}
 }

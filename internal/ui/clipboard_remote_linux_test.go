@@ -4,6 +4,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -331,4 +332,148 @@ func TestNativeCopyHelpNamesTheDestination(t *testing.T) {
 			t.Errorf("help = %q, want %q", help, want)
 		}
 	}
+}
+
+// A herdr pane keeps the environment its server started with, which may
+// name no display (a server started over SSH) or an old one: a local copy
+// goes to the display of the herdr client the user typed on, marked, and
+// never to herdr, whose client would write it unmarked. The tools that
+// check and clear the copy reach the same display.
+func TestHerdrPaneCopiesToTheClientsDisplay(t *testing.T) {
+	herdrLocal := func(env ...string) remoteSession {
+		return remoteSession{herdr: true, why: "every herdr client runs locally (1 found)",
+			desktop: herdrDesktop{pid: 201, env: env}}
+	}
+	for _, tc := range []struct {
+		name     string
+		pane     map[string]string // keetui's environment
+		session  remoteSession
+		wantEnv  []string // set in every wl-copy and wl-paste run; nil: keetui's own
+		wantDest string
+		client   int // whose display F1 names; 0: keetui's own
+	}{
+		{"no display in the pane", map[string]string{"HOME": "/home/u"},
+			herdrLocal("WAYLAND_DISPLAY=wayland-1", "XDG_RUNTIME_DIR=/run/user/1000"),
+			[]string{"WAYLAND_DISPLAY=wayland-1", "XDG_RUNTIME_DIR=/run/user/1000"},
+			"the Wayland clipboard (wayland-1)", 201},
+		{"the pane's runtime directory", map[string]string{"XDG_RUNTIME_DIR": "/run/user/1000"},
+			herdrLocal("WAYLAND_DISPLAY=wayland-1"),
+			[]string{"WAYLAND_DISPLAY=wayland-1", "XDG_RUNTIME_DIR=/run/user/1000"},
+			"the Wayland clipboard (wayland-1)", 201},
+		{"an old display in the pane", map[string]string{"WAYLAND_DISPLAY": "wayland-0", "XDG_RUNTIME_DIR": "/run/user/1000"},
+			herdrLocal("WAYLAND_DISPLAY=wayland-1", "XDG_RUNTIME_DIR=/run/user/1000"),
+			[]string{"WAYLAND_DISPLAY=wayland-1", "XDG_RUNTIME_DIR=/run/user/1000"},
+			"the Wayland clipboard (wayland-1)", 201},
+		{"the pane's display", map[string]string{"WAYLAND_DISPLAY": "wayland-1", "DISPLAY": ":1"},
+			herdrLocal("WAYLAND_DISPLAY=wayland-1", "XDG_RUNTIME_DIR=/run/user/1000"),
+			nil, "the Wayland clipboard (wayland-1)", 0},
+		{"a client without a display", map[string]string{"WAYLAND_DISPLAY": "wayland-0"},
+			herdrLocal("XDG_RUNTIME_DIR=/run/user/1000"),
+			nil, "the Wayland clipboard (wayland-0)", 0},
+		{"not in herdr", map[string]string{"WAYLAND_DISPLAY": "wayland-0"}, localSession,
+			nil, "the Wayland clipboard (wayland-0)", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tools := &fakeTools{installed: []string{"wl-copy", "wl-paste"}, clip: []byte("synthetic-secret")}
+			l := newTestLinux(tc.pane, nil, tools)
+			c, term := newFakeClipboard(nil)
+			c.native = l
+			c.detect = func() remoteSession { return tc.session }
+			res, err := c.copy("synthetic-secret", copyOptions{transient: true, osc52: config.OSC52Auto})
+			if err != nil || !res.native || !res.marked || res.terminal || len(term.sent) != 0 {
+				t.Fatalf("copy = %+v, %v (terminal got %d)", res, err, len(term.sent))
+			}
+			help := clipboardHelp(res, nil)
+			if !strings.Contains(help, "Copied to "+tc.wantDest+".") {
+				t.Errorf("help = %q, want %q", help, tc.wantDest)
+			}
+			if note := fmt.Sprintf("display of herdr client pid %d (%s)", tc.client, strings.Join(tc.wantEnv, " ")); tc.client != 0 &&
+				!strings.Contains(help, note) || tc.client == 0 && strings.Contains(help, "herdr client pid") {
+				t.Errorf("help = %q, want it to name client %d", help, tc.client)
+			}
+			if !l.holds(matching("synthetic-secret"), false) {
+				t.Fatal("wl-paste content not recognized")
+			}
+			if err := l.clear(); err != nil {
+				t.Fatal(err)
+			}
+			want := []string{
+				"wl-copy --help",
+				`wl-copy --type text/plain;charset=utf-8 --sensitive <"synthetic-secret"`,
+				"wl-paste --no-newline --type text",
+				`wl-copy --clear <""`,
+			}
+			if !slices.Equal(tools.runs, want) {
+				t.Fatalf("runs = %q", tools.runs)
+			}
+			for i, env := range tools.envs[1:] {
+				switch {
+				case tc.wantEnv == nil && i != 0 && env != nil:
+					t.Errorf("%s ran with %q, want keetui's environment", tools.runs[i+1], env)
+				case tc.wantEnv != nil && !containsAll(env, tc.wantEnv):
+					t.Errorf("%s ran with %q, want %q set", tools.runs[i+1], env, tc.wantEnv)
+				}
+			}
+			if dir := envValue(tc.wantEnv, "XDG_RUNTIME_DIR"); dir != "" && !slices.Contains(tools.envs[1], "TMPDIR="+dir) {
+				t.Errorf("wl-copy ran with %q, want its temporary file in %s", tools.envs[1], dir)
+			}
+		})
+	}
+}
+
+// On an X11 desktop the client's display goes with the authority file its
+// X clients read, ~/.Xauthority without XAUTHORITY: the in-process owner,
+// the xclip fallback and the hand-off at exit all reach it.
+func TestHerdrPaneCopiesToTheClientsX11Display(t *testing.T) {
+	session := remoteSession{herdr: true, why: "every herdr client runs locally (1 found)",
+		desktop: herdrDesktop{pid: 201, env: []string{"DISPLAY=:1"}}}
+	x, tools := &fakeX11{}, &fakeTools{installed: []string{"xclip"}}
+	tools.onRun = func(name string, _ []byte) {
+		if name == "xclip" {
+			x.stolen("") // xclip took the clipboard
+		}
+	}
+	l := newTestLinux(map[string]string{"HOME": "/home/u"}, x, tools)
+	var dialed []string
+	l.newX11 = func(display, authority string) x11Owner {
+		dialed = append(dialed, display+" "+authority)
+		return x
+	}
+	r := l.route(session)
+	if !r.ok || r.display != ":1" || r.dest != "X display :1" || r.client != 201 {
+		t.Fatalf("route = %+v", r)
+	}
+	if marked, err := l.write([]byte("synthetic-secret"), true, r); err != nil || !marked {
+		t.Fatalf("write = %v, %v", marked, err)
+	}
+	if !slices.Equal(dialed, []string{":1 /home/u/.Xauthority"}) {
+		t.Fatalf("owner dialed %q", dialed)
+	}
+	l.close()
+	want := []string{"DISPLAY=:1", "XAUTHORITY=/home/u/.Xauthority"}
+	if !slices.Equal(tools.runs, []string{`xclip -selection clipboard <""`}) || !containsAll(tools.envs[0], want) {
+		t.Fatalf("close ran %q with %q", tools.runs, tools.envs)
+	}
+
+	// The owner failing, xclip copies to the same display.
+	x, tools = &fakeX11{copyErr: x11clip.ErrNotOwner}, &fakeTools{installed: []string{"xclip"}}
+	l = newTestLinux(map[string]string{"HOME": "/home/u"}, x, tools)
+	if _, err := l.write([]byte("synthetic-secret"), true, l.route(session)); err != nil || l.tool != "xclip" {
+		t.Fatalf("write = %v (tool %q)", err, l.tool)
+	}
+	if err := l.clear(); err != nil {
+		t.Fatal(err)
+	}
+	if len(tools.envs) != 2 || !containsAll(tools.envs[0], want) || !containsAll(tools.envs[1], want) {
+		t.Fatalf("xclip ran %q with %q", tools.runs, tools.envs)
+	}
+}
+
+func containsAll(env, want []string) bool {
+	for _, kv := range want {
+		if !slices.Contains(env, kv) {
+			return false
+		}
+	}
+	return true
 }
