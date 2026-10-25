@@ -83,6 +83,20 @@ func (p procfs) parent(pid int) (int, string, error) {
 	return parseProcStat(stat)
 }
 
+// lastInput reads the access time of the terminal on pid's standard input
+// (a process of keetui's user, so /proc lets keetui read its descriptors).
+func (p procfs) lastInput(pid int) (time.Time, bool) {
+	tty, err := os.Readlink(filepath.Join(p.root, strconv.Itoa(pid), "fd", "0"))
+	if err != nil || !strings.HasPrefix(tty, "/dev/pts/") && !strings.HasPrefix(tty, "/dev/tty") {
+		return time.Time{}, false
+	}
+	var st syscall.Stat_t
+	if err := syscall.Stat(tty, &st); err != nil {
+		return time.Time{}, false
+	}
+	return time.Unix(st.Atim.Sec, st.Atim.Nsec), true
+}
+
 // parseProcStat reads the name and parent from /proc/<pid>/stat. The name
 // is in parentheses and may hold any byte, parentheses included, so the
 // fields after it start after the last ')'.

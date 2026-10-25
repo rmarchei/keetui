@@ -68,6 +68,21 @@ func (sysctlProcs) parent(pid int) (int, string, error) {
 	return int(kp.Eproc.Ppid), unix.ByteSliceToString(kp.Proc.P_comm[:]), nil
 }
 
+// lastInput reads the access time of pid's controlling terminal, a pseudo
+// terminal /dev/ttysNNN named by its device number.
+func (sysctlProcs) lastInput(pid int) (time.Time, bool) {
+	kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil || int(kp.Proc.P_pid) != pid || kp.Eproc.Tdev == -1 {
+		return time.Time{}, false
+	}
+	tty := fmt.Sprintf("/dev/ttys%03d", kp.Eproc.Tdev&0xffffff)
+	var st unix.Stat_t
+	if err := unix.Stat(tty, &st); err != nil || st.Rdev != kp.Eproc.Tdev {
+		return time.Time{}, false
+	}
+	return time.Unix(st.Atim.Sec, st.Atim.Nsec), true
+}
+
 // parseProcargs reads kern.procargs2: argc, the executable path, NUL
 // padding, argc arguments, then the environment up to an empty string.
 func parseProcargs(buf []byte) (info procInfo, ok bool) {

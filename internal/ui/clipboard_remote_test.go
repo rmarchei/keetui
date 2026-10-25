@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,7 @@ type fakeProcs struct {
 	procs   []procInfo
 	err     error
 	parents map[int]fakeParent // pid -> its parent and its own name
+	inputs  map[int]time.Time  // pid -> last input on its terminal
 	asked   []string           // names asked for
 }
 
@@ -45,6 +47,11 @@ func (f *fakeProcs) named(names []string) ([]procInfo, error) {
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeProcs) lastInput(pid int) (time.Time, bool) {
+	at, ok := f.inputs[pid]
+	return at, ok
 }
 
 func (f *fakeProcs) parent(pid int) (int, string, error) {
@@ -841,5 +848,62 @@ func TestHerdrLegOfALocalSessionIsCoveredByTheLocalClear(t *testing.T) {
 	}
 	if r, err := c.release(); err != nil || r.leg != clearOverwritten || len(writes) != 3 {
 		t.Fatalf("release = %+v, %v (writes %q)", r, err, writes)
+	}
+}
+
+// herdr hands OSC 52 to the client that last had input. With clients at
+// both ends, a local one that had input just now typed the copy's keypress
+// and would write this machine's clipboard unmarked, so keetui copies here.
+func TestHerdrClientsAtBothEndsFollowTheLocalKeypress(t *testing.T) {
+	herdrEnv := map[string]string{"HERDR_ENV": "1", "HERDR_SOCKET_PATH": "/home/u/.config/herdr/herdr.sock",
+		"HOME": "/home/u", "DISPLAY": ":0"}
+	const bin = "/usr/bin/herdr"
+	local := procInfo{pid: 201, exe: bin, args: []string{"herdr"}, env: []string{"HOME=/home/u", "DISPLAY=:0"}}
+	sshClient := procInfo{pid: 202, exe: bin, args: []string{"herdr"},
+		env: []string{"SSH_CONNECTION=10.0.0.9 50000 10.0.0.2 22", "HOME=/home/u"}}
+	bridge := procInfo{pid: 203, exe: bin, args: []string{"herdr", "remote-client-bridge", "--idle-timeout-v1"}}
+	now := time.Date(2026, 10, 25, 22, 0, 0, 0, time.UTC)
+	detect := func(env map[string]string, procs []procInfo, inputs map[int]time.Time, tmux func() (tmuxEnv, error)) remoteSession {
+		d := testDetector(env, &fakeProcs{procs: procs, inputs: inputs, parents: localChain()}, tmux)
+		d.now = func() time.Time { return now }
+		return d.detect()
+	}
+	for _, tc := range []struct {
+		name   string
+		other  procInfo
+		inputs map[int]time.Time
+		remote bool
+		why    string
+	}{
+		{"typed here just now, a client over ssh", sshClient, map[int]time.Time{201: now.Add(-2 * time.Second)}, false,
+			"a herdr client here (pid 201) had input just now, while a herdr client runs over SSH (pid 202)"},
+		{"typed here within Linux's 8-second slot", bridge, map[int]time.Time{201: now.Add(-8 * time.Second)}, false,
+			"while herdr --remote is attached (remote-client-bridge, pid 203)"},
+		{"typed here a while ago", bridge, map[int]time.Time{201: now.Add(-30 * time.Second)}, true,
+			"herdr --remote is attached (remote-client-bridge, pid 203)"},
+		{"the local terminal cannot be read", sshClient, nil, true, "a herdr client runs over SSH (pid 202)"},
+	} {
+		s := detect(herdrEnv, []procInfo{local, tc.other}, tc.inputs, nil)
+		if s.remote != tc.remote || !s.herdr || !s.herdrSSH || !strings.Contains(s.why, tc.why) {
+			t.Errorf("%s: remote %v, herdr %v, herdrSSH %v, why %q; want remote %v and why containing %q",
+				tc.name, s.remote, s.herdr, s.herdrSSH, s.why, tc.remote, tc.why)
+		}
+	}
+
+	// Only clients at the other end: remote, however fresh any input.
+	if s := detect(herdrEnv, []procInfo{sshClient}, map[int]time.Time{202: now}, nil); !s.remote {
+		t.Errorf("a client over ssh alone decided local: %q", s.why)
+	}
+
+	// tmux started from the herdr pane and last attached over SSH still
+	// counts, whatever the herdr clients say.
+	tmuxEnvVars := maps.Clone(herdrEnv)
+	tmuxEnvVars["TMUX"] = "/tmp/tmux-1000/default,1,0"
+	overSSH := func() (tmuxEnv, error) {
+		return parseTmuxEnv([]byte("SSH_CONNECTION=192.0.2.1 5 192.0.2.2 22\n")), nil
+	}
+	if s := detect(tmuxEnvVars, []procInfo{local, sshClient}, map[int]time.Time{201: now}, overSSH); !s.remote ||
+		!strings.Contains(s.why, "tmux session was last attached over SSH") {
+		t.Errorf("tmux attached over ssh in a herdr pane decided %v: %q", s.remote, s.why)
 	}
 }

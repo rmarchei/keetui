@@ -568,7 +568,12 @@ can be attached from anywhere at any time, and stops at the first answer:
    herdr resolves them, from `--session`, `session attach`,
    `HERDR_SOCKET_PATH` or `HERDR_SESSION`). You are remote if any of them
    runs over SSH (`SSH_CONNECTION` or `SSH_TTY` in its environment), or if
-   `herdr --remote` is attached (`remote-client-bridge`).
+   `herdr --remote` is attached (`remote-client-bridge`). With clients at
+   both ends, a local client whose terminal had input in the last 9 seconds
+   typed the copy's keypress: herdr would hand the copy to it, and it would
+   write this machine's clipboard unmarked, so keetui copies here, marked,
+   instead. Linux records terminal input only every 8 seconds, so typing at
+   both ends at once can go either way; F1 says which client decided.
 2. In tmux, the session environment, which tmux refreshes on every attach,
    while panes keep the environment they started with. In a tmux started
    from a herdr pane, both count: you are remote if tmux was last attached
@@ -615,8 +620,9 @@ F1 shows what decided, and where the copy went. In a remote session:
 
 **herdr.** In a herdr pane keetui sends a plain OSC 52, which herdr hands to
 the client that last typed: a client running over SSH writes it to its
-terminal, while a local client writes this machine's clipboard (on macOS
-with `pbcopy`, unmarked). herdr ignores an empty OSC 52, so keetui clears a
+terminal, while a local client writes this machine's clipboard itself, with
+plain `wl-copy`, `xclip` or `pbcopy`, unmarked, so clipboard history keeps
+it. herdr ignores an empty OSC 52, so keetui clears a
 terminal copy by copying a single space over it, and only while a herdr
 client runs over SSH at that moment; otherwise it sends nothing, since the
 space would land on this machine's clipboard, and the status bar says the
@@ -625,9 +631,10 @@ whatever was copied to that terminal's clipboard since. In a tmux started
 from a herdr pane, tmux hands keetui's passthrough on to herdr, so its clear
 copies a space too while a herdr client runs over SSH. With
 `clipboard_osc52` set to `always` and only local herdr clients, the terminal
-copy goes to a local client, which writes this machine's clipboard (herdr
-skips the write when the clipboard already holds the same text); the local
-clear covers it, and keetui sends herdr nothing more.
+copy goes to a local client, which writes this machine's clipboard,
+unmarked (on macOS herdr skips the write when the clipboard already holds
+the same text); the local clear covers it, and keetui sends herdr nothing
+more.
 
 **tmux.** Inside tmux, keetui sends no plain OSC 52 (unless you ask for one
 for a tmux it cannot query, see below): with the default

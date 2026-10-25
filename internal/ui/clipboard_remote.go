@@ -17,8 +17,10 @@ import (
 // at any time, so keetui checks for each copy, in this order:
 //
 //  1. In a herdr pane, the clients of keetui's herdr server: herdr hands
-//     OSC 52 to a client, and a client running over SSH passes it on to its
-//     own terminal.
+//     OSC 52 to the client that last had input, and a client running over
+//     SSH passes it on to its own terminal, while a local one writes this
+//     machine's clipboard unmarked. With clients at both ends, a local one
+//     that had input just now (the copy's keypress) keeps the copy here.
 //  2. In tmux, the session environment, which tmux refreshes on attach while
 //     panes keep the environment they started with. In tmux started from a
 //     herdr pane, both count: the session is remote if either says so.
@@ -31,7 +33,7 @@ type remoteSession struct {
 	remote   bool
 	why      string  // what decided, for F1 help
 	herdr    bool    // clients of keetui's herdr server were found
-	herdrSSH bool    // one of them runs over SSH, or herdr --remote is attached
+	herdrSSH bool    // one of them runs over SSH, or herdr --remote is attached (even when a local one decided)
 	tmux     tmuxEnv // the tmux session environment; nil unless tmux answered
 }
 
@@ -50,7 +52,17 @@ type processTable interface {
 	named(names []string) ([]procInfo, error)
 	// parent returns pid's parent and the name of pid's executable.
 	parent(pid int) (ppid int, name string, err error)
+	// lastInput returns when the terminal that pid reads from last had
+	// input (its access time, as w(1) reports idle time); false when pid
+	// reads no terminal or it cannot be read.
+	lastInput(pid int) (time.Time, bool)
 }
+
+// localInputWindow is how recent a local herdr client's input must be to
+// count as the copy's keypress. Linux updates a terminal's access time only
+// when it enters a new 8-second slot, so it may lag the keypress by up to 8
+// seconds; macOS keeps it exact.
+const localInputWindow = 9 * time.Second
 
 // procScanBudget bounds a process scan. One that takes longer counts as
 // failed, and detection goes on to the next check.
@@ -68,6 +80,7 @@ type sessionDetector struct {
 	tmuxEnv func() (tmuxEnv, error) // the tmux session environment; nil skips tmux
 	pid     int                     // keetui's own
 	resolve func(string) (string, error)
+	now     func() time.Time
 }
 
 func newSessionDetector(getenv func(string) string) sessionDetector {
@@ -77,6 +90,7 @@ func newSessionDetector(getenv func(string) string) sessionDetector {
 		tmuxEnv: readTmuxEnv,
 		pid:     os.Getpid(),
 		resolve: filepath.EvalSymlinks,
+		now:     time.Now,
 	}
 }
 
@@ -93,7 +107,7 @@ func (d sessionDetector) detect() remoteSession {
 			s.tmux = env
 			if v, known := env.lookup("SSH_CONNECTION"); known {
 				switch {
-				case s.herdrSSH:
+				case s.remote:
 				case v != "":
 					s.remote, s.why = true, "the tmux session was last attached over SSH (SSH_CONNECTION in its environment)"
 				case s.herdr:
@@ -158,7 +172,8 @@ func (d sessionDetector) herdrSession() remoteSession {
 		v := d.getenv(name)
 		return v, v != ""
 	})
-	clients := 0
+	var local []int // pids of local clients
+	remote := ""    // why the first remote client counts
 	for _, p := range procs {
 		kind := herdrInvocation(p.args)
 		if p.pid == d.pid || kind == herdrOther {
@@ -167,26 +182,41 @@ func (d sessionDetector) herdrSession() remoteSession {
 		if !d.sameHerdrServer(p, want, wantKnown) {
 			continue // a client of another herdr session
 		}
-		switch kind {
-		case herdrBridge:
+		switch {
+		case kind == herdrBridge:
 			// herdr --remote on the user's machine runs it over SSH.
-			return remoteSession{remote: true, herdr: true, herdrSSH: true,
-				why: fmt.Sprintf("herdr --remote is attached (remote-client-bridge, pid %d)", p.pid)}
-		case herdrClient:
-			if p.env == nil {
-				continue
+			if remote == "" {
+				remote = fmt.Sprintf("herdr --remote is attached (remote-client-bridge, pid %d)", p.pid)
 			}
-			clients++
-			if envValue(p.env, "SSH_CONNECTION") != "" || envValue(p.env, "SSH_TTY") != "" {
-				return remoteSession{remote: true, herdr: true, herdrSSH: true,
-					why: fmt.Sprintf("a herdr client runs over SSH (pid %d)", p.pid)}
+		case p.env == nil:
+		case envValue(p.env, "SSH_CONNECTION") != "" || envValue(p.env, "SSH_TTY") != "":
+			if remote == "" {
+				remote = fmt.Sprintf("a herdr client runs over SSH (pid %d)", p.pid)
 			}
+		default:
+			local = append(local, p.pid)
 		}
 	}
-	if clients == 0 {
+	switch {
+	case remote == "" && len(local) == 0:
 		return remoteSession{}
+	case remote == "":
+		return remoteSession{herdr: true, why: fmt.Sprintf("every herdr client runs locally (%d found)", len(local))}
 	}
-	return remoteSession{herdr: true, why: fmt.Sprintf("every herdr client runs locally (%d found)", clients)}
+	// Clients at both ends: herdr gives the copy to the one that last had
+	// input. A local one that had input just now typed the copy's keypress,
+	// and would write this machine's clipboard unmarked: copy here instead.
+	now := time.Now
+	if d.now != nil {
+		now = d.now
+	}
+	for _, pid := range local {
+		if at, ok := d.procs.lastInput(pid); ok && now().Sub(at) <= localInputWindow {
+			return remoteSession{herdr: true, herdrSSH: true,
+				why: fmt.Sprintf("a herdr client here (pid %d) had input just now, while %s", pid, remote)}
+		}
+	}
+	return remoteSession{remote: true, herdr: true, herdrSSH: true, why: remote}
 }
 
 // sameHerdrServer reports whether a herdr client attaches to keetui's
