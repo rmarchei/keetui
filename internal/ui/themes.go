@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"github.com/rmarchei/keetui/internal/config"
 )
 
 // Theme defines a set of colors for the UI.
@@ -20,8 +22,40 @@ type Theme struct {
 	StatusFg    string
 	SelectionBg string // the bar behind the selected row
 	SelectionFg string
-	Canvas      string // painted behind the screen on a terminal of the other tone
+	Canvas      string // painted behind the screen on a terminal of the other tone; "" never
 	Light       bool   // designed for a light background
+}
+
+// set overrides the color of one of config.ColorRoles.
+func (t *Theme) set(role, value string) {
+	switch role {
+	case "primary":
+		t.Primary = value
+	case "label":
+		t.Label = value
+	case "muted":
+		t.Muted = value
+	case "success":
+		t.Success = value
+	case "error":
+		t.Error = value
+	case "warn":
+		t.Warn = value
+	case "text":
+		t.Text = value
+	case "title_fg":
+		t.TitleFg = value
+	case "status_bg":
+		t.StatusBg = value
+	case "status_fg":
+		t.StatusFg = value
+	case "selection_bg":
+		t.SelectionBg = value
+	case "selection_fg":
+		t.SelectionFg = value
+	case "canvas":
+		t.Canvas = value
+	}
 }
 
 var builtinThemes = map[string]Theme{
@@ -71,6 +105,24 @@ var builtinThemes = map[string]Theme{
 		SelectionFg: "#FFFF00",
 		Canvas:      "#000000",
 	},
+	// terminal uses the terminal's own palette (ANSI colors 0-15) and default
+	// text color, so it takes on whatever theme the terminal has. Bars are
+	// light grey with black text, which suits light and dark palettes alike;
+	// the screen is never painted.
+	"terminal": {
+		Primary:     "5",
+		Label:       "6",
+		Muted:       "8",
+		Success:     "2",
+		Error:       "1",
+		Warn:        "3",
+		Text:        "",
+		TitleFg:     "15",
+		StatusBg:    "7",
+		StatusFg:    "0",
+		SelectionBg: "7",
+		SelectionFg: "0",
+	},
 }
 
 // lightBackground is the terminal's answer to the background color query
@@ -82,9 +134,9 @@ var lightBackground, backgroundKnown bool
 // whole screen when it was chosen by name and the terminal reported a
 // background of the other tone, such as the light theme on a dark terminal;
 // ok is false when the terminal's own colors suit the theme.
-func canvasStyle(name string) (style lipgloss.Style, ok bool) {
-	t := GetTheme(name)
-	if name == "auto" || !backgroundKnown || t.Light == lightBackground {
+func canvasStyle(cfg config.Config) (style lipgloss.Style, ok bool) {
+	t := themeFor(cfg)
+	if cfg.Theme() == "auto" || t.Canvas == "" || !backgroundKnown || t.Light == lightBackground {
 		return style, false
 	}
 	return lipgloss.NewStyle().Background(lipgloss.Color(t.Canvas)).Foreground(lipgloss.Color(t.Text)), true
@@ -102,15 +154,36 @@ func paintCanvas(content string, width int, style lipgloss.Style) string {
 	return strings.Join(lines, "\n")
 }
 
-// GetTheme returns a theme by name: "auto" follows the terminal background,
-// and unknown names fall back to "dark".
-func GetTheme(name string) Theme {
+// resolveTheme names the built-in theme that name selects: "auto" follows
+// the terminal background, and unknown names fall back to "dark".
+func resolveTheme(name string) string {
 	if name == "auto" {
-		name = "dark"
 		if lightBackground {
-			name = "light"
+			return "light"
 		}
+		return "dark"
 	}
+	if _, ok := builtinThemes[name]; !ok {
+		return "dark"
+	}
+	return name
+}
+
+// themeFor is the theme a configuration selects, with its color overrides
+// for that theme laid over the built-in colors.
+func themeFor(cfg config.Config) Theme {
+	name := resolveTheme(cfg.Theme())
+	t := builtinThemes[name]
+	for role, value := range cfg.Colors[name] {
+		t.set(role, value)
+	}
+	return t
+}
+
+// GetTheme returns a built-in theme by name: "auto" follows the terminal
+// background, and unknown names fall back to "dark".
+func GetTheme(name string) Theme {
+	name = resolveTheme(name)
 	if t, ok := builtinThemes[name]; ok {
 		return t
 	}
@@ -119,7 +192,7 @@ func GetTheme(name string) Theme {
 
 // ThemeNames returns the list of available built-in theme names.
 func ThemeNames() []string {
-	return []string{"auto", "dark", "light", "high-contrast"}
+	return []string{"auto", "dark", "light", "high-contrast", "terminal"}
 }
 
 // ApplyTheme updates all global style variables to use the given theme's colors.

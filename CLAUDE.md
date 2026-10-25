@@ -174,7 +174,8 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 | `password_length` | 20 | Default length for generated passwords (min: 8) |
 | `show_password_strength` | true | Show password strength indicator in detail and editor views |
 | `default_preset` | `"Strong"` | Default password preset: `PIN`, `Alphanumeric`, `Strong`, `Passphrase`, `Custom` |
-| `theme` | `"auto"` | Color theme: `auto` (follows the terminal background, dark without an answer), `dark`, `light`, or `high-contrast` |
+| `theme` | `"auto"` | Color theme: `auto` (follows the terminal background, dark without an answer), `dark`, `light`, `high-contrast`, or `terminal` (ANSI palette, never painted) |
+| `colors` | (none) | Per-theme color overrides: theme name → role (`config.ColorRoles`) → `#RGB`/`#RRGGBB`, ANSI `0`-`255`, or `""` (terminal default) |
 | `confirm_quit` | true | Confirm before quitting, even without unsaved changes (`false`: disable) |
 | `backup_on_save` | false | Create `.kdbx.bak` backup before each save |
 | `keybindings` | (object) | Override default keybindings (see `keybindings.go` for keys) |
@@ -202,7 +203,7 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - Entry counts must not score passwords. Stats/audit workers analyze a detached `HealthSnapshot`, never the mutable live DB. Cancel scans when leaving their view or locking/quitting, keep them alive under overlays, and reject stale results by generation.
 - Save keybindings as sparse overrides and refresh the browser's cached keys after settings changes. Loading repairs only conflicting overrides; navigation must not dismiss a failed settings-save warning (full details remain in F1 help).
 - Cross-view communication uses typed message structs (e.g., `type FooMsg struct{}`)
-- Styles are centralized in `internal/ui/styles.go`, themes in `internal/ui/themes.go`; `ApplyTheme` builds every style, so a new style needs a theme color there, not a literal. The `auto` theme follows the terminal background (`tea.RequestBackgroundColor` in `Init`, `lightBackground`); re-pull styles captured at construction when it changes. A theme chosen by name whose tone differs from the terminal's reported background is painted on its `Canvas` color (`canvasStyle`/`paintCanvas` in `AppModel.View`), so its text colors stay readable
+- Styles are centralized in `internal/ui/styles.go`, themes in `internal/ui/themes.go`; `ApplyTheme` builds every style, so a new style needs a theme color there, not a literal. Always apply `themeFor(cfg)`, which resolves `auto` and lays the `colors` overrides of the resolved theme over it; a new color role needs an entry in `config.ColorRoles` and in `Theme.set`. The `auto` theme follows the terminal background (`tea.RequestBackgroundColor` in `Init`, `lightBackground`); re-pull styles captured at construction when it changes. A theme chosen by name whose tone differs from the terminal's reported background is painted on its `Canvas` color (`canvasStyle`/`paintCanvas` in `AppModel.View`), so its text colors stay readable
 - Always run `gofmt -w .` before committing (enforced by pre-commit hook)
 
 ## Git Conventions

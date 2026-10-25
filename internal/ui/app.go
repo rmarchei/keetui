@@ -176,7 +176,7 @@ func NewApp(filePath, keyFilePath string, cfg config.Config, readOnly ...bool) A
 	if len(readOnly) > 0 {
 		ro = readOnly[0]
 	}
-	ApplyTheme(GetTheme(cfg.Theme()))
+	ApplyTheme(themeFor(cfg))
 	return AppModel{
 		state:        viewUnlock,
 		unlock:       NewUnlockModel(filePath, keyFilePath),
@@ -298,7 +298,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if bg, ok := msg.(tea.BackgroundColorMsg); ok {
 		lightBackground, backgroundKnown = !bg.IsDark(), true
 		if m.cfg.Theme() == "auto" {
-			ApplyTheme(GetTheme("auto"))
+			ApplyTheme(themeFor(m.cfg))
 			setInputPromptStyle(&m.browser.searchInput, focusedStyle)
 		}
 		return m, nil
@@ -1277,7 +1277,7 @@ func (m AppModel) updateView(state viewState, msg tea.Msg) (tea.Model, tea.Cmd) 
 
 func (m AppModel) View() tea.View {
 	content := m.viewContent()
-	if canvas, ok := canvasStyle(m.cfg.Theme()); ok {
+	if canvas, ok := canvasStyle(m.cfg); ok {
 		width, _ := viewSize(m.width, m.height)
 		content = paintCanvas(content, width, canvas)
 	}

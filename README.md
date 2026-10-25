@@ -306,7 +306,8 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `password_digits` | true | Include digits (0-9) in generated passwords |
 | `password_symbols` | true | Include symbols (!@#$%^&*()-_=+) in generated passwords |
 | `default_preset` | `"Strong"` | Default password preset: `PIN`, `Alphanumeric`, `Strong`, `Passphrase`, `Custom` |
-| `theme` | `"auto"` | Color theme: `auto` (light or dark, following the terminal background; dark if the terminal does not say), `dark`, `light`, or `high-contrast`. A theme chosen by name paints its own background when the terminal reports one of the other tone, such as `light` on a dark terminal |
+| `theme` | `"auto"` | Color theme: `auto` (light or dark, following the terminal background; dark if the terminal does not say), `dark`, `light`, `high-contrast`, or `terminal` (the terminal's own palette). A theme chosen by name paints its own background when the terminal reports one of the other tone, such as `light` on a dark terminal |
+| `colors` | (none) | Override theme colors, per theme: see [Colors](#colors) |
 | `confirm_quit` | true | Confirm before quitting, even without unsaved changes (`false`: disable) |
 | `backup_on_save` | false | Create a `.kdbx.bak` backup copy before each save |
 
@@ -331,6 +332,46 @@ and `Backspace` restores that action's default. Conflicting or reserved keys
 are rejected. While recording, navigation keys such as `Tab` and function keys
 such as `F2` can be assigned to browser/detail actions; outside recording,
 settings keeps its own navigation controls. Changes remain a draft until you save.
+
+### Colors
+
+The `terminal` theme uses the terminal's own palette (its 16 ANSI colors and
+default text color), so keetui takes on whatever theme the terminal has, such
+as Solarized, Catppuccin or Gruvbox. It never paints its own background.
+
+Any theme's colors can be overridden in the config file under `colors`, keyed
+by theme name and then by role:
+
+```json
+{
+  "theme": "auto",
+  "colors": {
+    "dark": { "primary": "#89B4FA", "selection_bg": "#313244" },
+    "light": { "primary": "#1E66F5" },
+    "terminal": { "muted": "244" }
+  }
+}
+```
+
+`auto` uses the overrides of `dark` or `light`, whichever it picks. A color
+is `#RGB` or `#RRGGBB`, an ANSI color number from `0` to `255` (`0`-`15` are
+the terminal's palette), or `""` for the terminal's default color. The roles:
+
+| Role | Used for |
+|------|----------|
+| `primary` | Accent: key hints, focus, group icons, the `keetui` chip, section headings |
+| `label` | Field labels and secondary columns such as usernames |
+| `muted` | Hints, hosts, timestamps, and the screen behind a dialog |
+| `text` | Values and entry titles |
+| `success`, `error`, `warn` | Messages, meters and markers |
+| `title_fg` | Text on the `keetui` chip |
+| `status_bg`, `status_fg` | The header and status bars |
+| `selection_bg`, `selection_fg` | The selected row |
+| `canvas` | The background painted when the theme's tone differs from the terminal's (`""`: never) |
+
+Unknown roles and values that are not colors are ignored, with a warning when
+keetui starts. Colors are edited in the config file only; saving settings from
+the TUI keeps them.
 
 ### Per-database settings
 

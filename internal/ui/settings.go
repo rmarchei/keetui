@@ -69,7 +69,7 @@ var settingDescriptions = [settingCount]string{
 	"Include digits in generated passwords",
 	"Include symbols in generated passwords",
 	"Choose the default password generation preset",
-	"Choose the color theme; auto follows the terminal background",
+	"Choose the color theme; auto follows the terminal background, terminal uses its palette",
 	"Confirm before quitting, even without unsaved changes",
 	"Create a .kdbx.bak backup before each save",
 	"Record shortcuts by pressing keys; conflicts are checked immediately",
@@ -284,7 +284,7 @@ func (m SettingsModel) save() (tea.Model, tea.Cmd) {
 		m.saveError = fmt.Sprintf("Settings not saved: %s", err)
 		return m, nil
 	}
-	ApplyTheme(GetTheme(cfg.Theme()))
+	ApplyTheme(themeFor(cfg))
 	m.cfg = cfg
 	m.saveError, m.status, m.isError = "", "", false
 	saved := ConfigSavedMsg{Cfg: cfg}

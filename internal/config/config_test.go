@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -541,5 +542,43 @@ func TestFailedSaveKeepsTheOldConfig(t *testing.T) {
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != string(old) {
 		t.Errorf("a failed save changed the config: %q, %v", data, err)
+	}
+}
+
+func TestIsColor(t *testing.T) {
+	for value, want := range map[string]bool{
+		"": true, "#89B4FA": true, "#fff": true, "0": true, "15": true, "255": true,
+		"256": false, "-1": false, "05": false, "#12345": false, "#GGGGGG": false, "blue": false,
+	} {
+		if got := IsColor(value); got != want {
+			t.Errorf("IsColor(%q) = %v, want %v", value, got, want)
+		}
+	}
+}
+
+func TestColorsAreValidatedOnLoadAndSurviveSaving(t *testing.T) {
+	path := isolateConfig(t)
+	data := `{"colors": {
+		"dark": {"primary": "#89B4FA", "label": "245", "text": "", "muted": "grey", "sparkle": "#FFF"},
+		"light": {"warn": "#12345"}
+	}}`
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err == nil || !strings.Contains(err.Error(), `dark.muted: "grey" is not a color`) || !strings.Contains(err.Error(), "dark.sparkle: unknown role") {
+		t.Errorf("Load error = %v, want the dropped colors named", err)
+	}
+	want := map[string]map[string]string{"dark": {"primary": "#89B4FA", "label": "245", "text": ""}}
+	if !reflect.DeepEqual(cfg.Colors, want) {
+		t.Fatalf("colors = %v, want %v", cfg.Colors, want)
+	}
+
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Load()
+	if err != nil || !reflect.DeepEqual(again.Colors, want) {
+		t.Errorf("after saving: colors = %v, err %v", again.Colors, err)
 	}
 }

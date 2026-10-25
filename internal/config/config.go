@@ -8,6 +8,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -27,6 +30,9 @@ type Config struct {
 	ConfirmQuit           *bool        `json:"confirm_quit,omitempty"`
 	BackupOnSave          *bool        `json:"backup_on_save,omitempty"`
 	KeyBindingsPtr        *KeyBindings `json:"keybindings,omitempty"`
+	// Colors overrides theme colors: theme name, then role (ColorRoles), then
+	// a color. "auto" picks the overrides of "dark" or "light".
+	Colors map[string]map[string]string `json:"colors,omitempty"`
 }
 
 // Default returns the default configuration.
@@ -313,11 +319,63 @@ func Load() (Config, error) {
 		return Default(), fmt.Errorf("invalid config %s: %w", configPath(), err)
 	}
 	cfg.Sanitize()
+	var problems []error
 	if cfg.KeyBindingsPtr != nil {
 		cfg.KeyBindingsPtr, err = repairBindings(*cfg.KeyBindingsPtr)
 		if err != nil {
-			return cfg, fmt.Errorf("config %s: %w", configPath(), err)
+			problems = append(problems, fmt.Errorf("config %s: %w", configPath(), err))
 		}
 	}
-	return cfg, nil
+	if dropped := cfg.sanitizeColors(); len(dropped) > 0 {
+		problems = append(problems, fmt.Errorf("config %s: ignored colors: %s", configPath(), strings.Join(dropped, "; ")))
+	}
+	return cfg, errors.Join(problems...)
+}
+
+// ColorRoles are the theme colors the colors setting can override.
+var ColorRoles = []string{
+	"primary", "label", "muted", "success", "error", "warn", "text",
+	"title_fg", "status_bg", "status_fg", "selection_bg", "selection_fg", "canvas",
+}
+
+// IsColor reports whether s is a color the colors setting accepts: "#RGB"
+// or "#RRGGBB", an ANSI color number from 0 to 255 (the terminal's palette),
+// or "" for the terminal's default color.
+func IsColor(s string) bool {
+	if s == "" {
+		return true
+	}
+	if hex, ok := strings.CutPrefix(s, "#"); ok {
+		if len(hex) != 3 && len(hex) != 6 {
+			return false
+		}
+		_, err := strconv.ParseUint(hex, 16, 32)
+		return err == nil
+	}
+	n, err := strconv.Atoi(s)
+	return err == nil && n >= 0 && n <= 255 && strconv.Itoa(n) == s
+}
+
+// sanitizeColors drops color overrides with an unknown role or a value that
+// is not a color, and describes what it dropped.
+func (c *Config) sanitizeColors() []string {
+	var dropped []string
+	for theme, roles := range c.Colors {
+		for role, value := range roles {
+			switch {
+			case !slices.Contains(ColorRoles, role):
+				dropped = append(dropped, fmt.Sprintf("%s.%s: unknown role", theme, role))
+			case !IsColor(value):
+				dropped = append(dropped, fmt.Sprintf("%s.%s: %q is not a color", theme, role, value))
+			default:
+				continue
+			}
+			delete(roles, role)
+		}
+		if len(roles) == 0 {
+			delete(c.Colors, theme)
+		}
+	}
+	slices.Sort(dropped)
+	return dropped
 }
