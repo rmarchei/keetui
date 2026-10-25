@@ -98,6 +98,11 @@ func TestHerdrInvocation(t *testing.T) {
 		{[]string{"herdr", "remote-client-bridge"}, herdrBridge},
 		{[]string{"herdr", "remote-client-bridge", "--idle-timeout-v1"}, herdrBridge},
 		{[]string{"herdr", "--session", "agents", "remote-client-bridge", "--idle-timeout-v1"}, herdrBridge},
+		// herdr drops --session wherever it stands before "--", and ignores
+		// what follows client.
+		{[]string{"herdr", "client", "--session", "work"}, herdrClient},
+		{[]string{"herdr", "terminal", "attach", "--session=work", "t1"}, herdrClient},
+		{[]string{"herdr", "client", "extra"}, herdrClient},
 		// The server, and commands that do their job and exit.
 		{nil, herdrOther},
 		{[]string{"herdr", "server"}, herdrOther},
@@ -110,7 +115,11 @@ func TestHerdrInvocation(t *testing.T) {
 		{[]string{"herdr", "session", "attach", "--help"}, herdrOther},
 		{[]string{"herdr", "session", "list"}, herdrOther},
 		{[]string{"herdr", "terminal", "attach", "--help"}, herdrOther},
-		{[]string{"herdr", "client", "extra"}, herdrOther},
+		{[]string{"herdr", "client", "--help"}, herdrOther},
+		{[]string{"herdr", "--session", "work", "session", "attach", "work"}, herdrOther}, // prints help
+		{[]string{"herdr", "terminal", "attach", "--session", "work"}, herdrOther},        // no target
+		{[]string{"herdr", "--remote-keybindings", "server"}, herdrOther},                 // needs --remote
+		{[]string{"herdr", "--handoff"}, herdrOther},
 		{[]string{"herdr", "update"}, herdrOther},
 		{[]string{"herdr", "--version"}, herdrOther},
 		{[]string{"herdr", "--help"}, herdrOther},
@@ -119,6 +128,8 @@ func TestHerdrInvocation(t *testing.T) {
 		{[]string{"herdr", "--remote", "mac"}, herdrOther},
 		{[]string{"herdr", "--remote=user@mac", "--session", "work"}, herdrOther},
 		{[]string{"herdr", "--machine", "mac", "pane", "list"}, herdrOther},
+		{[]string{"herdr", "--session", "work", "--remote", "mac"}, herdrOther},
+		{[]string{"herdr", "client", "--remote=mac"}, herdrOther},
 		{[]string{"herdr", "--", "client"}, herdrOther},
 	} {
 		if got := herdrInvocation(tc.args); got != tc.want {

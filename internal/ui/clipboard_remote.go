@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 )
@@ -190,45 +189,50 @@ const (
 	herdrBridge                  // remote-client-bridge: a client on another machine
 )
 
-// herdrInvocation classifies a herdr command line, as herdr v0.9 parses it
-// (src/main.rs, session.rs, remote/args.rs, cli.rs): herdr with flags only
-// (--session) attaches, as do client, session attach, terminal attach and
-// agent attach. --remote and --machine reach another machine's herdr, and
-// herdr server is the server.
+// herdrInvocation classifies a herdr command line as herdr v0.9 parses it
+// (src/main.rs, session.rs, remote/attach.rs, cli.rs): first exactly
+// herdr session attach NAME; otherwise --session NAME may stand anywhere
+// before "--", and what is left attaches when it is empty, client, or
+// terminal attach or agent attach with a target. --remote and --machine
+// reach another machine's herdr, herdr server is the server, a help flag
+// prints help, and other commands do their job and exit.
 func herdrInvocation(args []string) herdrKind {
 	if len(args) == 0 {
 		return herdrOther
 	}
-	rest := args[1:]
-flags:
-	for len(rest) > 0 {
-		switch a := rest[0]; {
-		case a == "--session", a == "--remote-keybindings":
-			if len(rest) < 2 {
-				return herdrOther
+	isHelp := func(a string) bool { return a == "help" || a == "--help" || a == "-h" }
+	if len(args) > 2 && args[1] == "session" && args[2] == "attach" {
+		if len(args) == 4 && !isHelp(args[3]) {
+			return herdrClient
+		}
+		return herdrOther
+	}
+	var rest []string
+	for i := 1; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "--":
+			rest = append(rest, args[i:]...)
+			i = len(args)
+		case a == "--session":
+			if i+1 == len(args) {
+				return herdrOther // a missing name
 			}
-			rest = rest[2:]
-		case strings.HasPrefix(a, "--session="), strings.HasPrefix(a, "--remote-keybindings="), a == "--handoff":
-			rest = rest[1:]
-		case strings.HasPrefix(a, "-"):
-			// --remote, --machine, or a flag that prints and exits.
+			i++
+		case strings.HasPrefix(a, "--session="):
+		case a == "--help", a == "-h", a == "--remote", strings.HasPrefix(a, "--remote="):
 			return herdrOther
 		default:
-			break flags
+			rest = append(rest, a)
 		}
 	}
-	isHelp := func(a string) bool { return a == "help" || a == "--help" || a == "-h" }
 	switch {
 	case len(rest) == 0:
 		return herdrClient
 	case rest[0] == "remote-client-bridge":
 		return herdrBridge
-	case len(rest) == 1 && rest[0] == "client":
+	case rest[0] == "client":
 		return herdrClient
-	case len(rest) == 3 && rest[0] == "session" && rest[1] == "attach" && !isHelp(rest[2]):
-		return herdrClient
-	case len(rest) >= 3 && (rest[0] == "terminal" || rest[0] == "agent") && rest[1] == "attach" &&
-		!slices.ContainsFunc(rest[2:], isHelp):
+	case len(rest) >= 3 && (rest[0] == "terminal" || rest[0] == "agent") && rest[1] == "attach" && !isHelp(rest[2]):
 		return herdrClient
 	}
 	return herdrOther
