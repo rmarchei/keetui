@@ -139,7 +139,7 @@ func newTestLinux(env map[string]string, x *fakeX11, tools *fakeTools) *linuxCli
 		run:    tools.run,
 		runX:   tools.run,
 		output: tools.output,
-		newX11: func(string) x11Owner { return x },
+		newX11: func(string, string) x11Owner { return x },
 	}
 }
 

@@ -115,6 +115,7 @@ type nativeRoute struct {
 	dest         string // where the copy goes, for F1
 	why          string // with !ok: why the local clipboard is not used, for F1
 	display      string // Linux: the X display the copy goes to; "" for Wayland
+	authority    string // Linux: the X authority file for display; "" for keetui's own
 	forwarded    bool   // display is one that the SSH session forwards
 }
 
@@ -557,6 +558,8 @@ func localHelp(r copyResult) string {
 			"there, set clipboard_osc52 to never.", l.display))
 	case r.native && l.dest != "":
 		lines = append(lines, "Copied to "+l.dest+".")
+	case r.nativeErr != nil && l.authority != "":
+		lines = append(lines, fmt.Sprintf("Copying to %s failed: %s (X authority file %s, from the tmux session)", l.dest, r.nativeErr, l.authority))
 	case r.nativeErr != nil && l.dest != "":
 		lines = append(lines, fmt.Sprintf("Copying to %s failed: %s", l.dest, r.nativeErr))
 	case !l.ok && l.why != "":

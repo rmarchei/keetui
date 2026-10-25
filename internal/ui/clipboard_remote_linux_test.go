@@ -112,7 +112,7 @@ func TestForwardedDisplayCopy(t *testing.T) {
 	var displays []string
 	x, tools := &fakeX11{}, &fakeTools{installed: []string{"xclip", "xsel"}}
 	l := newTestLinux(map[string]string{"DISPLAY": ":0", "TMUX": "x"}, x, tools)
-	l.newX11 = func(display string) x11Owner { displays = append(displays, display); return x }
+	l.newX11 = func(display, _ string) x11Owner { displays = append(displays, display); return x }
 	c, term := newFakeClipboard(nil)
 	c.native = l
 	c.detect = func() remoteSession { return tmuxSession("DISPLAY=localhost:12.0\n") }
@@ -164,7 +164,7 @@ func TestDisplayChangeKeepsTheOldClipboard(t *testing.T) {
 		}
 	}
 	l := newTestLinux(map[string]string{"DISPLAY": ":0", "TMUX": "x", "HOME": "/home/u"}, nil, tools)
-	l.newX11 = func(display string) x11Owner {
+	l.newX11 = func(display, _ string) x11Owner {
 		owners[display] = &fakeX11{}
 		return owners[display]
 	}
@@ -208,6 +208,46 @@ func TestDisplayChangeKeepsTheOldClipboard(t *testing.T) {
 		if len(x.calls) == 0 || x.calls[len(x.calls)-1] != "Close" || forwardedDisplay(display) && slices.Contains(x.calls, "Owns") {
 			t.Errorf("%s: calls %q", display, x.calls)
 		}
+	}
+}
+
+// Over ssh -X into a tmux started on a desktop, the pane's XAUTHORITY is
+// the display manager's: the session's, which tmux refreshes on attach,
+// goes with the session's DISPLAY.
+func TestSessionDisplayTakesTheSessionsAuthority(t *testing.T) {
+	env := map[string]string{"DISPLAY": ":0", "XAUTHORITY": "/run/user/1000/gdm/Xauthority", "HOME": "/home/u", "TMUX": "x"}
+	for _, tc := range []struct {
+		session string
+		want    string
+	}{
+		{"DISPLAY=localhost:10.0\n-XAUTHORITY\n", "/home/u/.Xauthority"},
+		{"DISPLAY=localhost:10.0\nXAUTHORITY=/tmp/ssh.xauth\n", "/tmp/ssh.xauth"},
+		{"DISPLAY=localhost:10.0\n", ""}, // tmux does not track it: keetui's own
+	} {
+		var authorities []string
+		l := newTestLinux(env, nil, &fakeTools{})
+		l.newX11 = func(_, authority string) x11Owner { authorities = append(authorities, authority); return &fakeX11{} }
+		r := l.route(tmuxSession(tc.session))
+		if !r.ok || r.authority != tc.want {
+			t.Fatalf("%q: route = %+v", tc.session, r)
+		}
+		if _, err := l.write([]byte("synthetic"), true, r); err != nil || !slices.Equal(authorities, []string{tc.want}) {
+			t.Fatalf("%q: owner authorities %q, %v", tc.session, authorities, err)
+		}
+	}
+	// Without tmux, keetui's own environment counts.
+	l := newTestLinux(map[string]string{"DISPLAY": "localhost:10.0", "XAUTHORITY": "/tmp/x"}, nil, &fakeTools{})
+	if r := l.route(sshSession); !r.ok || r.authority != "" {
+		t.Fatalf("route = %+v", r)
+	}
+
+	// F1 names the file of a copy that failed.
+	c, _ := newFakeClipboard(nil)
+	c.native = newTestLinux(env, &fakeX11{copyErr: errors.New("x11clip: EOF")}, &fakeTools{})
+	c.detect = func() remoteSession { return tmuxSession("DISPLAY=localhost:10.0\n-XAUTHORITY\n") }
+	res, err := c.copy("synthetic-secret", copyOptions{transient: true, osc52: config.OSC52Auto})
+	if help := clipboardHelp(res, err); res.native || !strings.Contains(help, "X authority file /home/u/.Xauthority") {
+		t.Fatalf("copy = %+v, %v; help %q", res, err, help)
 	}
 }
 

@@ -429,11 +429,11 @@ clipboard's owner sends in parts (INCR) is read to the end, and none of it is
 left behind. A transfer that takes more than 2 seconds counts as someone
 else's copy and is left in place.
 
-keetui finds the X server's cookie the way its X library does: entries for
-this host (as display managers and `ssh -X` write them) or for any host. A
-cookie stored only for an IP address, for example for `DISPLAY=127.0.0.1:0`,
-is not found, so copies go through xclip or xsel, unmarked, and the status bar
-says so.
+keetui finds the X server's cookie in `$XAUTHORITY` (or `~/.Xauthority`) as
+libxcb does: for a local socket or `127.0.0.1`, the entry for this host's
+name, as display managers and `ssh -X` write it; for any other address, the
+entry for the server's IP address, as sshd writes it with
+`X11UseLocalhost no` (`DISPLAY=hostname:10.0`); and entries for any host.
 
 **Terminal clipboard (OSC 52).** Over SSH, or when no local clipboard is
 available, keetui sends the copy to the terminal with OSC 52 instead. These
@@ -479,16 +479,18 @@ F1 shows what decided, and where the copy went. In a remote session:
 - **Linux**: keetui ignores `WAYLAND_DISPLAY`, which belongs to the remote
   host's compositor, and uses an X display only if sshd forwards it
   (`ssh -X` or `-Y`: `localhost:10.0` and up). Inside tmux the session's
-  `DISPLAY` counts, not the pane's. Any other display (`:0` of the remote
-  desktop, a VNC server's `:1`) belongs to the remote host, and keetui leaves
-  it alone. A forwarded display gets the marked copy and, with `auto`, a
-  terminal copy as well, because the X server at your end may be XQuartz or
-  an untrusted `ssh -X` connection whose copies cannot be pasted; the timed
-  clear clears both. A terminal that applies OSC 52 to the same clipboard
-  (`ssh -X` from a Linux desktop with kitty, foot, Alacritty, WezTerm or
-  Ghostty) then replaces the marked copy with an unmarked one, which
-  clipboard history keeps: set `clipboard_osc52` to `never` there. On a
-  forwarded display keetui never falls back to xclip
+  `DISPLAY` counts, not the pane's, and so does the session's `XAUTHORITY`
+  (`~/.Xauthority` when the attaching client had none): a tmux started on a
+  desktop keeps the display manager's cookie file in its panes. Any other
+  display (`:0` of the remote desktop, a VNC server's `:1`) belongs to the
+  remote host, and keetui leaves it alone. A forwarded display gets the
+  marked copy and, with `auto`, a terminal copy as well, because the X server
+  at your end may be XQuartz or an untrusted `ssh -X` connection whose copies
+  cannot be pasted; the timed clear clears both. A terminal that applies
+  OSC 52 to the same clipboard (`ssh -X` from a Linux desktop with kitty,
+  foot, Alacritty, WezTerm or Ghostty) then replaces the marked copy with an
+  unmarked one, which clipboard history keeps: set `clipboard_osc52` to
+  `never` there. On a forwarded display keetui never falls back to xclip
   or xsel and hands nothing to xclip at exit: what they leave behind would
   hold the SSH session's X11 channel, so `ssh -t host keetui` would not exit
   after keetui quits. The trade-off: once keetui exits, clipboard managers on

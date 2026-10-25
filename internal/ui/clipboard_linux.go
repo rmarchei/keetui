@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,7 +37,7 @@ type linuxClipboard struct {
 	run    func(env []string, input []byte, name string, args ...string) error
 	runX   func(env []string, input []byte, name string, args ...string) error
 	output func(name string, args ...string) ([]byte, error)
-	newX11 func(display string) x11Owner
+	newX11 func(display, authority string) x11Owner
 
 	tool      string   // backend of the last write: wl-copy, x11, xclip or xsel
 	x11       *x11Slot // the owner of the last X11 copy
@@ -67,7 +68,8 @@ type x11Owner interface {
 type x11Slot struct {
 	owner     x11Owner
 	display   string
-	forwarded bool // display is forwarded by the SSH session
+	authority string // X authority file; "" for keetui's own
+	forwarded bool   // display is forwarded by the SSH session
 }
 
 // x11Name names keetui's owner window, so that clipboard managers which
@@ -97,7 +99,9 @@ func newNativeClipboard() nativeClipboard {
 		run:    pipeTo,
 		runX:   pipeDetached,
 		output: outputBounded,
-		newX11: func(display string) x11Owner { return &x11clip.Owner{Name: x11Name, Display: display} },
+		newX11: func(display, authority string) x11Owner {
+			return &x11clip.Owner{Name: x11Name, Display: display, Authority: authority}
+		},
 	}
 }
 
@@ -131,7 +135,9 @@ func x11Fallback(has func(string) bool) string {
 // but on an XQuartz server or through an untrusted ssh -X connection its
 // copies cannot be pasted, so auto also sends the copy to the terminal.
 // Inside tmux, panes keep the DISPLAY they started with, so the session's
-// DISPLAY, which tmux refreshes on attach, takes precedence.
+// DISPLAY, which tmux refreshes on attach, takes precedence, and so does its
+// XAUTHORITY: a tmux started on a desktop keeps the display manager's in its
+// panes, while sshd writes the forwarded display's cookie to ~/.Xauthority.
 func (l *linuxClipboard) route(s remoteSession) nativeRoute {
 	if !s.remote {
 		switch linuxTool(l.getenv, l.has) {
@@ -143,9 +149,15 @@ func (l *linuxClipboard) route(s remoteSession) nativeRoute {
 		}
 		return nativeRoute{why: "No local clipboard: neither WAYLAND_DISPLAY nor DISPLAY is set."}
 	}
-	display, from := l.getenv("DISPLAY"), "DISPLAY"
+	display, from, authority := l.getenv("DISPLAY"), "DISPLAY", ""
 	if v, known := s.tmux.lookup("DISPLAY"); known {
 		display, from = v, "the tmux session's DISPLAY"
+		if a, known := s.tmux.lookup("XAUTHORITY"); known {
+			authority = a
+			if a == "" && l.getenv("HOME") != "" {
+				authority = filepath.Join(l.getenv("HOME"), ".Xauthority") // what the client attaching used
+			}
+		}
 	}
 	wayland := ""
 	if l.getenv("WAYLAND_DISPLAY") != "" {
@@ -159,7 +171,7 @@ func (l *linuxClipboard) route(s remoteSession) nativeRoute {
 			"Not copied to X display %s (%s): sshd did not forward it, so it belongs to this host, not to you.%s",
 			display, from, wayland)}
 	}
-	return nativeRoute{ok: true, alsoTerminal: true, display: display, forwarded: true,
+	return nativeRoute{ok: true, alsoTerminal: true, display: display, authority: authority, forwarded: true,
 		dest: "the X display your SSH session forwards (" + display + ")"}
 }
 
@@ -255,12 +267,12 @@ func (l *linuxClipboard) writeX11(value []byte, r nativeRoute) (tool string, mar
 // slot returns keetui's owner for a route's display, making one if needed.
 func (l *linuxClipboard) slot(r nativeRoute) *x11Slot {
 	for _, s := range l.owners {
-		if s.display == r.display {
+		if s.display == r.display && s.authority == r.authority {
 			s.forwarded = r.forwarded
 			return s
 		}
 	}
-	s := &x11Slot{owner: l.newX11(r.display), display: r.display, forwarded: r.forwarded}
+	s := &x11Slot{owner: l.newX11(r.display, r.authority), display: r.display, authority: r.authority, forwarded: r.forwarded}
 	l.owners = append(l.owners, s)
 	return s
 }
@@ -372,7 +384,8 @@ func (l *linuxClipboard) close() {
 
 // handOff gives the clipboard to an empty xclip copy and waits until xclip,
 // which takes the clipboard after forking, owns it, so that it never goes
-// ownerless in between. Only displays keetui reached locally get here.
+// ownerless in between. Only displays keetui reached locally get here,
+// whose authority file is keetui's own.
 func (l *linuxClipboard) handOff(s *x11Slot) {
 	done := make(chan error, 1)
 	env := envWith("DISPLAY=" + s.display)

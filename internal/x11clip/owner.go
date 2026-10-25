@@ -54,9 +54,10 @@ const DefaultTimeout = 2 * time.Second
 // Owner holds at most one copy on CLIPBOARD. Its methods are safe for
 // concurrent use. The zero value connects to $DISPLAY on first use.
 type Owner struct {
-	Display string        // X display; "" uses $DISPLAY
-	Name    string        // owner window WM_NAME, _NET_WM_NAME and WM_CLASS
-	Timeout time.Duration // bounds connecting and each round trip; 0 means DefaultTimeout
+	Display   string        // X display; "" uses $DISPLAY
+	Authority string        // X authority file; "" uses $XAUTHORITY, else ~/.Xauthority
+	Name      string        // owner window WM_NAME, _NET_WM_NAME and WM_CLASS
+	Timeout   time.Duration // bounds connecting and each round trip; 0 means DefaultTimeout
 
 	opMu sync.Mutex // serializes the exported methods
 
@@ -265,7 +266,7 @@ func (o *Owner) session() (*session, error) {
 	}
 	ch := make(chan result, 1)
 	go func() {
-		s, err := open(o.Display, o.Name)
+		s, err := open(o.Display, o.Authority, o.Name)
 		ch <- result{s, err}
 	}()
 	t := time.NewTimer(o.timeout())
@@ -307,8 +308,8 @@ func (o *Owner) session() (*session, error) {
 	return nil, ErrTimeout
 }
 
-func open(display, name string) (*session, error) {
-	c, err := xgb.NewConnDisplay(display)
+func open(display, authority, name string) (*session, error) {
+	c, err := connect(display, authority)
 	if err != nil {
 		return nil, fmt.Errorf("x11clip: %w", err)
 	}
