@@ -1510,7 +1510,7 @@ func TestTmuxProbeFailureSendsPassthroughOnly(t *testing.T) {
 	if len(f.writes) != 2 || f.writes[0] != passthroughOSC52([]byte(tmuxSecret)) || f.writes[1] != passthroughOSC52(nil) {
 		t.Fatalf("writes = %q", f.writes)
 	}
-	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password via tmux passthrough (unverified; needs allow-passthrough on)" {
+	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password unverified: tmux needs allow-passthrough" {
 		t.Fatalf("status = %q", got)
 	}
 	help := clipboardHelp(copyResult{terminal: true, via: res}, nil)
@@ -1543,7 +1543,7 @@ func TestTmuxProbeFailureSendsPassthroughOnly(t *testing.T) {
 	if want := []string{passthroughOSC52([]byte(tmuxSecret)) + plain, passthroughOSC52(nil) + "\x1b]52;c;\a"}; !slices.Equal(f.writes, want) {
 		t.Fatalf("always writes = %q, want %q", f.writes, want)
 	}
-	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy" {
+	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password unverified; tmux may keep a copy" {
 		t.Fatalf("always status = %q", got)
 	}
 
@@ -1616,7 +1616,7 @@ func TestRemoteTmuxAndTTYClipboards(t *testing.T) {
 	if !slices.Equal(writes, want) {
 		t.Fatalf("writes = %q", writes)
 	}
-	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password via tmux passthrough (unverified; needs allow-passthrough on)" {
+	if got := copyStatus("password", copyResult{terminal: true, via: res}); got != "Sent password unverified: tmux needs allow-passthrough" {
 		t.Fatalf("remote status = %q", got)
 	}
 	help := clipboardHelp(copyResult{terminal: true, via: res}, nil)
@@ -1643,15 +1643,15 @@ func TestRemoteTmuxPlainLegFollowsMode(t *testing.T) {
 		leg           string
 	}{
 		{config.OSC52Auto, "3.5a", []string{passthroughOSC52([]byte(tmuxSecret)), passthroughOSC52(nil)},
-			"Sent password via tmux passthrough (unverified; needs allow-passthrough on)",
-			"Copied password (also sent via tmux passthrough, unverified; needs allow-passthrough on)"},
+			"Sent password unverified: tmux needs allow-passthrough",
+			"Copied password (also sent via tmux, unverified: needs allow-passthrough)"},
 		{config.OSC52Auto, "3.2a", []string{passthroughOSC52([]byte(tmuxSecret)), passthroughOSC52(nil)},
 			"Sent password via tmux passthrough (OSC 52)", "Copied password (also sent via tmux passthrough)"},
 		{config.OSC52Always, "3.5a", []string{
 			passthroughOSC52([]byte(tmuxSecret)) + "\x1b]52;c;c3ludGhldGljLUh1bnRlcjItc2VjcmV0\a",
 			passthroughOSC52(nil) + "\x1b]52;c;\a",
-		}, "Sent password via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy",
-			"Copied password (also sent via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy)"},
+		}, "Sent password unverified; tmux may keep a copy",
+			"Copied password (also sent via tmux, unverified; tmux may keep a copy)"},
 	} {
 		var writes []string
 		remote := remoteTmuxClipboard{write: func(seq string) error { writes = append(writes, seq); return nil }}
@@ -1766,9 +1766,9 @@ func TestTerminalCopyStatus(t *testing.T) {
 			"Sent password via tmux (OSC 52); can't auto-clear: allow-passthrough off"},
 		{terminalResult{route: routeTmuxLoadBuffer, noClear: "2 clients share the window"},
 			"Sent password via tmux (OSC 52); can't auto-clear: 2 clients share the window"},
-		{terminalResult{route: routeRemoteTmux, unverified: "remote"}, "Sent password via tmux passthrough (unverified; needs allow-passthrough on)"},
+		{terminalResult{route: routeRemoteTmux, unverified: "remote"}, "Sent password unverified: tmux needs allow-passthrough"},
 		{terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.2a"}, "Sent password via tmux passthrough (OSC 52)"},
-		{terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a", plain: true}, "Sent password via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy"},
+		{terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a", plain: true}, "Sent password unverified; tmux may keep a copy"},
 		{terminalResult{route: routeHerdr}, "Sent password to the terminal clipboard (OSC 52)"},
 	} {
 		if got := copyStatus("password", copyResult{terminal: true, via: tc.via}); got != tc.want {

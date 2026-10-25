@@ -446,10 +446,13 @@ needed, `always` also sends local copies to the terminal, and `never` disables
 it. With `auto`, a local tmux on macOS changes nothing while you are at the
 Mac: copies still go to the pasteboard. With `always`, the status bar also
 carries the terminal copy's warnings (several tmux clients, nested tmux,
-unverified). The timed clear empties the local clipboard, then sends the
-terminal clear once (never when the local clipboard has changed since, and
-never a second time, which could wipe something copied since); the status bar
-says when the terminal copy could not be cleared.
+unverified, or a tmux route that cannot clear its copy). The timed clear
+empties the local clipboard, then sends the terminal clear once (never when
+the local clipboard has changed since, and never a second time, which could
+wipe something copied since); the status bar says when the terminal copy
+could not be cleared. Status messages that fit take the place of the file
+name and entry count in the status bar, so that a warning or remedy shows
+whole; F1 shows every message in full.
 
 **Over SSH.** The local clipboard is yours only while you are at this
 machine. keetui checks for each copy, since a terminal multiplexer session
@@ -601,15 +604,17 @@ Over SSH from a tmux pane, keetui recognizes tmux from the terminal's reply
 to XTVERSION (tmux 3.2 or later answers it), and sends copies through
 passthrough, which leaves no paste buffer. keetui cannot ask that tmux
 whether it allows passthrough, which tmux 3.3 and later drop by default, so
-the status bar says the copy is unverified and needs `allow-passthrough on`.
+the status bar says the copy is unverified and that tmux needs
+`allow-passthrough` (with tmux before 3.3, which always lets passthrough
+through, it says only that the copy went through tmux).
 Add `set -g allow-passthrough on` (or `all`) to that tmux's configuration,
 on the machine you connect from; copies then arrive and are cleared on the
 timer. Alternatively set `clipboard_osc52` to `always`: keetui then also
 sends a plain OSC 52, which that tmux forwards with `set-clipboard on` but
 also keeps in a paste buffer that keetui cannot clear, as the status bar
-warns; the clear sends both empty copies. The same goes for keetui in a tmux
-pane after `sudo` or `su`, which drop `$TMUX`, and for a tmux that keetui
-cannot ask (no tmux on keetui's `PATH`). An older tmux at the other
+warns ("tmux may keep a copy"); the clear sends both empty copies. The same
+goes for keetui in a tmux pane after `sudo` or `su`, which drop `$TMUX`, and
+for a tmux that keetui cannot ask (no tmux on keetui's `PATH`). An older tmux at the other
 end looks like a plain terminal and gets a plain OSC 52. The other way
 round, when `$TMUX` is set but the terminal answers XTVERSION with another
 name, keetui is not running directly in tmux: a terminal started from a tmux

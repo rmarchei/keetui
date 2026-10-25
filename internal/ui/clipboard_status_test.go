@@ -345,7 +345,7 @@ func TestLongTmuxStatusKeepsOneRow(t *testing.T) {
 		copyStatus("history password", copyResult{terminal: true,
 			via: terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a", plain: true}}),
 		"Terminal clipboard not cleared: no herdr client over SSH",
-		"Clipboard cleared; terminal copy left: the terminal that got it detached",
+		"Clipboard cleared; terminal copy left: its terminal detached",
 		"Clipboard cleared; terminal clear failed: terminal clipboard: open /dev/tty: no such device or address",
 	} {
 		m.statusText = text
@@ -447,21 +447,22 @@ func TestClipboardReportsBothFailures(t *testing.T) {
 }
 
 // With clipboard_osc52 always, the tmux leg of a copy that also went to the
-// local clipboard keeps its warnings: the timed clear empties only the
-// local clipboard.
+// local clipboard keeps its warnings, and F1 promises a terminal clear only
+// for a leg tmux can clear.
 func TestAlwaysModeTmuxLegKeepsItsWarnings(t *testing.T) {
 	nested := "keetui-probe|3.5a|external|on|/dev/pts/7|tmux-256color|1|1|1|0|1||@1|tmux 3.5a\n" +
 		"keetui-window|$1|1|@1|1\nkeetui-client|/dev/pts/7|$1|attached,focused,UTF-8\n"
 	for _, tc := range []struct {
-		probe    string
-		probeErr error
-		want     string
+		probe     string
+		probeErr  error
+		want      string
+		clearable bool
 	}{
-		{tmuxFixtures["3.0a two clients"], nil, "Copied password (also sent to 2 tmux clients via OSC 52)"},
-		{tmuxFixtures["3.3a grouped"], nil, "Copied password (also sent via tmux OSC 52)"},
-		{nested, nil, "Copied password (also sent via nested tmux OSC 52; outer tmux may keep a copy)"},
-		{"", errors.New("tmux: no server running"), "Copied password (also sent via tmux passthrough and OSC 52; with set-clipboard on, tmux keeps a copy)"},
-		{tmuxFixtures["3.8 two clients"], nil, "Copied password (also sent via tmux OSC 52)"}, // load-buffer to one client
+		{tmuxFixtures["3.0a two clients"], nil, "Copied password (also sent to 2 tmux clients via OSC 52)", true},
+		{tmuxFixtures["3.3a grouped"], nil, "Copied password (also sent via tmux OSC 52)", true},
+		{nested, nil, "Copied password (also sent via nested tmux OSC 52; outer tmux may keep a copy)", false},
+		{"", errors.New("tmux: no server running"), "Copied password (also sent via tmux, unverified; tmux may keep a copy)", true},
+		{tmuxFixtures["3.8 two clients"], nil, "Copied password (also sent via tmux; can't clear that)", false}, // load-buffer to one client
 	} {
 		f := &fakeTmux{probe: tc.probe, probeErr: tc.probeErr}
 		c := &systemClipboard{native: &fakeNative{local: true, marks: true},
@@ -473,8 +474,96 @@ func TestAlwaysModeTmuxLegKeepsItsWarnings(t *testing.T) {
 		if got := copyStatus("password", res); got != tc.want {
 			t.Errorf("status = %q, want %q", got, tc.want)
 		}
-		if help := clipboardHelp(res, nil); tc.probeErr == nil && !strings.Contains(help, "sends the terminal clear once") {
-			t.Errorf("help = %q", help)
+		help := clipboardHelp(res, nil)
+		switch {
+		case tc.probeErr != nil:
+		case tc.clearable && !strings.Contains(help, "sends the terminal clear once"):
+			t.Errorf("help for a clearable leg = %q", help)
+		case !tc.clearable && (strings.Contains(help, "sends the terminal clear") || !strings.Contains(help, "empties the local clipboard only")):
+			t.Errorf("help for a leg tmux cannot clear = %q", help)
 		}
+		r, err := c.release()
+		if err != nil || r.outcome != clearDone || (r.leg == clearUnsupported) == tc.clearable {
+			t.Errorf("release = %+v, %v", r, err)
+		}
+	}
+}
+
+// On a common 80-column terminal, with the clipboard and lock countdowns,
+// the statuses that carry a remedy or a warning show whole, beside the F1
+// hint that leads to the details.
+func TestRemedyStatusesShowWholeAt80Columns(t *testing.T) {
+	unverified := terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a"}
+	plain := unverified
+	plain.plain = true
+	cleared := func(r clearResult) string { text, _ := clearStatus(r, nil); return text }
+	for _, tc := range []struct {
+		text       string
+		want       []string
+		afterClear bool // the clip countdown is gone
+	}{
+		{copyStatus("password", copyResult{terminal: true, via: unverified}), []string{"unverified", "allow-passthrough"}, false},
+		{copyStatus("password", copyResult{terminal: true, via: plain}), []string{"unverified", "may keep a copy"}, false},
+		{copyStatus("password", copyResult{native: true, marked: true, terminal: true,
+			via: terminalResult{route: routeTmuxLoadBuffer, noClear: "allow-passthrough off"}}), []string{"can't clear that"}, false},
+		{cleared(clearResult{outcome: clearDone, leg: clearDeferred}), []string{"tmux would drop it"}, true},
+		{cleared(clearResult{outcome: clearDone, leg: clearDetached}), []string{"its terminal detached"}, true},
+		{cleared(clearResult{outcome: clearDone, leg: clearNoRemoteClient}), []string{"no herdr client over SSH"}, true},
+		{cleared(clearResult{outcome: clearDone, leg: clearPartial}), []string{"a terminal with the copy detached"}, true},
+		{cleared(clearResult{outcome: clearDone, leg: clearOverwritten}), []string{"overwritten with a space"}, true},
+	} {
+		m := createTestApp(t)
+		m.entryCount = 120
+		m = copyForCountdown(t, m, "synthetic")
+		indicator := "clip:"
+		if tc.afterClear {
+			m.clipboardClearAt, m.clipboardHeld, indicator = time.Time{}, false, "lock:"
+		}
+		m.statusText = tc.text
+		for _, width := range []int{80, 100, 120} {
+			m.width = width
+			bar := m.statusBar()
+			assertFrame(t, bar, width, 1)
+			got := ansi.Strip(bar)
+			for _, want := range append(tc.want, "F1", indicator) {
+				if !strings.Contains(got, want) {
+					t.Errorf("%d columns: %q hides %q", width, got, want)
+				}
+			}
+			if strings.Contains(got, "…") {
+				t.Errorf("%d columns: %q is cut off", width, got)
+			}
+		}
+		// Wide terminals keep the full context.
+		m.width = 160
+		if got := ansi.Strip(m.statusBar()); !strings.Contains(got, "120 entries") || !strings.Contains(got, "F1: details") {
+			t.Errorf("160 columns: %q", got)
+		}
+	}
+}
+
+// F1 for a tmux keetui cannot ask names only remedies that apply.
+func TestUnverifiedTmuxHelpNamesApplicableRemedies(t *testing.T) {
+	old := unverifiedTmuxHelp(terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.2a"})
+	if strings.Contains(old, "set -g allow-passthrough") || !strings.Contains(old, "before 3.3 always lets it through") {
+		t.Errorf("3.2a help = %q", old)
+	}
+	oldAlways := unverifiedTmuxHelp(terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.2a", plain: true})
+	if strings.Contains(oldAlways, "set -g allow-passthrough") || !strings.Contains(oldAlways, "clipboard_osc52 to auto") {
+		t.Errorf("3.2a always help = %q", oldAlways)
+	}
+	always := unverifiedTmuxHelp(terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a", plain: true})
+	if strings.Contains(always, "\nclipboard_osc52 always\n") || !strings.Contains(always, "set -g allow-passthrough on") ||
+		!strings.Contains(always, "clipboard_osc52 auto") {
+		t.Errorf("3.5a always help = %q", always)
+	}
+	auto := unverifiedTmuxHelp(terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a"})
+	if !strings.Contains(auto, "set -g allow-passthrough on") || !strings.Contains(auto, "\nclipboard_osc52 always\n") {
+		t.Errorf("3.5a help = %q", auto)
+	}
+	// A probe that failed, with no XTVERSION answer: maybe a tmux before 3.2.
+	probe := unverifiedTmuxHelp(terminalResult{route: routeTmuxPassthrough, unverified: "tmux: no server running"})
+	if !strings.Contains(probe, "older than 3.2") || !strings.Contains(probe, "set -g allow-passthrough on") {
+		t.Errorf("probe failure help = %q", probe)
 	}
 }

@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -78,10 +79,19 @@ func (m AppModel) statusSummary(width int) string {
 				prefix = candidate
 			}
 		}
-		for _, candidate := range prefixes {
-			if lipgloss.Width(candidate)+2+min(16, lipgloss.Width(message)) <= width {
-				prefix = candidate
-				break
+		// A message that fits whole beside some context that keeps the F1
+		// hint gets the widest such context: a remedy at its end must not be
+		// cut off for the file name. A longer one keeps the context and at
+		// least 16 cells.
+		msgWidth := lipgloss.Width(message)
+		if i := slices.IndexFunc(prefixes[:3], func(c string) bool { return lipgloss.Width(c)+2+msgWidth <= width }); i >= 0 {
+			prefix = prefixes[i]
+		} else {
+			for _, candidate := range prefixes {
+				if lipgloss.Width(candidate)+2+min(16, msgWidth) <= width {
+					prefix = candidate
+					break
+				}
 			}
 		}
 		remaining := max(0, width-lipgloss.Width(prefix)-2)
