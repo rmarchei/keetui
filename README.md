@@ -455,14 +455,19 @@ says when the terminal copy could not be cleared.
 machine. keetui checks for each copy, since a terminal multiplexer session
 can be attached from anywhere at any time, and stops at the first answer:
 
-1. In a herdr pane (`HERDR_ENV=1` or `TERM_PROGRAM=herdr`), herdr's clients:
-   keetui looks at your processes running herdr's binary (`$HERDR_BIN_PATH`)
-   as a client (`herdr`, `herdr client`, `session attach`, `terminal attach`,
-   `agent attach`), never at the server. You are remote if any of them runs
-   over SSH (`SSH_CONNECTION` or `SSH_TTY` in its environment), or if
+1. In a herdr pane (`HERDR_ENV=1` or `TERM_PROGRAM=herdr`), the clients of
+   keetui's herdr server: keetui looks at your processes named `herdr` (or
+   like `$HERDR_BIN_PATH`, any version) that run as a client (`herdr`,
+   `herdr client`, `session attach`, `terminal attach`, `agent attach`),
+   never at the server, and leaves out clients of other herdr sessions (as
+   herdr resolves them, from `--session`, `session attach`,
+   `HERDR_SOCKET_PATH` or `HERDR_SESSION`). You are remote if any of them
+   runs over SSH (`SSH_CONNECTION` or `SSH_TTY` in its environment), or if
    `herdr --remote` is attached (`remote-client-bridge`).
 2. In tmux, the session environment, which tmux refreshes on every attach,
-   while panes keep the environment they started with.
+   while panes keep the environment they started with. In a tmux started
+   from a herdr pane, both count: you are remote if tmux was last attached
+   over SSH or a herdr client runs over SSH.
 3. An `sshd` (or `sshd-session`) among keetui's parent processes, which also
    covers `su -` and `sudo -i`.
 4. `SSH_CONNECTION` or `SSH_TTY` in keetui's environment.
@@ -496,7 +501,13 @@ terminal copy by copying a single space over it, and only while a herdr
 client runs over SSH at that moment; otherwise it sends nothing, since the
 space would land on this machine's clipboard, and the status bar says the
 copy was not cleared. Like any OSC 52 clear, the space also replaces
-whatever was copied to that terminal's clipboard since.
+whatever was copied to that terminal's clipboard since. In a tmux started
+from a herdr pane, tmux hands keetui's passthrough on to herdr, so its clear
+copies a space too while a herdr client runs over SSH. With
+`clipboard_osc52` set to `always` and only local herdr clients, the terminal
+copy goes to a local client, which writes this machine's clipboard (herdr
+skips the write when the clipboard already holds the same text); the local
+clear covers it, and keetui sends herdr nothing more.
 
 **tmux.** Inside tmux, keetui sends no plain OSC 52 (unless you ask for one
 for a tmux it cannot query, see below): with the default

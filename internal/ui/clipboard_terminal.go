@@ -111,7 +111,11 @@ func newTerminalRoutes(getenv func(string) string, detect func() remoteSession) 
 		remote: remoteTmuxClipboard{write: writeTTY, settle: settlePassthrough},
 	}
 	if getenv("TMUX") != "" {
-		routes.tmux = tmuxClipboard{run: runTmux, write: writeTTY, settle: settlePassthrough, pane: getenv("TMUX_PANE")}
+		t := tmuxClipboard{run: runTmux, write: writeTTY, settle: settlePassthrough, pane: getenv("TMUX_PANE")}
+		if inHerdr(getenv) {
+			t.herdr = detect // tmux started from a herdr pane
+		}
+		routes.tmux = t
 	}
 	if inHerdr(getenv) {
 		routes.herdr = herdrClipboard{write: writeTTY, detect: detect}
@@ -181,7 +185,7 @@ func (h herdrClipboard) clear(terminalResult) (clearOutcome, error) {
 	if h.detect == nil {
 		return clearNoRemoteClient, nil
 	}
-	if s := h.detect(); !s.herdr || !s.remote {
+	if !h.detect().herdrSSH {
 		return clearNoRemoteClient, nil
 	}
 	return clearOverwritten, h.write(ansi.SetSystemClipboard(" "))

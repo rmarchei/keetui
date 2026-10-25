@@ -65,6 +65,7 @@ const (
 	clearPartial                            // as clearRequested, but some tmux clients that got the copy left
 	clearOverwritten                        // herdr: a single space was copied over it, as herdr drops an empty copy
 	clearNoRemoteClient                     // herdr: nothing sent, as no herdr client runs over SSH
+	clearHerdrLocal                         // herdr: the terminal copy went to a local client, onto the local clipboard just cleared
 )
 
 // pending reports a clear that could not be sent yet: the copy is kept and
@@ -229,10 +230,16 @@ func (c *systemClipboard) release() (clearResult, error) {
 		return clearResult{repaint: repaint}, fmt.Errorf("clear clipboard: %w", err)
 	}
 	r := clearResult{outcome: clearDone, repaint: repaint}
-	switch {
+	switch s := h.result.session; {
 	case !h.result.terminal:
 	case !h.result.via.clearable():
 		r.leg = clearUnsupported
+	case h.result.via.route == routeHerdr && s.herdr && !s.herdrSSH:
+		// Every herdr client was local: the one that got the copy wrote
+		// this machine's clipboard (or skipped the value already there),
+		// which is cleared now. A space would go to a client over SSH
+		// that attached since, which never got the copy.
+		r.leg = clearHerdrLocal
 	default:
 		// Sent once, never retried: a later clear could wipe something
 		// copied to the terminal since.
@@ -435,6 +442,8 @@ func legClearStatus(r clearResult) (string, bool) {
 		return done + "terminal copy overwritten with a space", false
 	case leg == clearNoRemoteClient:
 		return done + "terminal copy left: no herdr client over SSH", true
+	case leg == clearHerdrLocal:
+		return "Clipboard cleared", false
 	case leg == clearUnsupported:
 		return done + "tmux can't clear the terminal copy", true
 	case leg == clearDetached:
@@ -486,6 +495,11 @@ func legClearDetail(leg clearOutcome) string {
 	const once = "The copy also went to the terminal (OSC 52). keetui clears that copy right after the local one, once: " +
 		"it never sends a second clear, which could wipe something copied there since."
 	switch leg {
+	case clearHerdrLocal:
+		return "The copy also went to herdr as OSC 52, and every herdr client was local: " +
+			"herdr's client wrote it to this machine's clipboard (or left the same value there alone), " +
+			"which keetui has just cleared. keetui sent herdr nothing more: " +
+			"a client over SSH attached since would get a space it never needed."
 	case clearOverwritten:
 		return once + "\n\n" + herdrOverwriteHelp
 	case clearNoRemoteClient:

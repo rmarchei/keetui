@@ -96,6 +96,10 @@ type tmuxClipboard struct {
 	// passthrough (clipboard_osc52 always), and tmux's XTVERSION version.
 	plain   bool
 	version string
+
+	// herdr finds herdr's clients when tmux runs in a herdr pane, where
+	// herdr drops the empty OSC 52 tmux makes of a clear; nil otherwise.
+	herdr func() remoteSession
 }
 
 func (t tmuxClipboard) with(kind terminalKind, plain bool) terminalClipboard {
@@ -155,6 +159,11 @@ func (t tmuxClipboard) clear(last terminalResult) (clearOutcome, error) {
 	}
 	switch outcome {
 	case clearRequested, clearReattached, clearPartial:
+		if t.herdr != nil && t.herdr().herdrSSH {
+			// tmux hands the clear on to herdr, which drops an empty OSC
+			// 52: copy a space over the copy instead, as in a herdr pane.
+			return clearOverwritten, t.write(unverifiedOSC52([]byte(" "), last.plain))
+		}
 		return outcome, t.write(unverifiedOSC52(nil, last.plain))
 	}
 	return outcome, nil

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -15,20 +16,23 @@ import (
 // the user's clipboard. A multiplexer session can be attached from anywhere
 // at any time, so keetui checks for each copy, in this order:
 //
-//  1. In a herdr pane, herdr's clients: herdr hands OSC 52 to a client, and
-//     a client running over SSH passes it on to its own terminal.
+//  1. In a herdr pane, the clients of keetui's herdr server: herdr hands
+//     OSC 52 to a client, and a client running over SSH passes it on to its
+//     own terminal.
 //  2. In tmux, the session environment, which tmux refreshes on attach while
-//     panes keep the environment they started with.
+//     panes keep the environment they started with. In tmux started from a
+//     herdr pane, both count: the session is remote if either says so.
 //  3. An sshd ancestor, which su - and sudo -i leave in place when they
 //     scrub the environment. Daemonized tmux and herdr servers have none.
 //  4. SSH_CONNECTION or SSH_TTY in keetui's environment.
 
 // remoteSession is what keetui found out about the user's whereabouts.
 type remoteSession struct {
-	remote bool
-	why    string  // what decided, for F1 help
-	herdr  bool    // herdr's clients decided
-	tmux   tmuxEnv // the tmux session environment; nil unless tmux answered
+	remote   bool
+	why      string  // what decided, for F1 help
+	herdr    bool    // clients of keetui's herdr server were found
+	herdrSSH bool    // one of them runs over SSH, or herdr --remote is attached
+	tmux     tmuxEnv // the tmux session environment; nil unless tmux answered
 }
 
 // procInfo is a process of keetui's user.
@@ -77,24 +81,32 @@ func newSessionDetector(getenv func(string) string) sessionDetector {
 }
 
 func (d sessionDetector) detect() remoteSession {
-	if inHerdr(d.getenv) {
-		if s, ok := d.herdrSession(); ok {
-			return s
-		}
-	}
 	var s remoteSession
+	if inHerdr(d.getenv) {
+		s = d.herdrSession()
+	}
 	if d.getenv("TMUX") != "" && d.tmuxEnv != nil {
+		// herdr drops $TMUX from its panes, so with both, keetui runs in a
+		// tmux started from a herdr pane, which may be attached over SSH
+		// itself or shown by a herdr client over SSH.
 		if env, err := d.tmuxEnv(); err == nil {
 			s.tmux = env
 			if v, known := env.lookup("SSH_CONNECTION"); known {
-				s.remote = v != ""
-				s.why = "the tmux session was last attached locally (no SSH_CONNECTION in its environment)"
-				if s.remote {
-					s.why = "the tmux session was last attached over SSH (SSH_CONNECTION in its environment)"
+				switch {
+				case s.herdrSSH:
+				case v != "":
+					s.remote, s.why = true, "the tmux session was last attached over SSH (SSH_CONNECTION in its environment)"
+				case s.herdr:
+					s.why += ", and the tmux session was last attached locally"
+				default:
+					s.why = "the tmux session was last attached locally (no SSH_CONNECTION in its environment)"
 				}
 				return s
 			}
 		}
+	}
+	if s.herdr {
+		return s
 	}
 	if name, pid, ok := d.sshdAncestor(); ok {
 		s.remote, s.why = true, fmt.Sprintf("keetui runs under %s (pid %d)", name, pid)
@@ -116,50 +128,181 @@ func inHerdr(getenv func(string) string) bool {
 	return getenv("HERDR_ENV") == "1" || getenv("TERM_PROGRAM") == "herdr"
 }
 
-// herdrSession decides from herdr's clients: remote when any of them runs
-// over SSH. ok is false when no client was found.
-func (d sessionDetector) herdrSession() (s remoteSession, ok bool) {
+// herdrSession decides from the clients of keetui's herdr server: remote
+// when any of them runs over SSH. It decides nothing (herdr unset) when it
+// found none.
+//
+// Clients count by their executable's name, not its path: herdr lets a
+// client of another version attach (servers outlive upgrades, and herdr
+// --remote runs the client's version on this machine), so HERDR_BIN_PATH,
+// the server's binary, may not be theirs. Which server a client attaches to
+// follows from its command line and environment, as herdr resolves its
+// socket; clients of other herdr sessions are left out.
+func (d sessionDetector) herdrSession() remoteSession {
 	if d.procs == nil {
-		return s, false
+		return remoteSession{}
 	}
-	bin, want := d.getenv("HERDR_BIN_PATH"), ""
 	names := []string{"herdr"}
-	if bin != "" {
-		want = d.resolvePath(bin)
-		names = []string{filepath.Base(bin)}
-		if base := filepath.Base(want); base != names[0] {
-			names = append(names, base)
+	if bin := strings.TrimSuffix(d.getenv("HERDR_BIN_PATH"), " (deleted)"); bin != "" {
+		for _, path := range []string{bin, d.resolvePath(bin)} {
+			if base := filepath.Base(path); !slices.Contains(names, base) {
+				names = append(names, base)
+			}
 		}
 	}
 	procs, err := d.procs.named(names)
 	if err != nil {
-		return s, false
+		return remoteSession{}
 	}
+	want, wantKnown := herdrClientSocket(nil, func(name string) (string, bool) {
+		v := d.getenv(name)
+		return v, v != ""
+	})
 	clients := 0
 	for _, p := range procs {
-		if p.pid == d.pid || want != "" && !d.sameExe(p.exe, want) {
+		kind := herdrInvocation(p.args)
+		if p.pid == d.pid || kind == herdrOther {
 			continue
 		}
-		switch herdrInvocation(p.args) {
+		if !d.sameHerdrServer(p, want, wantKnown) {
+			continue // a client of another herdr session
+		}
+		switch kind {
 		case herdrBridge:
 			// herdr --remote on the user's machine runs it over SSH.
-			return remoteSession{remote: true, herdr: true,
-				why: fmt.Sprintf("herdr --remote is attached (remote-client-bridge, pid %d)", p.pid)}, true
+			return remoteSession{remote: true, herdr: true, herdrSSH: true,
+				why: fmt.Sprintf("herdr --remote is attached (remote-client-bridge, pid %d)", p.pid)}
 		case herdrClient:
 			if p.env == nil {
 				continue
 			}
 			clients++
 			if envValue(p.env, "SSH_CONNECTION") != "" || envValue(p.env, "SSH_TTY") != "" {
-				return remoteSession{remote: true, herdr: true,
-					why: fmt.Sprintf("a herdr client runs over SSH (pid %d)", p.pid)}, true
+				return remoteSession{remote: true, herdr: true, herdrSSH: true,
+					why: fmt.Sprintf("a herdr client runs over SSH (pid %d)", p.pid)}
 			}
 		}
 	}
 	if clients == 0 {
-		return s, false
+		return remoteSession{}
 	}
-	return remoteSession{herdr: true, why: fmt.Sprintf("every herdr client runs locally (%d found)", clients)}, true
+	return remoteSession{herdr: true, why: fmt.Sprintf("every herdr client runs locally (%d found)", clients)}
+}
+
+// sameHerdrServer reports whether a herdr client attaches to keetui's
+// server, whose client socket is want. A client whose environment cannot
+// be read is compared by the session its command line names, if any.
+func (d sessionDetector) sameHerdrServer(p procInfo, want string, wantKnown bool) bool {
+	if !wantKnown {
+		return true
+	}
+	if sock, known := herdrClientSocket(p.args, envGetter(p.env)); known {
+		return d.samePath(sock, want)
+	}
+	name, explicit := herdrSessionArg(p.args)
+	return !explicit || herdrSessionName(name) == herdrSessionName(d.getenv("HERDR_SESSION"))
+}
+
+// herdrSessionName normalizes a session name: "" is the default session.
+func herdrSessionName(name string) string {
+	if name == "default" {
+		return ""
+	}
+	return name
+}
+
+// herdrClientSocket returns the client socket of the herdr server that a
+// herdr command line attaches to, resolved as herdr v0.9 does
+// (session.rs, server/socket_paths.rs): a session named on the command line,
+// else HERDR_SOCKET_PATH (which herdr sets in its panes), else
+// HERDR_CLIENT_SOCKET_PATH, else HERDR_SESSION; "default" or none is the
+// default session. With args nil, getenv is keetui's, in a herdr pane.
+// known is false when the environment cannot tell.
+func herdrClientSocket(args []string, getenv func(string) (string, bool)) (sock string, known bool) {
+	session, explicit := herdrSessionArg(args)
+	if !explicit {
+		if path, ok := getenv("HERDR_SOCKET_PATH"); ok {
+			return herdrDeriveClientSocket(path), true
+		}
+		if path, ok := getenv("HERDR_CLIENT_SOCKET_PATH"); ok {
+			return filepath.Clean(path), true
+		}
+		session, _ = getenv("HERDR_SESSION")
+	}
+	dir, ok := herdrConfigDir(getenv)
+	if !ok {
+		return "", false
+	}
+	if session = herdrSessionName(session); session != "" {
+		dir = filepath.Join(dir, "sessions", session)
+	}
+	return filepath.Join(dir, "herdr-client.sock"), true
+}
+
+// herdrSessionArg returns the session a herdr command line names: herdr
+// session attach NAME, or the last --session NAME before "--".
+func herdrSessionArg(args []string) (name string, explicit bool) {
+	if len(args) == 4 && args[1] == "session" && args[2] == "attach" {
+		return args[3], true
+	}
+	for i := 1; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "--":
+			return name, explicit
+		case a == "--session" && i+1 < len(args):
+			name, explicit = args[i+1], true
+			i++
+		case strings.HasPrefix(a, "--session="):
+			name, explicit = strings.TrimPrefix(a, "--session="), true
+		}
+	}
+	return name, explicit
+}
+
+// herdrDeriveClientSocket turns an API socket path into its client socket,
+// as herdr does: herdr.sock becomes herdr-client.sock.
+func herdrDeriveClientSocket(api string) string {
+	dir, base := filepath.Split(filepath.Clean(api))
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	if stem == "" {
+		stem = "herdr"
+	}
+	return filepath.Join(dir, stem+"-client.sock")
+}
+
+// herdrConfigDir is herdr's configuration directory for an environment.
+func herdrConfigDir(getenv func(string) (string, bool)) (string, bool) {
+	if dir, ok := getenv("XDG_CONFIG_HOME"); ok {
+		return filepath.Join(dir, "herdr"), true
+	}
+	if home, ok := getenv("HOME"); ok {
+		return filepath.Join(home, ".config", "herdr"), true
+	}
+	return "", false
+}
+
+// envGetter looks variables up in an environment list; nil knows none.
+func envGetter(env []string) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		for _, kv := range env {
+			if v, ok := strings.CutPrefix(kv, name+"="); ok {
+				return v, true
+			}
+		}
+		return "", false
+	}
+}
+
+// samePath compares two paths, resolving their directories' symlinks if
+// they differ as written.
+func (d sessionDetector) samePath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if filepath.Base(a) != filepath.Base(b) {
+		return false
+	}
+	return d.resolvePath(filepath.Dir(a)) == d.resolvePath(filepath.Dir(b))
 }
 
 func (d sessionDetector) resolvePath(path string) string {
@@ -169,16 +312,6 @@ func (d sessionDetector) resolvePath(path string) string {
 		}
 	}
 	return filepath.Clean(path)
-}
-
-// sameExe reports exe naming the executable at want, which is resolved. A
-// relative path (macOS reports the path given to exec) cannot be resolved,
-// so its name decides.
-func (d sessionDetector) sameExe(exe, want string) bool {
-	if !filepath.IsAbs(exe) {
-		return filepath.Base(exe) == filepath.Base(want)
-	}
-	return d.resolvePath(exe) == want
 }
 
 type herdrKind int

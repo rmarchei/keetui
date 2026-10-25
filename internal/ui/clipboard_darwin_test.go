@@ -26,6 +26,17 @@ func TestDarwinPasteboardOnlyForLocalSessions(t *testing.T) {
 			t.Fatalf("route for %+v = %+v", s, r)
 		}
 	}
+
+	// tmux started from a herdr pane and attached over SSH with only a
+	// local herdr client: the tmux session decides, as before herdr.
+	env := map[string]string{"HERDR_ENV": "1", "TMUX": "/tmp/tmux-501/default,1,0", "HOME": "/Users/u",
+		"HERDR_SOCKET_PATH": "/Users/u/.config/herdr/herdr.sock"}
+	procs := &fakeProcs{procs: []procInfo{{pid: 101, exe: "/opt/homebrew/bin/herdr", args: []string{"herdr"},
+		env: []string{"HOME=/Users/u"}}}, parents: localChain()}
+	tmux := func() (tmuxEnv, error) { return parseTmuxEnv([]byte("SSH_CONNECTION=192.0.2.1 5 192.0.2.2 22\n")), nil }
+	if r := d.route(testDetector(env, procs, tmux).detect()); r.ok {
+		t.Fatalf("tmux in herdr attached over SSH: route = %+v", r)
+	}
 }
 
 // The backend runs against a private named pasteboard; the user's clipboard

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -139,10 +140,16 @@ func TestHerdrInvocation(t *testing.T) {
 }
 
 func TestDetectHerdrClients(t *testing.T) {
-	herdrEnv := map[string]string{"HERDR_ENV": "1", "HERDR_BIN_PATH": "/usr/local/bin/herdr", "DISPLAY": ":0"}
+	// herdr sets HERDR_SOCKET_PATH in its panes; clients find the socket from
+	// their command line and HOME, XDG_CONFIG_HOME or HERDR_SESSION.
+	herdrEnv := map[string]string{"HERDR_ENV": "1", "HERDR_BIN_PATH": "/usr/local/bin/herdr", "DISPLAY": ":0",
+		"HERDR_SOCKET_PATH": "/home/u/.config/herdr/herdr.sock", "HOME": "/home/u"}
+	workEnv := map[string]string{"HERDR_ENV": "1", "HERDR_BIN_PATH": "/usr/local/bin/herdr",
+		"HERDR_SOCKET_PATH": "/home/u/.config/herdr/sessions/work/herdr.sock", "HERDR_SESSION": "work"}
 	const bin = "/opt/herdr/0.9.5/herdr"
-	ssh := []string{"SSH_CONNECTION=10.0.0.9 50000 10.0.0.2 22", "SSH_AUTH_SOCK=/tmp/agent"}
+	ssh := []string{"SSH_CONNECTION=10.0.0.9 50000 10.0.0.2 22", "SSH_AUTH_SOCK=/tmp/agent", "HOME=/home/u"}
 	local := []string{"HOME=/home/u", "DISPLAY=:0"}
+	with := func(env []string, more ...string) []string { return append(slices.Clone(env), more...) }
 	server := procInfo{pid: 100, exe: bin, args: []string{"herdr", "server"}, env: ssh} // started over SSH long ago
 	for _, tc := range []struct {
 		name   string
@@ -156,22 +163,28 @@ func TestDetectHerdrClients(t *testing.T) {
 		{"client over ssh", herdrEnv, []procInfo{server, {pid: 101, exe: bin, args: []string{"herdr"}, env: ssh}}, nil,
 			true, true, "a herdr client runs over SSH (pid 101)"},
 		{"client over ssh with SSH_TTY only", herdrEnv, []procInfo{{pid: 101, exe: bin, args: []string{"herdr", "client"},
-			env: []string{"SSH_TTY=/dev/pts/3"}}}, nil, true, true, "pid 101"},
+			env: []string{"SSH_TTY=/dev/pts/3", "HOME=/home/u"}}}, nil, true, true, "pid 101"},
 		{"local client only", herdrEnv, []procInfo{server, {pid: 102, exe: bin, args: []string{"herdr"}, env: local}}, nil,
 			false, true, "every herdr client runs locally (1 found)"},
 		{"local and ssh clients", herdrEnv, []procInfo{
 			{pid: 102, exe: bin, args: []string{"herdr"}, env: local},
-			{pid: 103, exe: bin, args: []string{"herdr", "session", "attach", "work"}, env: ssh},
+			{pid: 103, exe: bin, args: []string{"herdr", "session", "attach", "default"}, env: ssh},
 		}, nil, true, true, "pid 103"},
-		{"empty SSH_CONNECTION", herdrEnv, []procInfo{{pid: 102, exe: bin, args: []string{"herdr"}, env: []string{"SSH_CONNECTION="}}}, nil,
+		{"empty SSH_CONNECTION", herdrEnv, []procInfo{{pid: 102, exe: bin, args: []string{"herdr"}, env: with(local, "SSH_CONNECTION=")}}, nil,
 			false, true, "runs locally"},
 		{"herdr --remote", herdrEnv, []procInfo{{pid: 104, exe: bin, args: []string{"herdr", "remote-client-bridge"}}}, nil,
+			true, true, "remote-client-bridge, pid 104"},
+		{"herdr --remote with its environment", herdrEnv, []procInfo{{pid: 104, exe: bin,
+			args: []string{"herdr", "--session", "default", "remote-client-bridge", "--idle-timeout-v1"}, env: ssh}}, nil,
 			true, true, "remote-client-bridge, pid 104"},
 		// Neither the server nor CLI commands are clients: no decision.
 		{"server only", herdrEnv, []procInfo{server, {pid: 105, exe: bin, args: []string{"herdr", "pane", "list"}, env: ssh}}, nil,
 			false, false, "no SSH session found"},
-		{"another herdr binary", herdrEnv, []procInfo{{pid: 106, exe: "/home/u/src/herdr/target/herdr", args: []string{"herdr"}, env: ssh}}, nil,
-			false, false, "no SSH session found"},
+		// Another version of herdr attaches all the same (an upgrade the
+		// server outlived, or herdr --remote running the client's version).
+		{"client of another version over ssh", herdrEnv, []procInfo{{pid: 106,
+			exe: "/home/u/.local/share/mise/installs/herdr/0.9.6/herdr", args: []string{"herdr"}, env: ssh}}, nil,
+			true, true, "pid 106"},
 		{"unreadable environment", herdrEnv, []procInfo{{pid: 107, exe: bin, args: []string{"herdr"}}}, nil,
 			false, false, "no SSH session found"},
 		{"scan failed", herdrEnv, nil, errors.New("permission denied"), false, false, "no SSH session found"},
@@ -179,22 +192,191 @@ func TestDetectHerdrClients(t *testing.T) {
 			[]procInfo{{pid: 108, exe: "/usr/bin/herdr", args: []string{"herdr"}, env: ssh}}, nil, true, true, "pid 108"},
 		{"not in herdr", map[string]string{}, []procInfo{{pid: 109, exe: bin, args: []string{"herdr"}, env: ssh}}, nil,
 			false, false, "no SSH session found"},
+		// Clients of other herdr sessions do not count.
+		{"ssh client of another session", herdrEnv, []procInfo{
+			{pid: 110, exe: bin, args: []string{"herdr", "--session", "other"}, env: ssh},
+			{pid: 111, exe: bin, args: []string{"herdr", "session", "attach", "other"}, env: ssh},
+			{pid: 112, exe: bin, args: []string{"herdr", "--session=other", "client"}, env: ssh},
+			{pid: 113, exe: bin, args: []string{"herdr"}, env: with(ssh, "HERDR_SESSION=other")},
+			{pid: 114, exe: bin, args: []string{"herdr", "--session", "other", "remote-client-bridge"}, env: ssh},
+			{pid: 115, exe: bin, args: []string{"herdr"}, env: with(ssh, "XDG_CONFIG_HOME=/home/u/.other")},
+			{pid: 116, exe: bin, args: []string{"herdr"}, env: with(ssh, "HERDR_SOCKET_PATH=/tmp/custom.sock")},
+			{pid: 117, exe: bin, args: []string{"herdr", "--session", "other", "remote-client-bridge"}}, // environment unreadable
+		}, nil, false, false, "no SSH session found"},
+		{"local client, ssh client of another session", herdrEnv, []procInfo{
+			{pid: 102, exe: bin, args: []string{"herdr"}, env: local},
+			{pid: 110, exe: bin, args: []string{"herdr", "--session", "other"}, env: ssh},
+		}, nil, false, true, "every herdr client runs locally (1 found)"},
+		{"the default session named", herdrEnv, []procInfo{
+			{pid: 118, exe: bin, args: []string{"herdr", "--session", "default"}, env: with(ssh, "HERDR_SESSION=other")},
+		}, nil, true, true, "pid 118"},
+		{"same socket by another path", herdrEnv, []procInfo{
+			{pid: 119, exe: bin, args: []string{"herdr"}, env: with(ssh, "XDG_CONFIG_HOME=/link/to/config")},
+		}, nil, true, true, "pid 119"},
+		// keetui in a named session.
+		{"keetui in session work", workEnv, []procInfo{
+			{pid: 120, exe: bin, args: []string{"herdr"}, env: ssh},
+			{pid: 121, exe: bin, args: []string{"herdr", "session", "attach", "work"}, env: local},
+		}, nil, false, true, "every herdr client runs locally (1 found)"},
+		{"keetui in session work, ssh client of it", workEnv, []procInfo{
+			{pid: 122, exe: bin, args: []string{"herdr", "--session", "work"}, env: ssh},
+		}, nil, true, true, "pid 122"},
+		{"keetui in session work, client by HERDR_SESSION", workEnv, []procInfo{
+			{pid: 123, exe: bin, args: []string{"herdr"}, env: with(ssh, "HERDR_SESSION=work")},
+		}, nil, true, true, "pid 123"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			procs := &fakeProcs{procs: tc.procs, err: tc.err, parents: localChain()}
-			s := testDetector(tc.env, procs, nil).detect()
-			if s.remote != tc.remote || s.herdr != tc.herdr || !strings.Contains(s.why, tc.why) {
+			d := testDetector(tc.env, procs, nil)
+			resolve := d.resolve
+			d.resolve = func(p string) (string, error) {
+				if p == "/link/to/config/herdr" {
+					return "/home/u/.config/herdr", nil
+				}
+				return resolve(p)
+			}
+			s := d.detect()
+			if s.remote != tc.remote || s.herdr != tc.herdr || s.herdrSSH != (tc.herdr && tc.remote) || !strings.Contains(s.why, tc.why) {
 				t.Fatalf("detect = %+v, want remote %v herdr %v why %q", s, tc.remote, tc.herdr, tc.why)
 			}
 		})
 	}
 
-	// The executable's name narrows the scan; a symlinked HERDR_BIN_PATH
-	// asks for both names.
-	procs := &fakeProcs{parents: localChain()}
-	testDetector(map[string]string{"HERDR_ENV": "1", "HERDR_BIN_PATH": "/home/u/bin/hd"}, procs, nil).detect()
-	if strings.Join(procs.asked, ",") != "hd" {
-		t.Fatalf("asked for %q", procs.asked)
+	// The scan looks for herdr and for the names of HERDR_BIN_PATH and what
+	// it links to; an executable Linux marked deleted keeps its name.
+	for bin, want := range map[string]string{
+		"/home/u/bin/hd":                   "herdr,hd",
+		"/usr/local/bin/herdr":             "herdr,herdr-0.9.5",
+		"/opt/herdr/0.9.5/herdr (deleted)": "herdr",
+	} {
+		procs := &fakeProcs{parents: localChain()}
+		d := testDetector(map[string]string{"HERDR_ENV": "1", "HERDR_BIN_PATH": bin}, procs, nil)
+		d.resolve = func(p string) (string, error) {
+			if p == "/usr/local/bin/herdr" {
+				return "/opt/herdr/herdr-0.9.5", nil
+			}
+			return p, nil
+		}
+		d.detect()
+		if got := strings.Join(procs.asked, ","); got != want {
+			t.Errorf("HERDR_BIN_PATH %q: asked for %q, want %q", bin, got, want)
+		}
+	}
+}
+
+func TestHerdrClientSocket(t *testing.T) {
+	home := []string{"HOME=/home/u"}
+	for _, tc := range []struct {
+		args []string
+		env  []string
+		want string
+	}{
+		{[]string{"herdr"}, home, "/home/u/.config/herdr/herdr-client.sock"},
+		{[]string{"herdr", "--session", "default"}, home, "/home/u/.config/herdr/herdr-client.sock"},
+		{[]string{"herdr", "--session", "w"}, home, "/home/u/.config/herdr/sessions/w/herdr-client.sock"},
+		{[]string{"herdr", "--session=w", "--session", "x"}, home, "/home/u/.config/herdr/sessions/x/herdr-client.sock"},
+		{[]string{"herdr", "client", "--", "--session", "w"}, home, "/home/u/.config/herdr/herdr-client.sock"},
+		{[]string{"herdr", "session", "attach", "w"}, home, "/home/u/.config/herdr/sessions/w/herdr-client.sock"},
+		{[]string{"herdr"}, append([]string{"HERDR_SESSION=w"}, home...), "/home/u/.config/herdr/sessions/w/herdr-client.sock"},
+		{[]string{"herdr"}, append([]string{"XDG_CONFIG_HOME=/x"}, home...), "/x/herdr/herdr-client.sock"},
+		// A socket override wins over HERDR_SESSION, a named session over both.
+		{[]string{"herdr"}, []string{"HERDR_SOCKET_PATH=/tmp/h.sock", "HERDR_SESSION=w"}, "/tmp/h-client.sock"},
+		{[]string{"herdr"}, []string{"HERDR_CLIENT_SOCKET_PATH=/tmp/c.sock"}, "/tmp/c.sock"},
+		{[]string{"herdr", "--session", "w"}, append([]string{"HERDR_SOCKET_PATH=/tmp/h.sock"}, home...), "/home/u/.config/herdr/sessions/w/herdr-client.sock"},
+	} {
+		got, known := herdrClientSocket(tc.args, envGetter(tc.env))
+		if !known || got != tc.want {
+			t.Errorf("herdrClientSocket(%q, %q) = %q, %v; want %q", tc.args, tc.env, got, known, tc.want)
+		}
+	}
+	if _, known := herdrClientSocket([]string{"herdr"}, envGetter(nil)); known {
+		t.Error("an unknown environment gave a socket")
+	}
+}
+
+// In tmux started from a herdr pane, herdr's clients and tmux's session
+// environment both count: either attached over SSH makes the session
+// remote, and the tmux session environment always comes along.
+func TestDetectTmuxInHerdr(t *testing.T) {
+	env := map[string]string{"HERDR_ENV": "1", "TMUX": "/tmp/tmux-1/default,1,0", "HOME": "/home/u",
+		"HERDR_SOCKET_PATH": "/home/u/.config/herdr/herdr.sock", "DISPLAY": ":0"}
+	localClient := procInfo{pid: 101, exe: "/usr/bin/herdr", args: []string{"herdr"}, env: []string{"HOME=/home/u"}}
+	sshClient := procInfo{pid: 102, exe: "/usr/bin/herdr", args: []string{"herdr"},
+		env: []string{"HOME=/home/u", "SSH_CONNECTION=192.0.2.1 5 192.0.2.2 22"}}
+	tmuxSays := func(lines string) func() (tmuxEnv, error) {
+		return func() (tmuxEnv, error) { return parseTmuxEnv([]byte(lines)), nil }
+	}
+	for _, tc := range []struct {
+		name     string
+		procs    []procInfo
+		tmux     string
+		remote   bool
+		herdrSSH bool
+		why      string
+	}{
+		{"tmux attached over ssh, herdr local", []procInfo{localClient}, "-DISPLAY\nSSH_CONNECTION=192.0.2.1 5 192.0.2.2 22\n",
+			true, false, "tmux session was last attached over SSH"},
+		{"herdr over ssh, tmux local", []procInfo{sshClient}, "DISPLAY=:0\n-SSH_CONNECTION\n", true, true, "herdr client runs over SSH"},
+		{"both local", []procInfo{localClient}, "DISPLAY=:0\n-SSH_CONNECTION\n", false, false,
+			"every herdr client runs locally (1 found), and the tmux session was last attached locally"},
+		{"no herdr client, tmux over ssh", nil, "SSH_CONNECTION=a b c d\n", true, false, "last attached over SSH"},
+		{"herdr local, tmux silent on SSH", []procInfo{localClient}, "DISPLAY=:0\n", false, false, "runs locally"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := testDetector(env, &fakeProcs{procs: tc.procs, parents: localChain()}, tmuxSays(tc.tmux)).detect()
+			if s.remote != tc.remote || s.herdrSSH != tc.herdrSSH || !strings.Contains(s.why, tc.why) || s.tmux == nil {
+				t.Fatalf("detect = %+v", s)
+			}
+		})
+	}
+
+	// On macOS the copy then stays off the pasteboard (decided by remote).
+	s := testDetector(env, &fakeProcs{procs: []procInfo{localClient}, parents: localChain()},
+		tmuxSays("SSH_CONNECTION=192.0.2.1 5 192.0.2.2 22\n")).detect()
+	if !s.remote {
+		t.Fatalf("tmux attached over SSH in herdr counted as local: %+v", s)
+	}
+}
+
+// tmux started from a herdr pane hands keetui's passthrough clear on to
+// herdr as an empty OSC 52, which herdr drops: while a herdr client runs
+// over SSH, the clear copies a space instead.
+func TestTmuxInHerdrClearsWithASpace(t *testing.T) {
+	session := remoteSession{remote: true, herdr: true, herdrSSH: true, why: "a herdr client runs over SSH (pid 9)"}
+	f := &fakeTmux{probe: tmuxFixtures["3.2a default"]}
+	tmux := f.clipboard("%1")
+	tmux.herdr = func() remoteSession { return session }
+	res, err := tmux.copy([]byte(tmuxSecret))
+	if err != nil || res.route != routeTmuxPassthrough {
+		t.Fatalf("copy = %+v, %v", res, err)
+	}
+	outcome, err := tmux.clear(res)
+	if outcome != clearOverwritten || err != nil || f.writes[len(f.writes)-1] != passthroughOSC52([]byte(" ")) {
+		t.Fatalf("clear with a herdr client over SSH = %v, %v (wrote %q)", outcome, err, f.writes)
+	}
+	// Without one, the empty clear goes out as before: it reaches a tmux
+	// client attached directly over SSH, and herdr drops it harmlessly.
+	session = remoteSession{herdr: true, why: "every herdr client runs locally (1 found)"}
+	outcome, err = tmux.clear(res)
+	if outcome != clearRequested || err != nil || f.writes[len(f.writes)-1] != passthroughOSC52(nil) {
+		t.Fatalf("clear with local herdr clients = %v, %v (wrote %q)", outcome, err, f.writes)
+	}
+	// Outside herdr nothing changes.
+	tmux.herdr = nil
+	if outcome, _ := tmux.clear(res); outcome != clearRequested {
+		t.Fatalf("clear outside herdr = %v", outcome)
+	}
+
+	// newTerminalRoutes wires herdr detection into tmux only in a herdr pane.
+	env := map[string]string{"TMUX": "/tmp/tmux-1/default,1,0", "HERDR_ENV": "1"}
+	routes := newTerminalRoutes(func(k string) string { return env[k] }, func() remoteSession { return session })
+	if routes.tmux.(tmuxClipboard).herdr == nil {
+		t.Fatal("tmux in a herdr pane has no herdr detection")
+	}
+	delete(env, "HERDR_ENV")
+	routes = newTerminalRoutes(func(k string) string { return env[k] }, func() remoteSession { return session })
+	if routes.tmux.(tmuxClipboard).herdr != nil {
+		t.Fatal("plain tmux asks herdr")
 	}
 }
 
@@ -281,9 +463,10 @@ func TestParseTmuxEnv(t *testing.T) {
 	}
 }
 
-// The real process table finds a herdr client by its executable, argv and
-// environment: the test binary runs again as a stand-in client, which
-// HERDR_BIN_PATH names.
+// The real process table finds a herdr client by its executable's name,
+// argv and environment: the test binary runs again as a stand-in client,
+// which HERDR_BIN_PATH names, and as a copy elsewhere, standing in for a
+// client of another herdr version.
 func TestHerdrScanFindsRealProcesses(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("no process table on " + runtime.GOOS)
@@ -292,9 +475,9 @@ func TestHerdrScanFindsRealProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	start := func(env ...string) {
+	start := func(bin string, args []string, env ...string) {
 		t.Helper()
-		cmd := exec.Command(exe, "client")
+		cmd := exec.Command(bin, args...)
 		cmd.Env = append([]string{fakeHerdrEnv + "=1", "HOME=/nonexistent"}, env...)
 		stdin, err := cmd.StdinPipe()
 		if err != nil {
@@ -308,15 +491,23 @@ func TestHerdrScanFindsRealProcesses(t *testing.T) {
 			_ = cmd.Wait()
 		})
 	}
-	env := map[string]string{"HERDR_ENV": "1", "HERDR_BIN_PATH": exe}
-	d := sessionDetector{getenv: func(k string) string { return env[k] }, procs: newProcessTable(),
+	env := map[string]string{"HERDR_ENV": "1", "HERDR_BIN_PATH": exe,
+		"HERDR_SOCKET_PATH": "/nonexistent/.config/herdr/herdr.sock"}
+	// The scan also looks for executables named herdr; leave the machine's
+	// real herdr, if any, out of it.
+	d := sessionDetector{getenv: func(k string) string { return env[k] }, procs: notHerdr{newProcessTable()},
 		pid: os.Getpid(), resolve: filepath.EvalSymlinks}
 
-	start("DISPLAY=:0") // a local client
+	start(exe, []string{"client"}, "DISPLAY=:0") // a local client
+	// Clients of another session, over SSH, and the server: none counts.
+	ssh := []string{"SSH_CONNECTION=192.0.2.1 50000 192.0.2.2 22", "SSH_TTY=/dev/pts/9"}
+	start(exe, []string{"--session", "other"}, ssh...)
+	start(exe, []string{"client"}, append([]string{"HERDR_SESSION=other"}, ssh...)...)
+	start(exe, []string{"server"}, ssh...)
 	began := time.Now()
 	s := d.detect()
 	elapsed := time.Since(began)
-	if s.remote || !s.herdr || !strings.Contains(s.why, "runs locally") {
+	if s.remote || !s.herdr || !strings.Contains(s.why, "every herdr client runs locally (1 found)") {
 		t.Fatalf("with a local client: %+v", s)
 	}
 	t.Logf("herdr scan took %v", elapsed)
@@ -324,8 +515,11 @@ func TestHerdrScanFindsRealProcesses(t *testing.T) {
 		t.Errorf("scan took %v", elapsed)
 	}
 
-	start("SSH_CONNECTION=192.0.2.1 50000 192.0.2.2 22", "SSH_TTY=/dev/pts/9")
-	if s := d.detect(); !s.remote || !s.herdr || !strings.Contains(s.why, "runs over SSH") {
+	// A client of keetui's session over SSH, from another directory.
+	other := filepath.Join(t.TempDir(), filepath.Base(exe))
+	copyFile(t, exe, other)
+	start(other, nil, ssh...)
+	if s := d.detect(); !s.remote || !s.herdrSSH || !strings.Contains(s.why, "runs over SSH") {
 		t.Fatalf("with a client over SSH: %+v", s)
 	}
 
@@ -333,6 +527,24 @@ func TestHerdrScanFindsRealProcesses(t *testing.T) {
 	ppid, name, err := d.procs.parent(os.Getpid())
 	if err != nil || ppid != os.Getppid() || name == "" {
 		t.Fatalf("parent = %d, %q, %v; want %d", ppid, name, err, os.Getppid())
+	}
+}
+
+// notHerdr keeps a real process scan away from processes named herdr.
+type notHerdr struct{ processTable }
+
+func (n notHerdr) named(names []string) ([]procInfo, error) {
+	return n.processTable.named(slices.DeleteFunc(slices.Clone(names), func(s string) bool { return s == "herdr" }))
+}
+
+func copyFile(t *testing.T, from, to string) {
+	t.Helper()
+	data, err := os.ReadFile(from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(to, data, 0o700); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -382,7 +594,7 @@ func TestAlsoTerminalRouteSendsBothLegs(t *testing.T) {
 func TestHerdrRouteClearsWithASpace(t *testing.T) {
 	var writes []string
 	write := func(seq string) error { writes = append(writes, seq); return nil }
-	session := remoteSession{remote: true, herdr: true, why: "a herdr client runs over SSH (pid 9)"}
+	session := remoteSession{remote: true, herdr: true, herdrSSH: true, why: "a herdr client runs over SSH (pid 9)"}
 	h := herdrClipboard{write: write, detect: func() remoteSession { return session }}
 	res, err := h.copy([]byte("synthetic-secret"))
 	if err != nil || res.route != routeHerdr || !res.clearable() {
@@ -597,5 +809,37 @@ func TestHerdrClearStatusInApp(t *testing.T) {
 	if status := statusOf(t, cmd); status.Text != "Clipboard cleared; terminal copy left: no herdr client over SSH" || !status.IsError ||
 		!strings.Contains(status.Detail, "once") {
 		t.Fatalf("leg status = %+v", status)
+	}
+}
+
+// With clipboard_osc52 always and only local herdr clients, the terminal
+// leg went to a local client, which wrote this machine's clipboard: the
+// local clear covers it, and no space goes to a client over SSH that
+// attached since.
+func TestHerdrLegOfALocalSessionIsCoveredByTheLocalClear(t *testing.T) {
+	var writes []string
+	session := remoteSession{herdr: true, why: "every herdr client runs locally (1 found)"}
+	herdr := herdrClipboard{write: func(seq string) error { writes = append(writes, seq); return nil },
+		detect: func() remoteSession { return session }}
+	c := &systemClipboard{native: &fakeNative{local: true, marks: true}, terminal: terminalRoutes{tty: &fakeTerminal{}, herdr: herdr},
+		detect: func() remoteSession { return session }}
+	if _, err := c.copy("synthetic", copyOptions{transient: true, osc52: config.OSC52Always}); err != nil || len(writes) != 1 {
+		t.Fatalf("copy = %v (writes %q)", err, writes)
+	}
+	session = remoteSession{remote: true, herdr: true, herdrSSH: true, why: "a herdr client runs over SSH (pid 9)"}
+	r, err := c.release()
+	if err != nil || r.outcome != clearDone || r.leg != clearHerdrLocal || len(writes) != 1 {
+		t.Fatalf("release = %+v, %v (writes %q)", r, err, writes)
+	}
+	if text, isErr := clearStatus(r, nil); text != "Clipboard cleared" || isErr || !strings.Contains(clearDetail(r), "local") {
+		t.Fatalf("status = %q, %v; detail %q", text, isErr, clearDetail(r))
+	}
+
+	// A copy made while a client ran over SSH still gets its space.
+	if _, err := c.copy("synthetic", copyOptions{transient: true, osc52: config.OSC52Always}); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := c.release(); err != nil || r.leg != clearOverwritten || len(writes) != 3 {
+		t.Fatalf("release = %+v, %v (writes %q)", r, err, writes)
 	}
 }
