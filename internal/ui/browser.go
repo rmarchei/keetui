@@ -341,10 +341,7 @@ func (m BrowserModel) Init() tea.Cmd {
 func (m BrowserModel) visibleHeight() int {
 	_, height := viewSize(m.width, m.height)
 	// Header rows, two position-counter rows, and measured hints.
-	h := height - browserHeaderRows - 2 - lipgloss.Height(m.footerView())
-	if m.searching {
-		h -= 2 // search input line
-	}
+	h := height - m.listStartRow() - 2 - lipgloss.Height(m.footerView())
 	return max(1, h)
 }
 
@@ -488,7 +485,6 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Re-run the search to preserve results
 			m.allItems = collectAllEntries(root, m.db.RecycleBinUUID())
 			sortItems(m.allItems, m.db.RecycleBinUUID(), m.sortBy)
-			m.searchInput.SetValue(m.searchQuery)
 			m.applySearch()
 		} else {
 			m.items = m.buildItemsWithDB(m.currentGroup())
@@ -531,8 +527,9 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if _, click := msg.(tea.MouseClickMsg); !click || m.searching {
 				break
 			}
-			idx := mouse.Y - browserHeaderRows + m.offset
-			if mouse.Y >= browserHeaderRows && mouse.Y < browserHeaderRows+m.visibleHeight() && idx >= 0 && idx < len(m.items) {
+			start := m.listStartRow()
+			idx := mouse.Y - start + m.offset
+			if mouse.Y >= start && mouse.Y < start+m.visibleHeight() && idx >= 0 && idx < len(m.items) {
 				if idx == m.cursor {
 					// Click on already-selected item: open it
 					item := m.items[m.cursor]
@@ -637,6 +634,7 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.allItems = collectAllEntries(m.db.RootGroup(), m.db.RecycleBinUUID())
 			sortItems(m.allItems, m.db.RecycleBinUUID(), m.sortBy)
 			m.searchInput.SetValue("")
+			m.searchQuery = ""
 			m.searchInput.Focus()
 			m.items = m.allItems
 			m.cursor = 0
@@ -958,8 +956,8 @@ func (m *BrowserModel) updateSearchInput(msg tea.Msg) tea.Cmd {
 func (m BrowserModel) View() tea.View {
 	var b strings.Builder
 
-	if m.searchQuery != "" && !m.searching {
-		b.WriteString(header(m.width, "", fmt.Sprintf("Search: %q", m.searchQuery)))
+	if m.searching || m.searchQuery != "" {
+		b.WriteString(header(m.width, "", "Search"))
 	} else {
 		var indicators []string
 		if m.sortBy != sortByName {
@@ -972,8 +970,8 @@ func (m BrowserModel) View() tea.View {
 	}
 	b.WriteString("\n\n")
 
-	if m.searching {
-		b.WriteString(m.searchInput.View())
+	if m.searching || m.searchQuery != "" {
+		b.WriteString(m.searchView())
 		b.WriteString("\n\n")
 	}
 
@@ -993,10 +991,15 @@ func (m BrowserModel) View() tea.View {
 			b.WriteString("\n")
 		}
 
-		if len(m.items) > vis {
-			fmt.Fprintf(&b, "\n%s",
-				helpStyle.Render(fmt.Sprintf("  %d/%d items", m.cursor+1, len(m.items))))
-			b.WriteString("\n")
+		if m.searchQuery != "" || len(m.items) > vis {
+			position := fmt.Sprintf("  %d/%d items", m.cursor+1, len(m.items))
+			if m.searchQuery != "" {
+				position = fmt.Sprintf("  %d/%d", m.cursor+1, len(m.items))
+				if field := searchMatchField(m.items[m.cursor], m.searchQuery); field != "" {
+					position += " · matches " + field
+				}
+			}
+			b.WriteString("\n" + helpStyle.Render(position) + "\n")
 		}
 	}
 
@@ -1051,16 +1054,21 @@ func (m BrowserModel) renderRow(i int, cols browserColumns) string {
 	if selected {
 		nameStyle = selectedItemStyle
 	}
-	row := cursor + icon + nameStyle.Render(padCell(item.title(), cols.title))
+	fuzzy := m.searchQuery != "" && !entryMatchesSubstring(item, m.searchQuery)
+	row := cursor + icon + padCell(highlightSearch(item.title(), m.searchQuery, nameStyle, fuzzy), cols.title)
 	if cols.user > 0 {
 		style := secondaryStyle
 		if item.isGroup {
 			style = hiddenStyle
 		}
-		row += "  " + style.Render(padCell(item.secondary(), cols.user))
+		row += "  " + padCell(highlightSearch(item.secondary(), m.searchQuery, style, fuzzy), cols.user)
 	}
 	if cols.extra > 0 {
-		row += "  " + hiddenStyle.Render(padCell(item.extra(), cols.extra))
+		extra := item.extra()
+		if field := searchMatchField(item, m.searchQuery); field != "" && field != "title" && field != "username" {
+			extra = "matches " + field + " · " + extra
+		}
+		row += "  " + hiddenStyle.Render(padCell(extra, cols.extra))
 	}
 	row = strings.TrimRight(row, " ")
 	if selected {

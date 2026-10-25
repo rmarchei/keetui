@@ -221,6 +221,12 @@ When browsing inside the recycle bin group, these additional keys are available:
 
 Press `/` in the browser to search across all entries in the database. Matches filter by title, username, URL, notes, and custom fields. Fuzzy matching is supported — typing "git" will match "GitHub". Exact substring matches are shown first, followed by fuzzy matches. While you type, the arrow keys (or the mouse wheel) move through the results; `Enter` opens the selected entry, and going back from it returns to the results. `Esc` cancels the search.
 
+The search row keeps the query and result count visible, including when you
+return from an entry. Matching characters in titles and usernames are bold and
+underlined. Results matched through another field show a label such as “matches
+notes” or “matches protected field”; field contents remain hidden. The position
+line also names the selected result's matching field on narrow terminals.
+
 ## TOTP Support
 
 keetui reads TOTP secrets from entries using two common conventions:
