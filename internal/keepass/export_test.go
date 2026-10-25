@@ -605,3 +605,53 @@ func TestCSVRoundTripNonRootName(t *testing.T) {
 		t.Error("Banking/Bank not reproduced at the correct level")
 	}
 }
+
+// Protected custom fields stay protected through an XML export and import,
+// and so do those of KeePass's own XML export (ProtectInMemory).
+func TestXMLRoundTripKeepsProtection(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Create(filepath.Join(dir, "source.kdbx"), "testmaster")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	root := db.RootGroup()
+	if _, err := db.AddEntry(root.UUID, Entry{Title: "Service", Password: "synthetic-pass", CustomFields: []CustomField{
+		{Key: "API token", Value: "synthetic-token", Protected: true},
+		{Key: "Region", Value: "eu-west"},
+	}}); err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := db.ExportXML(&buf); err != nil {
+		t.Fatalf("ExportXML: %v", err)
+	}
+	keepassXML := `<?xml version="1.0" encoding="utf-8"?>
+<KeePassFile><Root><Group><Name>Root</Name><Entry>
+<String><Key>Title</Key><Value>From KeePass</Value></String>
+<String><Key>PIN</Key><Value ProtectInMemory="True">1234</Value></String>
+</Entry></Group></Root></KeePassFile>`
+	for name, source := range map[string]string{"keetui": buf.String(), "KeePass": keepassXML} {
+		target, err := Create(filepath.Join(dir, name+".kdbx"), "testmaster")
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		if _, err := target.ImportXML(strings.NewReader(source)); err != nil {
+			t.Fatalf("%s: ImportXML: %v", name, err)
+		}
+		protected := map[string]bool{}
+		for _, e := range target.RootGroup().Entries {
+			for _, cf := range e.CustomFields {
+				protected[cf.Key] = cf.Protected
+			}
+		}
+		want := map[string]bool{"API token": true, "Region": false}
+		if name == "KeePass" {
+			want = map[string]bool{"PIN": true}
+		}
+		for key, w := range want {
+			if p, ok := protected[key]; !ok || p != w {
+				t.Errorf("%s: %q protected = %v (found %v), want %v", name, key, p, ok, w)
+			}
+		}
+	}
+}

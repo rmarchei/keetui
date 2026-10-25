@@ -112,8 +112,20 @@ type XMLEntry struct {
 
 // XMLString represents a key-value pair in XML export.
 type XMLString struct {
-	Key   string `xml:"Key"`
-	Value string `xml:"Value"`
+	Key   string   `xml:"Key"`
+	Value XMLValue `xml:"Value"`
+}
+
+// XMLValue is a string's value. Protected marks a value kept protected, as
+// keetui writes it; KeePass's own XML export says ProtectInMemory.
+type XMLValue struct {
+	Text            string `xml:",chardata"`
+	Protected       bool   `xml:"Protected,attr,omitempty"`
+	ProtectInMemory bool   `xml:"ProtectInMemory,attr,omitempty"`
+}
+
+func xmlString(key, value string, protected bool) XMLString {
+	return XMLString{Key: key, Value: XMLValue{Text: value, Protected: protected}}
 }
 
 // XMLBinary represents a binary attachment in XML export.
@@ -148,18 +160,18 @@ func (d *DB) convertGroupToXML(g *Group) XMLGroup {
 	for _, e := range g.Entries {
 		xe := XMLEntry{
 			Strings: []XMLString{
-				{Key: "Title", Value: e.Title},
-				{Key: "UserName", Value: e.UserName},
-				{Key: "Password", Value: e.Password},
-				{Key: "URL", Value: e.URL},
-				{Key: "Notes", Value: e.Notes},
+				xmlString("Title", e.Title, false),
+				xmlString("UserName", e.UserName, false),
+				xmlString("Password", e.Password, true),
+				xmlString("URL", e.URL, false),
+				xmlString("Notes", e.Notes, false),
 			},
 		}
 		if e.TOTP != "" {
-			xe.Strings = append(xe.Strings, XMLString{Key: "TOTP", Value: e.TOTP})
+			xe.Strings = append(xe.Strings, xmlString("TOTP", e.TOTP, true))
 		}
 		for _, cf := range e.CustomFields {
-			xe.Strings = append(xe.Strings, XMLString{Key: cf.Key, Value: cf.Value})
+			xe.Strings = append(xe.Strings, xmlString(cf.Key, cf.Value, cf.Protected))
 		}
 		// Export binary attachments as base64
 		if d != nil {
@@ -325,23 +337,25 @@ func (d *DB) importXMLGroup(xg *XMLGroup, parentUUID [16]byte, isRoot bool) (int
 	for _, xe := range xg.Entries {
 		entry := Entry{}
 		for _, xs := range xe.Strings {
+			value := xs.Value.Text
 			switch xs.Key {
 			case "Title":
-				entry.Title = xs.Value
+				entry.Title = value
 			case "UserName":
-				entry.UserName = xs.Value
+				entry.UserName = value
 			case "Password":
-				entry.Password = xs.Value
+				entry.Password = value
 			case "URL":
-				entry.URL = xs.Value
+				entry.URL = value
 			case "Notes":
-				entry.Notes = xs.Value
+				entry.Notes = value
 			case "TOTP":
-				entry.TOTP = xs.Value
+				entry.TOTP = value
 			default:
 				entry.CustomFields = append(entry.CustomFields, CustomField{
-					Key:   xs.Key,
-					Value: xs.Value,
+					Key:       xs.Key,
+					Value:     value,
+					Protected: xs.Value.Protected || xs.Value.ProtectInMemory,
 				})
 			}
 		}
