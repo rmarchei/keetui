@@ -91,6 +91,12 @@ func (d *DB) ExtractAttachment(entryUUID gokeepasslib.UUID, name, destPath strin
 			if err != nil {
 				return fmt.Errorf("create file %q: %w", destPath, err)
 			}
+			// The mode above applies only to a new file: an existing one
+			// keeps its own (0644, say) unless forced, before any data.
+			if err := f.Chmod(0600); err != nil {
+				_ = f.Close()
+				return fmt.Errorf("set permissions of %q: %w", destPath, err)
+			}
 			_, writeErr := f.Write(data)
 			closeErr := f.Close()
 			if writeErr != nil {

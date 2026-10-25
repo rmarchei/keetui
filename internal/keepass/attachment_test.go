@@ -336,3 +336,37 @@ func TestAddAttachmentFromFileNotFound(t *testing.T) {
 		t.Fatal("AddAttachmentFile should fail for non-existent file")
 	}
 }
+
+// Extracting over an existing, world-readable file leaves the secret
+// readable by its owner only.
+func TestExtractAttachmentForcesOwnerOnlyPermissions(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Create(filepath.Join(dir, "test.kdbx"), "testpass")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	uuid, err := db.AddEntry(db.RootGroup().UUID, Entry{Title: "Test"})
+	if err != nil {
+		t.Fatalf("AddEntry: %v", err)
+	}
+	if err := db.AddAttachment(uuid, "id_ed25519", []byte("synthetic-key")); err != nil {
+		t.Fatalf("AddAttachment: %v", err)
+	}
+	dest := filepath.Join(dir, "id_ed25519")
+	if err := os.WriteFile(dest, []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dest, 0644); err != nil { // past the umask
+		t.Fatal(err)
+	}
+	if err := db.ExtractAttachment(uuid, "id_ed25519", dest); err != nil {
+		t.Fatalf("ExtractAttachment: %v", err)
+	}
+	fi, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(dest); string(data) != "synthetic-key" || fi.Mode().Perm() != 0600 {
+		t.Errorf("extracted %q with mode %v, want the key with 0600", data, fi.Mode().Perm())
+	}
+}
