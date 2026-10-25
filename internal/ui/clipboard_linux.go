@@ -38,11 +38,11 @@ type linuxClipboard struct {
 	output func(name string, args ...string) ([]byte, error)
 	newX11 func(display string) x11Owner
 
-	tool       string   // backend of the last write: wl-copy, x11, xclip or xsel
-	x11        x11Owner // created on the first X11 copy, for x11Display
-	x11Display string
-	forwarded  bool // x11Display is forwarded by the SSH session
-	byContent  bool // holds matched another client's copy of the value
+	tool      string   // backend of the last write: wl-copy, x11, xclip or xsel
+	x11       *x11Slot // the owner of the last X11 copy
+	owners    []*x11Slot
+	byContent bool // holds matched another client's copy of the value
+	gone      bool // holds found the forwarded X server gone, with keetui's copy
 
 	sensitiveOnce sync.Once
 	sensitive     bool // wl-copy understands --sensitive
@@ -54,9 +54,20 @@ type linuxClipboard struct {
 type x11Owner interface {
 	Copy(value []byte, marked bool) error
 	Owns() bool
+	Lost() bool
 	Blank()
 	Read() ([]byte, error)
 	Close() error
+}
+
+// x11Slot is keetui's owner on one X display. keetui keeps every owner it
+// made until it exits: one whose display the session no longer uses keeps
+// its clipboard, empty, so that managers which ignore the marker have no
+// ownerless clipboard to refill from their history.
+type x11Slot struct {
+	owner     x11Owner
+	display   string
+	forwarded bool // display is forwarded by the SSH session
 }
 
 // x11Name names keetui's owner window, so that clipboard managers which
@@ -211,22 +222,20 @@ func (l *linuxClipboard) write(value []byte, _ bool, r nativeRoute) (bool, error
 // display, where what they fork keeps the SSH session's X11 channel, and so
 // ssh, open after keetui exits.
 func (l *linuxClipboard) writeX11(value []byte, r nativeRoute) (tool string, marked bool, err error) {
-	if l.x11 != nil && l.x11Display != r.display {
-		// The session's display changed: wipe the copy on the old one.
-		l.x11.Blank()
-		_ = l.x11.Close()
-		l.x11 = nil
+	slot := l.slot(r)
+	if l.x11 != nil && l.x11 != slot {
+		// The session's display changed: wipe the copy on the old one, but
+		// keep its clipboard (see x11Slot).
+		l.x11.owner.Blank()
 	}
-	if l.x11 == nil {
-		l.x11, l.x11Display = l.newX11(r.display), r.display
-	}
-	l.forwarded = r.forwarded
-	if err = l.x11.Copy(value, true); err == nil {
+	l.x11 = slot
+	if err = slot.owner.Copy(value, true); err == nil {
 		return "x11", true, nil
 	}
 	if r.forwarded || errors.Is(err, x11clip.ErrTimeout) {
 		return "", false, err
 	}
+	// Only local routes get here, whose display is keetui's $DISPLAY.
 	tool = x11Fallback(l.has)
 	switch tool {
 	case "xclip":
@@ -243,16 +252,39 @@ func (l *linuxClipboard) writeX11(value []byte, r nativeRoute) (tool string, mar
 	return tool, false, nil
 }
 
+// slot returns keetui's owner for a route's display, making one if needed.
+func (l *linuxClipboard) slot(r nativeRoute) *x11Slot {
+	for _, s := range l.owners {
+		if s.display == r.display {
+			s.forwarded = r.forwarded
+			return s
+		}
+	}
+	s := &x11Slot{owner: l.newX11(r.display), display: r.display, forwarded: r.forwarded}
+	l.owners = append(l.owners, s)
+	return s
+}
+
 // holds asks the X server whether keetui's copy is still on the clipboard,
 // and reads tool copies back; an unreadable clipboard (empty, or an image)
 // is not ours.
 func (l *linuxClipboard) holds(matches func([]byte) bool, alsoTerminal bool) bool {
-	l.byContent = false
+	l.byContent, l.gone = false, false
 	var out []byte
 	var err error
 	switch l.tool {
 	case "x11":
-		if l.x11.Owns() {
+		x := l.x11.owner
+		if x.Owns() {
+			return true
+		}
+		if l.x11.forwarded && x.Lost() {
+			// The X server at the user's end went away (XQuartz quit, the
+			// SSH session ended), and keetui's copy with it. Nothing is
+			// left to clear there, and asking again would make the ssh
+			// client print over the screen, but the terminal copy made
+			// next to it is still to be cleared.
+			l.gone = true
 			return true
 		}
 		if !alsoTerminal {
@@ -260,7 +292,7 @@ func (l *linuxClipboard) holds(matches func([]byte) bool, alsoTerminal bool) boo
 		}
 		// The terminal applies its OSC 52 copy asynchronously, possibly
 		// after keetui's, so the clipboard may hold the same value.
-		out, err = l.x11.Read()
+		out, err = x.Read()
 		l.byContent = err == nil && matches(out)
 		clear(out)
 		return l.byContent
@@ -287,15 +319,18 @@ func (l *linuxClipboard) clear() error {
 	case "wl-copy":
 		return l.run(nil, nil, "wl-copy", "--clear")
 	case "x11":
-		if l.byContent {
+		switch {
+		case l.gone:
+			return nil
+		case l.byContent:
 			// Another client (the terminal) holds keetui's value: replace
 			// it with an empty copy, which keetui then keeps.
-			return l.x11.Copy(nil, false)
+			return l.x11.owner.Copy(nil, false)
 		}
 		// Keep the clipboard, empty. Giving it up would let managers that
 		// ignore the marker (ClipIt, Parcellite, Diodon, xfce4-clipman,
 		// qlipper, GPaste before 51.1) restore the secret from history.
-		l.x11.Blank()
+		l.x11.owner.Blank()
 		return nil
 	case "xclip":
 		return l.runX(nil, nil, "xclip", "-selection", "clipboard")
@@ -309,7 +344,7 @@ func (l *linuxClipboard) clear() error {
 // empty clipboard, and its --clear gives the clipboard up, so managers that
 // ignore the marker may restore the copy; it is the last resort.
 func (l *linuxClipboard) clearXsel() error {
-	if l.x11 != nil && l.x11.Copy(nil, false) == nil {
+	if l.x11 != nil && l.x11.owner.Copy(nil, false) == nil {
 		return nil
 	}
 	if l.has("xclip") {
@@ -327,21 +362,21 @@ func (l *linuxClipboard) clearXsel() error {
 // is no hand-off: managers on the user's desktop that ignore the marker may
 // then restore their newest entry.
 func (l *linuxClipboard) close() {
-	if l.x11 == nil {
-		return
+	for _, s := range l.owners {
+		if !s.forwarded && s.owner.Owns() && l.has("xclip") {
+			l.handOff(s)
+		}
+		_ = s.owner.Close()
 	}
-	if !l.forwarded && l.x11.Owns() && l.has("xclip") {
-		l.handOff()
-	}
-	_ = l.x11.Close()
 }
 
 // handOff gives the clipboard to an empty xclip copy and waits until xclip,
 // which takes the clipboard after forking, owns it, so that it never goes
-// ownerless in between.
-func (l *linuxClipboard) handOff() {
+// ownerless in between. Only displays keetui reached locally get here.
+func (l *linuxClipboard) handOff(s *x11Slot) {
 	done := make(chan error, 1)
-	go func() { done <- l.runX(nil, nil, "xclip", "-selection", "clipboard") }()
+	env := envWith("DISPLAY=" + s.display)
+	go func() { done <- l.runX(env, nil, "xclip", "-selection", "clipboard") }()
 	deadline := time.After(handOffTimeout)
 	select {
 	case err := <-done:
@@ -351,7 +386,7 @@ func (l *linuxClipboard) handOff() {
 	case <-deadline:
 		return
 	}
-	for l.x11.Owns() {
+	for s.owner.Owns() {
 		select {
 		case <-deadline:
 			return

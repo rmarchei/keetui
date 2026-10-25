@@ -484,14 +484,24 @@ F1 shows what decided, and where the copy went. In a remote session:
   it alone. A forwarded display gets the marked copy and, with `auto`, a
   terminal copy as well, because the X server at your end may be XQuartz or
   an untrusted `ssh -X` connection whose copies cannot be pasted; the timed
-  clear clears both. On a forwarded display keetui never falls back to xclip
+  clear clears both. A terminal that applies OSC 52 to the same clipboard
+  (`ssh -X` from a Linux desktop with kitty, foot, Alacritty, WezTerm or
+  Ghostty) then replaces the marked copy with an unmarked one, which
+  clipboard history keeps: set `clipboard_osc52` to `never` there. On a
+  forwarded display keetui never falls back to xclip
   or xsel and hands nothing to xclip at exit: what they leave behind would
   hold the SSH session's X11 channel, so `ssh -t host keetui` would not exit
   after keetui quits. The trade-off: once keetui exits, clipboard managers on
-  your desktop that ignore the marker may restore their newest entry. If the
-  forwarded X server is gone, the ssh client prints its error over the screen,
-  so keetui redraws the whole screen after a failed copy and after each clear
-  of a copy on that display.
+  your desktop that ignore the marker may restore their newest entry. When
+  the session's display changes (a tmux used at the desk, then attached over
+  `ssh -X`), keetui empties its copy on the old display but keeps that
+  clipboard until it exits, so that managers there have no ownerless
+  clipboard to refill. If the forwarded X server is gone, the ssh client
+  prints its error over the screen, so keetui redraws the whole screen after
+  a failed copy and after each clear of a copy on that display. A copy on a
+  forwarded X server that went away before the clear (XQuartz quit) went with
+  it: keetui does not ask that server again, and still clears the terminal
+  copy.
 
 **herdr.** In a herdr pane keetui sends a plain OSC 52, which herdr hands to
 the client that last typed: a client running over SSH writes it to its

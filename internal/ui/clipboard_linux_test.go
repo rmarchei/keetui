@@ -50,6 +50,7 @@ type fakeX11 struct {
 	marked  bool
 	other   []byte // another client's copy, returned by Read
 	readErr error
+	lost    bool // the connection broke while it held the copy
 	calls   []string
 }
 
@@ -67,6 +68,14 @@ func (f *fakeX11) Owns() bool {
 	f.calls = append(f.calls, "Owns")
 	return f.owned
 }
+
+func (f *fakeX11) Lost() bool {
+	f.calls = append(f.calls, "Lost")
+	return f.lost
+}
+
+// gone simulates the X server going away with keetui's copy.
+func (f *fakeX11) gone() { f.owned, f.value, f.lost = false, nil, true }
 
 func (f *fakeX11) Blank() {
 	f.calls = append(f.calls, "Blank")
@@ -93,14 +102,16 @@ func (f *fakeX11) stolen(other string) { f.owned, f.value, f.other = false, nil,
 type fakeTools struct {
 	installed []string
 	runs      []string
+	envs      [][]string // the environment of each run
 	runErr    error
 	clip      []byte // what xclip -o / xsel -o / wl-paste return
 	outErr    error  // what they fail with
 	onRun     func(name string, input []byte)
 }
 
-func (f *fakeTools) run(_ []string, input []byte, name string, args ...string) error {
+func (f *fakeTools) run(env []string, input []byte, name string, args ...string) error {
 	f.runs = append(f.runs, fmt.Sprintf("%s %s <%q", name, strings.Join(args, " "), input))
+	f.envs = append(f.envs, env)
 	if f.runErr != nil {
 		return fmt.Errorf("%s: %w", name, f.runErr)
 	}

@@ -68,6 +68,7 @@ type Owner struct {
 	marked     bool             // offer the password manager hint
 	ts         xproto.Timestamp // acquisition time of the copy
 	owned      bool             // no SelectionClear since the acquisition
+	broken     bool             // the connection broke while it held the copy
 }
 
 // session is one display connection.
@@ -388,6 +389,7 @@ func (o *Owner) forgetLocked() {
 func (o *Owner) drop(s *session) {
 	o.mu.Lock()
 	if o.s == s {
+		o.broken = o.broken || o.owned
 		o.s, o.owned = nil, false
 		o.forgetLocked()
 	}
@@ -470,6 +472,9 @@ func (o *Owner) selectionOwner(s *session) (xproto.Window, error) {
 func (o *Owner) Copy(value []byte, marked bool) error {
 	o.opMu.Lock()
 	defer o.opMu.Unlock()
+	o.mu.Lock()
+	o.broken = false
+	o.mu.Unlock()
 	s, err := o.session()
 	if err != nil {
 		return err // without a connection there is no earlier copy either
@@ -528,6 +533,16 @@ func (o *Owner) Owns() bool {
 		return true
 	}
 	return owner == s.win
+}
+
+// Lost reports that the connection holding the last copy broke while the
+// copy was on CLIPBOARD, live or blanked: the X server went away, or dropped
+// keetui's connection, and the copy with it. A server that comes back has no
+// copy of keetui's; Owns then reports false without reconnecting.
+func (o *Owner) Lost() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.broken
 }
 
 // Blank keeps CLIPBOARD but replaces the copy with empty, unmarked text.
@@ -790,7 +805,7 @@ func (o *Owner) Close() error {
 	defer o.opMu.Unlock()
 	o.mu.Lock()
 	s, ts, owned := o.s, o.ts, o.owned
-	o.s, o.owned, o.connecting = nil, false, false
+	o.s, o.owned, o.connecting, o.broken = nil, false, false, false
 	o.epoch++
 	o.forgetLocked()
 	o.mu.Unlock()
@@ -878,6 +893,7 @@ func offer[T any](ch chan T, v T) {
 func (o *Owner) disconnected(s *session) {
 	o.mu.Lock()
 	if o.s == s {
+		o.broken = o.broken || o.owned
 		o.s, o.owned = nil, false
 		o.forgetLocked()
 	}

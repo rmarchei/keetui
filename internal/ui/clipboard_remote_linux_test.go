@@ -149,31 +149,100 @@ func TestForwardedDisplayCopy(t *testing.T) {
 	}
 }
 
-// A copy to another display than the last one wipes the copy left there.
-func TestDisplayChangeRetiresTheOldOwner(t *testing.T) {
+// A copy to another display than the last one wipes the copy left there,
+// but keeps that clipboard, empty, until exit: an ownerless clipboard would
+// let managers that ignore the marker restore the secret from their
+// history. At exit a display keetui reached locally goes to xclip.
+func TestDisplayChangeKeepsTheOldClipboard(t *testing.T) {
 	owners := map[string]*fakeX11{}
-	l := newTestLinux(map[string]string{"DISPLAY": ":0", "TMUX": "x"}, nil, &fakeTools{installed: []string{"xclip"}})
+	tools := &fakeTools{installed: []string{"xclip"}}
+	tools.onRun = func(name string, _ []byte) {
+		for display, x := range owners {
+			if name == "xclip" && !forwardedDisplay(display) {
+				x.stolen("") // xclip took the clipboard
+			}
+		}
+	}
+	l := newTestLinux(map[string]string{"DISPLAY": ":0", "TMUX": "x", "HOME": "/home/u"}, nil, tools)
 	l.newX11 = func(display string) x11Owner {
 		owners[display] = &fakeX11{}
 		return owners[display]
 	}
-	if _, err := l.write([]byte("one"), true, l.route(tmuxSession("DISPLAY=localhost:10.0\n"))); err != nil {
+	// At the desk, then attached over ssh -X: the desktop's :0, then the
+	// forwarded display, then another forwarded one.
+	if _, err := l.writeLocal([]byte("one"), true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := l.write([]byte("two"), true, l.route(tmuxSession("DISPLAY=localhost:11.0\n"))); err != nil {
+	if _, err := l.write([]byte("two"), true, l.route(tmuxSession("DISPLAY=localhost:10.0\n"))); err != nil {
 		t.Fatal(err)
 	}
-	old := owners["localhost:10.0"]
-	if !slices.Equal(old.calls, []string{`Copy("one", true)`, "Blank", "Close"}) || string(owners["localhost:11.0"].value) != "two" {
-		t.Fatalf("old owner calls %q, new owner value %q", old.calls, owners["localhost:11.0"].value)
+	desk := owners[":0"]
+	if !slices.Equal(desk.calls, []string{`Copy("one", true)`, "Blank"}) || !desk.owned || desk.value != nil {
+		t.Fatalf("desktop owner calls %q (owned %v, value %q)", desk.calls, desk.owned, desk.value)
 	}
-	// The same display keeps its owner.
-	if _, err := l.write([]byte("three"), true, l.route(tmuxSession("DISPLAY=localhost:11.0\n"))); err != nil || len(owners) != 2 {
-		t.Fatalf("write = %v, owners %d", err, len(owners))
+	if _, err := l.write([]byte("three"), true, l.route(tmuxSession("DISPLAY=localhost:11.0\n"))); err != nil {
+		t.Fatal(err)
 	}
-	// Back home: the local display's owner hands off to xclip at exit.
-	if _, err := l.writeLocal([]byte("four"), true); err != nil || l.forwarded {
-		t.Fatalf("local write = %v (forwarded %v)", err, l.forwarded)
+	if old := owners["localhost:10.0"]; !slices.Equal(old.calls, []string{`Copy("two", true)`, "Blank"}) {
+		t.Fatalf("old forwarded owner calls %q", old.calls)
+	}
+	// The same display keeps its owner, and coming back reuses one.
+	for _, display := range []string{"localhost:11.0", "localhost:10.0"} {
+		if _, err := l.write([]byte("four"), true, l.route(tmuxSession("DISPLAY="+display+"\n"))); err != nil || len(owners) != 3 {
+			t.Fatalf("write = %v, owners %d", err, len(owners))
+		}
+	}
+	if string(owners["localhost:10.0"].value) != "four" || owners["localhost:11.0"].value != nil {
+		t.Fatalf("values %q, %q", owners["localhost:10.0"].value, owners["localhost:11.0"].value)
+	}
+	// Exit: the desktop's clipboard goes to xclip on :0, forwarded ones close
+	// without a hand-off.
+	for _, x := range owners {
+		x.calls = nil
+	}
+	l.close()
+	if !slices.Equal(tools.runs, []string{`xclip -selection clipboard <""`}) || !slices.Contains(tools.envs[0], "DISPLAY=:0") {
+		t.Fatalf("close ran %q with %q", tools.runs, tools.envs)
+	}
+	for display, x := range owners {
+		if len(x.calls) == 0 || x.calls[len(x.calls)-1] != "Close" || forwardedDisplay(display) && slices.Contains(x.calls, "Owns") {
+			t.Errorf("%s: calls %q", display, x.calls)
+		}
+	}
+}
+
+// A forwarded X server that went away took keetui's copy with it: the clear
+// does not ask it again, reports the copy cleared, and clears the terminal
+// copy made next to it. On a local display a lost connection still counts
+// as a change.
+func TestLostForwardedServerStillClearsTheTerminal(t *testing.T) {
+	x := &fakeX11{}
+	l := newTestLinux(map[string]string{"DISPLAY": "localhost:10.0"}, x, &fakeTools{})
+	c, term := newFakeClipboard(nil)
+	c.native = l
+	c.detect = func() remoteSession { return sshSession }
+	if _, err := c.copy("synthetic-secret", copyOptions{transient: true, osc52: config.OSC52Auto}); err != nil {
+		t.Fatal(err)
+	}
+	x.gone()
+	x.calls = nil
+	r, err := c.release()
+	if err != nil || r.outcome != clearDone || r.leg != clearRequested || len(term.sent) != 2 || !r.repaint {
+		t.Fatalf("release = %+v, %v (terminal %q)", r, err, term.sent)
+	}
+	if slices.Contains(x.calls, "Read") || slices.Contains(x.calls, "Blank") || slices.ContainsFunc(x.calls, func(c string) bool { return strings.HasPrefix(c, "Copy") }) {
+		t.Fatalf("calls %q", x.calls)
+	}
+
+	x = &fakeX11{}
+	c, _ = newFakeClipboard(nil)
+	c.native = newTestLinux(x11Env, x, &fakeTools{})
+	if _, err := c.copy("synthetic-secret", copyOptions{transient: true, osc52: config.OSC52Auto}); err != nil {
+		t.Fatal(err)
+	}
+	x.gone()
+	if r, err := c.release(); err != nil || r.outcome != clearChanged {
+		t.Fatalf("local release = %+v, %v", r, err)
 	}
 }
 

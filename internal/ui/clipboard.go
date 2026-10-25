@@ -551,7 +551,10 @@ func localHelp(r copyResult) string {
 	switch {
 	case r.native && l.forwarded && r.terminal:
 		lines = append(lines, fmt.Sprintf("Copied to X display %s, which your SSH session forwards, and also to the terminal (OSC 52): "+
-			"the X server at your end may be XQuartz or an untrusted ssh -X connection, whose copies cannot be pasted.", l.display))
+			"the X server at your end may be XQuartz or an untrusted ssh -X connection, whose copies cannot be pasted. "+
+			"A terminal that applies OSC 52 to that same clipboard (kitty, foot, Alacritty, WezTerm or Ghostty on a Linux desktop) "+
+			"replaces the marked copy with an unmarked one, which clipboard history may keep: "+
+			"there, set clipboard_osc52 to never.", l.display))
 	case r.native && l.dest != "":
 		lines = append(lines, "Copied to "+l.dest+".")
 	case r.nativeErr != nil && l.dest != "":

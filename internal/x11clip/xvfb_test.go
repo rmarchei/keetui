@@ -646,11 +646,23 @@ func TestReconnectsAfterLosingTheConnection(t *testing.T) {
 	if r.owner() != xproto.WindowNone {
 		t.Fatal("the killed client still owns the clipboard")
 	}
+	if !o.Lost() {
+		t.Fatal("Lost is false after the connection holding the copy broke")
+	}
 	if err := o.Copy([]byte("after-reconnect"), true); err != nil {
 		t.Fatalf("Copy after reconnect: %v", err)
 	}
-	if got := r.text(); got != "after-reconnect" {
-		t.Fatalf("after reconnect: %q", got)
+	if got := r.text(); got != "after-reconnect" || o.Lost() {
+		t.Fatalf("after reconnect: %q (lost %v)", got, o.Lost())
+	}
+	// Another client taking the clipboard is no lost connection.
+	other := newOwner(t, "")
+	if err := other.Copy([]byte("someone else"), false); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the copy was taken", func() bool { return !o.Owns() })
+	if o.Lost() {
+		t.Fatal("Lost after another client copied")
 	}
 }
 
