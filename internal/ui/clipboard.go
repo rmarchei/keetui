@@ -203,8 +203,30 @@ func (c *systemClipboard) copy(value string, opts copyOptions) (copyResult, erro
 		}
 		return copyResult{session: res.session, local: res.local, nativeErr: res.nativeErr}, err
 	}
+	prev := c.held
 	c.held = newHeldCopy([]byte(value), res, terminal)
+	c.clearSuperseded(prev, res)
 	return res, nil
+}
+
+// clearSuperseded clears what a new copy did not replace of the previous
+// one, whose timed clear the new copy's takes over: the local copy when the
+// new one went only to the terminal (the session turned remote), and the
+// terminal copy, once, when the new one went only to the local clipboard.
+func (c *systemClipboard) clearSuperseded(prev *heldCopy, next copyResult) {
+	if prev == nil {
+		return
+	}
+	if prev.result.native && !next.native && c.native.holds(prev.matches, prev.result.terminal) {
+		_ = c.native.clear()
+	}
+	switch {
+	case !prev.result.terminal || next.terminal:
+	case prev.result.native:
+		_, _ = prev.clearTerminalLeg()
+	default:
+		_, _ = prev.terminal.clear(prev.result.via)
+	}
 }
 
 func (c *systemClipboard) release() (clearResult, error) {
@@ -230,25 +252,34 @@ func (c *systemClipboard) release() (clearResult, error) {
 		return clearResult{outcome: clearChanged, repaint: repaint}, nil
 	}
 	if err := c.native.clear(); err != nil {
+		// Still keetui's copy: the next release (lock, quit, exit) tries
+		// again.
+		c.held = h
 		return clearResult{repaint: repaint}, fmt.Errorf("clear clipboard: %w", err)
 	}
 	r := clearResult{outcome: clearDone, repaint: repaint}
+	if h.result.terminal {
+		r.leg, r.legErr = h.clearTerminalLeg()
+	}
+	return r, nil
+}
+
+// clearTerminalLeg clears the terminal copy made next to a local one, once
+// the local one is cleared.
+func (h *heldCopy) clearTerminalLeg() (clearOutcome, error) {
 	switch s := h.result.session; {
-	case !h.result.terminal:
 	case !h.result.via.clearable():
-		r.leg = clearUnsupported
+		return clearUnsupported, nil
 	case h.result.via.route == routeHerdr && s.herdr && !s.herdrSSH:
 		// Every herdr client was local: the one that got the copy wrote
 		// this machine's clipboard (or skipped the value already there),
 		// which is cleared now. A space would go to a client over SSH
 		// that attached since, which never got the copy.
-		r.leg = clearHerdrLocal
-	default:
-		// Sent once, never retried: a later clear could wipe something
-		// copied to the terminal since.
-		r.leg, r.legErr = h.terminal.clear(h.result.via)
+		return clearHerdrLocal, nil
 	}
-	return r, nil
+	// Sent once, never retried: a later clear could wipe something copied
+	// to the terminal since.
+	return h.terminal.clear(h.result.via)
 }
 
 var (

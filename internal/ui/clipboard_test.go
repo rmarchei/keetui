@@ -370,3 +370,63 @@ func TestAutoLockLeavesForeignClipboardAlone(t *testing.T) {
 		t.Fatal("auto-lock wiped content keetui did not copy")
 	}
 }
+
+// A copy that does not replace the previous one takes over its timed clear,
+// so it clears what the previous one left: the local copy when the session
+// turned remote, and the terminal copy when it turned local again. A local
+// clipboard that another app has written since is left alone.
+func TestCopyClearsWhatTheNextCopyDidNotReplace(t *testing.T) {
+	native := &fakeNative{local: true, marks: true}
+	c, term := newFakeClipboard(native)
+	copyNow := func(value string) copyResult {
+		t.Helper()
+		res, err := c.copy(value, copyOptions{osc52: config.OSC52Auto})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	copyNow("synthetic-first")
+	native.local = false // attached from elsewhere
+	if res := copyNow("synthetic-second"); res.native || !res.terminal {
+		t.Fatalf("remote copy = %+v", res)
+	}
+	if native.owned || native.clears != 1 {
+		t.Fatalf("local copy left behind: %q (clears %d)", native.value, native.clears)
+	}
+	native.local = true // back at this machine
+	if res := copyNow("synthetic-third"); !res.native || res.terminal {
+		t.Fatalf("local copy = %+v", res)
+	}
+	if len(term.sent) != 2 || term.sent[0] != "synthetic-second" || term.sent[1] != "" {
+		t.Fatalf("terminal got %q, want the remote copy cleared", term.sent)
+	}
+
+	// Another app copied after keetui: the remote copy leaves it be.
+	native.owned, native.value = false, []byte("copied-elsewhere")
+	native.local = false
+	copyNow("synthetic-fourth")
+	if string(native.value) != "copied-elsewhere" || native.clears != 1 {
+		t.Fatalf("clipboard = %q (clears %d), want the other app's copy kept", native.value, native.clears)
+	}
+}
+
+// A clear that fails keeps the copy tracked, so the next release (lock,
+// quit, exit) clears it once the clipboard works again.
+func TestFailedClearIsRetried(t *testing.T) {
+	native := &fakeNative{local: true, marks: true, clearErr: errors.New("display unavailable")}
+	c, _ := newFakeClipboard(native)
+	if _, err := c.copy("synthetic-secret", copyOptions{osc52: config.OSC52Auto}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.release(); err == nil {
+		t.Fatal("the clear should have failed")
+	}
+	native.clearErr = nil
+	if r, err := c.release(); err != nil || r.outcome != clearDone || native.owned {
+		t.Fatalf("retry = %+v, %v (still on the clipboard: %v)", r, err, native.owned)
+	}
+	if r, err := c.release(); err != nil || r.outcome != clearNothing {
+		t.Fatalf("after the retry: %+v, %v, want nothing left to clear", r, err)
+	}
+}
