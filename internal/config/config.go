@@ -192,14 +192,50 @@ func (c Config) Save() error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	data = append(data, '\n')
-	if err := os.WriteFile(p, data, 0600); err != nil {
+	return writeFileAtomic(p, append(data, '\n'))
+}
+
+// writeFileAtomic replaces path with data, readable by the owner only, so
+// that an interrupted save (a crash, a full disk) leaves the old file
+// whole: data goes to a temporary file in the same directory, reaches the
+// disk, and is renamed over path. A symlink at path, as dotfile managers
+// make, is followed: the file it points to is replaced and the link kept.
+func writeFileAtomic(path string, data []byte) (err error) {
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
-	// Ensure permissions are 0600 even if the file already existed with
-	// looser permissions (os.WriteFile only sets mode on new files).
-	if err := os.Chmod(p, 0600); err != nil {
+	defer func() {
+		if err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+	// CreateTemp makes the file 0600; Chmod keeps that explicit, whatever
+	// the platform's default.
+	if err := tmp.Chmod(0600); err != nil {
 		return fmt.Errorf("set config file permissions: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	// Persist the rename itself; a directory that cannot be synced still
+	// holds the new file.
+	if dir, err := os.Open(filepath.Dir(path)); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
 	}
 	return nil
 }

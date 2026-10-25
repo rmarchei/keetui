@@ -465,3 +465,81 @@ func TestOSC52Mode(t *testing.T) {
 		}
 	}
 }
+
+func TestSaveReplacesTheConfigWhole(t *testing.T) {
+	path := isolateConfig(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"auto_lock_minutes": 10}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Default()
+	cfg.AutoLockMinutes = 30
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load()
+	if err != nil || loaded.AutoLockMinutes != 30 {
+		t.Fatalf("saved config reads back as %+v, %v", loaded, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Errorf("config mode = %v (%v), want 0600", info.Mode().Perm(), err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil || len(entries) != 1 {
+		t.Errorf("config directory holds %d files, want only config.json (no temporary files): %v", len(entries), entries)
+	}
+}
+
+func TestSaveKeepsASymlinkedConfig(t *testing.T) {
+	path := isolateConfig(t)
+	dotfiles := filepath.Join(t.TempDir(), "keetui.json")
+	if err := os.WriteFile(dotfiles, []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dotfiles, path); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Default()
+	cfg.PasswordLength = 32
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the symlink was replaced by a file (%v)", err)
+	}
+	if data, err := os.ReadFile(dotfiles); err != nil || !strings.Contains(string(data), `"password_length": 32`) {
+		t.Errorf("the linked file was not updated: %s, %v", data, err)
+	}
+}
+
+func TestFailedSaveKeepsTheOldConfig(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes into read-only directories")
+	}
+	path := isolateConfig(t)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	old := []byte(`{"auto_lock_minutes": 10}`)
+	if err := os.WriteFile(path, old, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+
+	if err := Default().Save(); err == nil {
+		t.Fatal("saving into a read-only directory reported success")
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != string(old) {
+		t.Errorf("a failed save changed the config: %q, %v", data, err)
+	}
+}
