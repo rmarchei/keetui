@@ -23,11 +23,20 @@ type fakeNative struct {
 	alsoTerminal bool
 	writes       int
 	clears       int
+	forwarded    bool            // route asks for the terminal copy too, as for a forwarded X display
+	sessions     []remoteSession // what route was told, per copy
 }
 
-func (f *fakeNative) available() bool { return f.local }
+func (f *fakeNative) route(s remoteSession) nativeRoute {
+	f.sessions = append(f.sessions, s)
+	r := nativeRoute{ok: f.local, alsoTerminal: f.forwarded, forwarded: f.forwarded, dest: "the fake clipboard"}
+	if f.forwarded {
+		r.display = "localhost:10.0"
+	}
+	return r
+}
 
-func (f *fakeNative) write(value []byte, transient bool) (bool, error) {
+func (f *fakeNative) write(value []byte, transient bool, _ nativeRoute) (bool, error) {
 	if f.writeErr != nil {
 		return false, f.writeErr
 	}
@@ -148,28 +157,28 @@ func TestClipboardTransientFollowsClearTimer(t *testing.T) {
 func TestClipboardReleaseOnlyClearsOwnCopy(t *testing.T) {
 	native := &fakeNative{local: true, marks: true}
 	c, term := newFakeClipboard(native)
-	if outcome, err := c.release(); outcome != clearNothing || err != nil {
+	if outcome, err := outcomeOf(c.release()); outcome != clearNothing || err != nil {
 		t.Fatalf("release without a copy = %v, %v", outcome, err)
 	}
 
 	_, _ = c.copy("mine", copyOptions{osc52: config.OSC52Auto})
-	if outcome, err := c.release(); outcome != clearDone || err != nil || native.clears != 1 {
+	if outcome, err := outcomeOf(c.release()); outcome != clearDone || err != nil || native.clears != 1 {
 		t.Fatalf("release of own copy = %v, %v (clears %d)", outcome, err, native.clears)
 	}
-	if outcome, _ := c.release(); outcome != clearNothing || native.clears != 1 {
+	if outcome, _ := outcomeOf(c.release()); outcome != clearNothing || native.clears != 1 {
 		t.Fatal("second release cleared again")
 	}
 
 	_, _ = c.copy("mine", copyOptions{osc52: config.OSC52Auto})
 	native.owned = false // another app copied
-	if outcome, _ := c.release(); outcome != clearChanged || native.clears != 1 {
+	if outcome, _ := outcomeOf(c.release()); outcome != clearChanged || native.clears != 1 {
 		t.Fatalf("release after a foreign copy = %v (clears %d)", outcome, native.clears)
 	}
 
 	// Content checks compare against this copy, not just any value.
 	_, _ = c.copy("mine", copyOptions{osc52: config.OSC52Auto})
 	native.value = []byte("theirs")
-	if outcome, _ := c.release(); outcome != clearChanged || native.clears != 1 {
+	if outcome, _ := outcomeOf(c.release()); outcome != clearChanged || native.clears != 1 {
 		t.Fatalf("release of a different value = %v", outcome)
 	}
 	if len(term.sent) != 0 {
@@ -186,7 +195,7 @@ func TestClipboardReleaseOnlyClearsOwnCopy(t *testing.T) {
 func TestClipboardReleaseTerminalOnly(t *testing.T) {
 	c, term := newFakeClipboard(&fakeNative{})
 	_, _ = c.copy("remote-secret", copyOptions{osc52: config.OSC52Auto})
-	if outcome, err := c.release(); outcome != clearRequested || err != nil {
+	if outcome, err := outcomeOf(c.release()); outcome != clearRequested || err != nil {
 		t.Fatalf("release = %v, %v", outcome, err)
 	}
 	if len(term.sent) != 2 || term.sent[1] != "" {
@@ -194,15 +203,66 @@ func TestClipboardReleaseTerminalOnly(t *testing.T) {
 	}
 }
 
-func TestClipboardAlwaysModeChecksContent(t *testing.T) {
+// outcomeOf drops the terminal leg of a clear.
+func outcomeOf(r clearResult, err error) (clearOutcome, error) { return r.outcome, err }
+
+// With clipboard_osc52 always, the terminal copy made next to the local one
+// is cleared after the local one, once, and never when the local clipboard
+// changed meanwhile.
+func TestClipboardAlwaysModeClearsTheTerminalLeg(t *testing.T) {
 	native := &fakeNative{local: true, marks: true}
 	c, term := newFakeClipboard(native)
 	_, _ = c.copy("both", copyOptions{osc52: config.OSC52Always})
-	if outcome, _ := c.release(); outcome != clearDone || !native.alsoTerminal {
-		t.Fatalf("release = %v, alsoTerminal = %v", outcome, native.alsoTerminal)
+	r, err := c.release()
+	if err != nil || r.outcome != clearDone || r.leg != clearRequested || !native.alsoTerminal {
+		t.Fatalf("release = %+v, %v (alsoTerminal %v)", r, err, native.alsoTerminal)
 	}
-	if len(term.sent) != 1 {
-		t.Fatalf("local clear also sent an OSC 52 clear: %q", term.sent)
+	if len(term.sent) != 2 || term.sent[1] != "" {
+		t.Fatalf("terminal writes = %q, want the copy and one clear", term.sent)
+	}
+	if text, isErr := clearStatus(r, nil); text != "Clipboard cleared; terminal clear requested" || isErr {
+		t.Fatalf("status = %q, %v", text, isErr)
+	}
+
+	// Copied over meanwhile: neither leg is touched.
+	_, _ = c.copy("both", copyOptions{osc52: config.OSC52Always})
+	native.value = []byte("copied later")
+	if r, _ := c.release(); r.outcome != clearChanged || r.leg != clearNothing || len(term.sent) != 3 {
+		t.Fatalf("release after a foreign copy = %+v (terminal %q)", r, term.sent)
+	}
+
+	// A terminal leg that can't be cleared, or whose clear fails, or that
+	// tmux would drop now, is reported, never retried.
+	for _, tc := range []struct {
+		result  terminalResult
+		outcome clearOutcome
+		err     error
+		leg     clearOutcome
+		want    string
+	}{
+		{terminalResult{route: routeTmuxLoadBuffer, noClear: "allow-passthrough off"}, clearNothing, nil, clearUnsupported,
+			"Clipboard cleared; tmux can't clear the terminal copy"},
+		{terminalResult{route: routeTmuxPassthrough}, clearDeferred, nil, clearDeferred,
+			"Clipboard cleared; terminal copy left: tmux would drop the clear now"},
+		{terminalResult{route: routeTmuxPassthrough}, clearDetached, nil, clearDetached,
+			"Clipboard cleared; terminal copy left: the terminal that got it detached"},
+		{terminalResult{}, clearRequested, errors.New("terminal clipboard: no tty"), clearRequested,
+			"Clipboard cleared; terminal clear failed: terminal clipboard: no tty"},
+	} {
+		term := &fakeTerminal{result: tc.result, outcome: tc.outcome}
+		c := &systemClipboard{native: native, terminal: terminalRoutes{tty: term}}
+		_, _ = c.copy("both", copyOptions{osc52: config.OSC52Always})
+		term.err = tc.err
+		r, err := c.release()
+		if err != nil || r.outcome != clearDone || r.leg != tc.leg || c.held != nil {
+			t.Fatalf("%+v: release = %+v, %v (held %v)", tc.result, r, err, c.held != nil)
+		}
+		if text, _ := clearStatus(r, nil); text != tc.want {
+			t.Errorf("%+v: status = %q, want %q", tc.result, text, tc.want)
+		}
+		if r.leg != clearRequested && clearDetail(r) == "" {
+			t.Errorf("%+v: no F1 detail", tc.result)
+		}
 	}
 }
 
@@ -215,7 +275,7 @@ func TestClipboardFailedCopyKeepsPreviousCopy(t *testing.T) {
 		t.Fatal("expected copy failure")
 	}
 	native.writeErr = nil
-	if outcome, _ := c.release(); outcome != clearDone || native.clears != 1 {
+	if outcome, _ := outcomeOf(c.release()); outcome != clearDone || native.clears != 1 {
 		t.Fatalf("previous copy not released: %v", outcome)
 	}
 }

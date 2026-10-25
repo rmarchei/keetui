@@ -11,27 +11,20 @@ import (
 	"github.com/rmarchei/keetui/internal/pasteboard"
 )
 
-func TestSSHSessionUsesTmuxSessionEnvironment(t *testing.T) {
-	for _, tc := range []struct {
-		name         string
-		env          map[string]string
-		remote, know bool
-		want         bool
-	}{
-		{"local", nil, false, false, false},
-		{"ssh", map[string]string{"SSH_CONNECTION": "10.0.0.1 1 10.0.0.2 22"}, false, false, true},
-		{"ssh tty", map[string]string{"SSH_TTY": "/dev/ttys001"}, false, false, true},
-		{"tmux reattached over ssh", map[string]string{"TMUX": "/tmp/tmux"}, true, true, true},
-		{"tmux reattached locally", map[string]string{"TMUX": "/tmp/tmux", "SSH_CONNECTION": "stale"}, false, true, false},
-		{"tmux without the variable", map[string]string{"TMUX": "/tmp/tmux", "SSH_TTY": "/dev/ttys001"}, false, false, true},
+// The pasteboard is the user's only while the user is at this Mac: a herdr
+// client attached over SSH counts like an SSH session.
+func TestDarwinPasteboardOnlyForLocalSessions(t *testing.T) {
+	d := &darwinClipboard{}
+	if r := d.route(remoteSession{why: "no SSH session found"}); !r.ok || r.alsoTerminal || r.dest == "" {
+		t.Fatalf("local route = %+v", r)
+	}
+	for _, s := range []remoteSession{
+		{remote: true, why: "SSH_CONNECTION is set"},
+		{remote: true, herdr: true, why: "a herdr client runs over SSH (pid 7)"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			getenv := func(k string) string { return tc.env[k] }
-			tmux := func() (bool, bool) { return tc.remote, tc.know }
-			if got := sshSession(getenv, tmux); got != tc.want {
-				t.Fatalf("sshSession = %v, want %v", got, tc.want)
-			}
-		})
+		if r := d.route(s); r.ok || r.why == "" {
+			t.Fatalf("route for %+v = %+v", s, r)
+		}
 	}
 }
 
@@ -60,7 +53,7 @@ func TestDarwinClipboardTracksOwnership(t *testing.T) {
 	name := privatePasteboard(t)
 	h := newHeldCopy([]byte("synthetic-secret"), copyResult{native: true}, nil)
 	d := &darwinClipboard{}
-	if marked, err := d.write([]byte("synthetic-secret"), true); err != nil || !marked {
+	if marked, err := d.write([]byte("synthetic-secret"), true, nativeRoute{ok: true}); err != nil || !marked {
 		t.Fatalf("write = %v, %v", marked, err)
 	}
 	if !d.holds(h.matches, false) {
@@ -81,7 +74,7 @@ func TestDarwinClipboardTracksOwnership(t *testing.T) {
 		t.Fatal("another app's copy counted as ours")
 	}
 
-	if _, err := d.write([]byte("synthetic-secret"), false); err != nil {
+	if _, err := d.write([]byte("synthetic-secret"), false, nativeRoute{ok: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.clear(); err != nil {

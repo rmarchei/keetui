@@ -61,13 +61,13 @@ func (m *AppModel) forgetCopiedValue() {
 // display tick, so it is no activity; it replaces only its own status
 // notice.
 func (m *AppModel) retryDeferredClear() {
-	outcome, err := m.clipboardBackend().release()
-	m.clipboardDeferred = outcome.pending() && err == nil
+	result, err := m.clipboardBackend().release()
+	m.clipboardDeferred = result.pending() && err == nil
 	if pendingClearStatus(m.statusText) {
-		m.statusText, m.statusError = clearStatus(outcome, err)
+		m.statusText, m.statusError = clearStatus(result, err)
 		m.statusDetail = ""
 		if err == nil {
-			m.statusDetail = clearDetail(outcome)
+			m.statusDetail = clearDetail(result)
 		}
 	}
 }

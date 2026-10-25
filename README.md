@@ -396,7 +396,8 @@ clipboard window, `keetui`: set `CM_IGNORE_WINDOW='^keetui$'` for clipmenu, or
 keetui clears a copy, it keeps the clipboard but empties it, because ClipIt,
 Parcellite, Diodon, xfce4-clipman, qlipper and GPaste 45 would otherwise put
 their newest entry, possibly the password, straight back. At exit keetui hands
-an empty copy to `xclip`, so install xclip: without it the clipboard is left
+an empty copy to `xclip` (except on a display forwarded over SSH, see Over
+SSH below), so install xclip: without it the clipboard is left
 without an owner, and Diodon and Parcellite then restore the password from
 their history. keetui starts xclip in a session of its own, so the copy
 outlives keetui even when keetui leads its terminal's session
@@ -442,11 +443,49 @@ they were cleared.
 
 `clipboard_osc52` controls this: `auto` (the default) uses OSC 52 only when
 needed, `always` also sends local copies to the terminal, and `never` disables
-it. With `auto`, a local tmux on macOS changes nothing: copies still go to
-the pasteboard. With `always`, the status bar also carries the terminal
-copy's warnings (several tmux clients, nested tmux, unverified), and the
-timed clear empties only the local clipboard: other terminals that got the
-copy keep it.
+it. With `auto`, a local tmux on macOS changes nothing while you are at the
+Mac: copies still go to the pasteboard. With `always`, the status bar also
+carries the terminal copy's warnings (several tmux clients, nested tmux,
+unverified). The timed clear empties the local clipboard, then sends the
+terminal clear once (never when the local clipboard has changed since, and
+never a second time, which could wipe something copied since); the status bar
+says when the terminal copy could not be cleared.
+
+**Over SSH.** The local clipboard is yours only while you are at this
+machine. keetui checks for each copy, since a terminal multiplexer session
+can be attached from anywhere at any time, and stops at the first answer:
+
+1. In a herdr pane (`HERDR_ENV=1` or `TERM_PROGRAM=herdr`), herdr's clients:
+   keetui looks at your processes running herdr's binary (`$HERDR_BIN_PATH`)
+   as a client (`herdr`, `herdr client`, `session attach`, `terminal attach`,
+   `agent attach`), never at the server. You are remote if any of them runs
+   over SSH (`SSH_CONNECTION` or `SSH_TTY` in its environment), or if
+   `herdr --remote` is attached (`remote-client-bridge`).
+2. In tmux, the session environment, which tmux refreshes on every attach,
+   while panes keep the environment they started with.
+3. An `sshd` (or `sshd-session`) among keetui's parent processes, which also
+   covers `su -` and `sudo -i`.
+4. `SSH_CONNECTION` or `SSH_TTY` in keetui's environment.
+
+F1 shows what decided, and where the copy went. In a remote session:
+
+- **macOS**: keetui does not touch the pasteboard; copies go to your terminal
+  with OSC 52.
+- **Linux**: keetui ignores `WAYLAND_DISPLAY`, which belongs to the remote
+  host's compositor, and uses an X display only if sshd forwards it
+  (`ssh -X` or `-Y`: `localhost:10.0` and up). Inside tmux the session's
+  `DISPLAY` counts, not the pane's. Any other display (`:0` of the remote
+  desktop, a VNC server's `:1`) belongs to the remote host, and keetui leaves
+  it alone. A forwarded display gets the marked copy and, with `auto`, a
+  terminal copy as well, because the X server at your end may be XQuartz or
+  an untrusted `ssh -X` connection whose copies cannot be pasted; the timed
+  clear clears both. On a forwarded display keetui never falls back to xclip
+  or xsel and hands nothing to xclip at exit: what they leave behind would
+  hold the SSH session's X11 channel, so `ssh -t host keetui` would not exit
+  after keetui quits. The trade-off: once keetui exits, clipboard managers on
+  your desktop that ignore the marker may restore their newest entry. If the
+  forwarded X server is gone, the ssh client prints its error over the screen,
+  so keetui redraws the whole screen after a failed copy.
 
 **tmux.** Inside tmux, keetui sends no plain OSC 52 (unless you ask for one
 for a tmux it cannot query, see below): with the default

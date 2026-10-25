@@ -22,7 +22,8 @@ import (
 // mark them as sensitive (excluded from clipboard history). The terminal
 // clipboard (OSC 52) cannot be marked, and session recorders may keep it, so
 // it is used according to clipboard_osc52, and routed so that tmux keeps no
-// copy in its paste buffers (see clipboard_terminal.go).
+// copy in its paste buffers (see clipboard_terminal.go). Whether the local
+// clipboard is the user's is decided for each copy (see clipboard_remote.go).
 //
 // Backends remember their last copy (as a keyed hash, never the value), so
 // clearing only ever removes keetui's own copy.
@@ -39,6 +40,11 @@ type copyResult struct {
 	terminal bool           // sent to the terminal with OSC 52
 	via      terminalResult // how the terminal copy went
 	termErr  error          // why the terminal copy failed next to a local one
+
+	// Where the copy went and why, for F1.
+	session   remoteSession
+	local     nativeRoute // the local clipboard's route for this copy
+	nativeErr error       // why the local copy failed
 }
 
 // autoClear reports whether a timed clear can remove the copy.
@@ -63,21 +69,30 @@ const (
 // the clear retried.
 func (o clearOutcome) pending() bool { return o == clearDeferred || o == clearAway }
 
+// clearResult is what a clear did.
+type clearResult struct {
+	outcome clearOutcome // keetui's copy: the local one, or a terminal-only one
+	leg     clearOutcome // the terminal copy sent next to a local one; clearNothing for none
+	legErr  error        // why the terminal leg's clear failed
+}
+
+func (r clearResult) pending() bool { return r.outcome.pending() }
+
 // Keep clipboard I/O injectable so timer regressions never access the user's
 // real clipboard. A nil AppModel backend uses the process-wide one.
 type clipboardAccess interface {
 	copy(value string, opts copyOptions) (copyResult, error)
 	// release clears the clipboard if it still holds the last copy, then
 	// forgets that copy.
-	release() (clearOutcome, error)
+	release() (clearResult, error)
 }
 
 // nativeClipboard is the platform's local clipboard.
 type nativeClipboard interface {
-	// available reports whether the local clipboard is the user's clipboard
-	// (for example, not a remote Mac reached over SSH).
-	available() bool
-	write(value []byte, transient bool) (marked bool, err error)
+	// route decides whether and where a copy goes on the local clipboard,
+	// which is the user's only while the user is at this machine.
+	route(s remoteSession) nativeRoute
+	write(value []byte, transient bool, r nativeRoute) (marked bool, err error)
 	// holds reports whether the clipboard still holds the last write.
 	// matches checks content where ownership cannot be tracked otherwise;
 	// alsoTerminal means an OSC 52 copy of the same value may have replaced
@@ -86,12 +101,23 @@ type nativeClipboard interface {
 	clear() error
 }
 
+// nativeRoute is where a copy goes on the local clipboard.
+type nativeRoute struct {
+	ok           bool   // the local clipboard is the user's
+	alsoTerminal bool   // with auto, the terminal gets the copy too: the user may not be able to paste the local one
+	dest         string // where the copy goes, for F1
+	why          string // with !ok: why the local clipboard is not used, for F1
+	display      string // Linux: the X display the copy goes to; "" for Wayland
+	forwarded    bool   // display is one that the SSH session forwards
+}
+
 var errNoClipboard = errors.New("no clipboard available")
 
 type systemClipboard struct {
 	mu       sync.Mutex
-	native   nativeClipboard // nil when the platform has none
-	terminal terminalRoutes  // OSC 52
+	native   nativeClipboard      // nil when the platform has none
+	terminal terminalRoutes       // OSC 52
+	detect   func() remoteSession // nil: the user is local
 	held     *heldCopy
 }
 
@@ -117,18 +143,33 @@ func (h *heldCopy) matches(value []byte) bool {
 	return hmac.Equal(copyMAC(h.key, value), h.sum)
 }
 
+func (c *systemClipboard) session() remoteSession {
+	if c.detect == nil {
+		return remoteSession{}
+	}
+	return c.detect()
+}
+
 func (c *systemClipboard) copy(value string, opts copyOptions) (copyResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	useNative := c.native != nil && c.native.available()
-	useTerminal := opts.osc52 == config.OSC52Always || opts.osc52 != config.OSC52Never && !useNative
-	var res copyResult
+	// Attachments change at any time, so each copy looks again.
+	res := copyResult{session: c.session()}
+	if c.native != nil {
+		res.local = c.native.route(res.session)
+	}
+	useNative := res.local.ok
+	useTerminal := opts.osc52 == config.OSC52Always ||
+		opts.osc52 != config.OSC52Never && (!useNative || res.local.alsoTerminal)
 	var err error
 	if useNative {
-		if res.marked, err = c.native.write([]byte(value), opts.transient); err == nil {
+		if res.marked, err = c.native.write([]byte(value), opts.transient, res.local); err == nil {
 			res.native = true
-		} else if opts.osc52 != config.OSC52Never {
-			useTerminal = true
+		} else {
+			res.nativeErr = err
+			if opts.osc52 != config.OSC52Never {
+				useTerminal = true
+			}
 		}
 	}
 	var terminal terminalClipboard
@@ -150,18 +191,18 @@ func (c *systemClipboard) copy(value string, opts copyOptions) (copyResult, erro
 		if err == nil {
 			err = errNoClipboard
 		}
-		return copyResult{}, err
+		return copyResult{session: res.session, local: res.local, nativeErr: res.nativeErr}, err
 	}
 	c.held = newHeldCopy([]byte(value), res, terminal)
 	return res, nil
 }
 
-func (c *systemClipboard) release() (clearOutcome, error) {
+func (c *systemClipboard) release() (clearResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	h := c.held
 	if h == nil {
-		return clearNothing, nil
+		return clearResult{}, nil
 	}
 	if !h.result.native {
 		// The terminal clipboard cannot be read back to check ownership.
@@ -169,16 +210,28 @@ func (c *systemClipboard) release() (clearOutcome, error) {
 		if !outcome.pending() || err != nil {
 			c.held = nil
 		}
-		return outcome, err
+		return clearResult{outcome: outcome}, err
 	}
 	c.held = nil
 	if !c.native.holds(h.matches, h.result.terminal) {
-		return clearChanged, nil
+		// Something else was copied since, which may have replaced the
+		// terminal's copy as well: neither is touched.
+		return clearResult{outcome: clearChanged}, nil
 	}
 	if err := c.native.clear(); err != nil {
-		return clearNothing, fmt.Errorf("clear clipboard: %w", err)
+		return clearResult{}, fmt.Errorf("clear clipboard: %w", err)
 	}
-	return clearDone, nil
+	r := clearResult{outcome: clearDone}
+	switch {
+	case !h.result.terminal:
+	case !h.result.via.clearable():
+		r.leg = clearUnsupported
+	default:
+		// Sent once, never retried: a later clear could wipe something
+		// copied to the terminal since.
+		r.leg, r.legErr = h.terminal.clear(h.result.via)
+	}
+	return r, nil
 }
 
 var (
@@ -192,7 +245,12 @@ var (
 func platformClipboard() *systemClipboard {
 	processClipboardOnce.Do(func() {
 		// Tests install their own first.
-		processClipboard.CompareAndSwap(nil, &systemClipboard{native: newNativeClipboard(), terminal: newTerminalRoutes(os.Getenv)})
+		d := newSessionDetector(os.Getenv)
+		processClipboard.CompareAndSwap(nil, &systemClipboard{
+			native:   newNativeClipboard(),
+			terminal: newTerminalRoutes(os.Getenv),
+			detect:   d.detect,
+		})
 	})
 	return processClipboard.Load()
 }
@@ -292,7 +350,7 @@ func terminalCopyStatus(field string, v terminalResult) string {
 }
 
 // tmuxLegStatus qualifies a terminal copy sent through tmux next to a local
-// one. The timed clear then empties only the local clipboard.
+// one.
 func tmuxLegStatus(v terminalResult) string {
 	switch {
 	case v.unverified != "" && v.plain:
@@ -321,8 +379,11 @@ func pendingClearStatus(text string) bool {
 
 // clearStatus describes the outcome of a timed or retried clear; "" for
 // none.
-func clearStatus(outcome clearOutcome, err error) (text string, isError bool) {
-	switch {
+func clearStatus(r clearResult, err error) (text string, isError bool) {
+	if err == nil && r.outcome == clearDone && (r.leg != clearNothing || r.legErr != nil) {
+		return legClearStatus(r)
+	}
+	switch outcome := r.outcome; {
 	case err != nil:
 		return fmt.Sprintf("Clipboard error: %s", err), true
 	case outcome == clearDone:
@@ -348,9 +409,33 @@ func clearStatus(outcome clearOutcome, err error) (text string, isError bool) {
 	return "", false
 }
 
-// clearDetail is the F1 guidance for a clear outcome; "" for none.
-func clearDetail(outcome clearOutcome) string {
-	switch outcome {
+// legClearStatus describes a local clear followed by the clear of the
+// terminal copy made next to it.
+func legClearStatus(r clearResult) (string, bool) {
+	const done = "Clipboard cleared; "
+	switch leg := r.leg; {
+	case r.legErr != nil:
+		return done + "terminal clear failed: " + r.legErr.Error(), true
+	case leg == clearRequested, leg == clearReattached:
+		return done + "terminal clear requested", false
+	case leg == clearPartial:
+		return done + "terminal clear requested; a terminal that got the copy detached", true
+	case leg == clearUnsupported:
+		return done + "tmux can't clear the terminal copy", true
+	case leg == clearDetached:
+		return done + "terminal copy left: the terminal that got it detached", true
+	case leg.pending():
+		return done + "terminal copy left: tmux would drop the clear now", true
+	}
+	return "Clipboard cleared", false
+}
+
+// clearDetail is the F1 guidance for a clear; "" for none.
+func clearDetail(r clearResult) string {
+	if r.outcome == clearDone && r.leg != clearNothing {
+		return legClearDetail(r.leg)
+	}
+	switch r.outcome {
 	case clearDeferred:
 		return tmuxHelp("", false)
 	case clearAway:
@@ -376,8 +461,65 @@ func clearDetail(outcome clearOutcome) string {
 	return ""
 }
 
-// clipboardHelp is the F1 guidance for a terminal copy routed through tmux.
+// legClearDetail explains the clear of a terminal copy made next to a local
+// one.
+func legClearDetail(leg clearOutcome) string {
+	const once = "The copy also went to the terminal (OSC 52). keetui clears that copy right after the local one, once: " +
+		"it never sends a second clear, which could wipe something copied there since."
+	switch leg {
+	case clearDeferred, clearAway:
+		return once + " tmux would have dropped the clear (keetui's pane not on screen, " +
+			"or a terminal that got the copy suspended or showing another window), so keetui sent none: " +
+			"the terminal copy stays until something replaces it."
+	case clearDetached, clearPartial:
+		return once + "\n\n" + clearDetail(clearResult{outcome: leg})
+	case clearUnsupported:
+		return "The copy also went to the terminal through tmux (load-buffer, or nested tmux), which cannot clear it: " +
+			"it stays on that terminal's clipboard until something replaces it."
+	}
+	return ""
+}
+
+// clipboardHelp is the F1 guidance for a copy: where it went and why, and
+// the tmux setup behind a terminal copy.
 func clipboardHelp(r copyResult, err error) string {
+	var parts []string
+	for _, part := range []string{localHelp(r), terminalHelp(r, err)} {
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// localHelp names the local clipboard a copy went to, or why it did not,
+// and what keetui found out about the session.
+func localHelp(r copyResult) string {
+	var lines []string
+	l := r.local
+	switch {
+	case r.native && l.forwarded && r.terminal:
+		lines = append(lines, fmt.Sprintf("Copied to X display %s, which your SSH session forwards, and also to the terminal (OSC 52): "+
+			"the X server at your end may be XQuartz or an untrusted ssh -X connection, whose copies cannot be pasted.", l.display))
+	case r.native && l.dest != "":
+		lines = append(lines, "Copied to "+l.dest+".")
+	case r.nativeErr != nil && l.dest != "":
+		lines = append(lines, fmt.Sprintf("Copying to %s failed: %s", l.dest, r.nativeErr))
+	case !l.ok && l.why != "":
+		lines = append(lines, l.why)
+	}
+	switch s := r.session; {
+	case s.why == "":
+	case s.remote:
+		lines = append(lines, "Remote session: "+s.why+".")
+	default:
+		lines = append(lines, "Local session: "+s.why+".")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// terminalHelp is the F1 guidance for a terminal copy routed through tmux.
+func terminalHelp(r copyResult, err error) string {
 	var routeErr *tmuxRouteError
 	switch {
 	case errors.Is(err, errTerminalNotTmux) || errors.Is(r.termErr, errTerminalNotTmux):
@@ -389,8 +531,8 @@ func clipboardHelp(r copyResult, err error) string {
 	case r.via.unverified != "":
 		return unverifiedTmuxHelp(r.via)
 	case r.native:
-		return "The timed clear empties the local clipboard only: other terminals tmux sent the copy to keep it.\n\n" +
-			tmuxHelp(r.via.termName, r.via.nested)
+		return "The timed clear empties the local clipboard, then sends the terminal clear once, " +
+			"which reaches the terminals that show keetui's pane at that moment.\n\n" + tmuxHelp(r.via.termName, r.via.nested)
 	}
 	return tmuxHelp(r.via.termName, r.via.nested)
 }

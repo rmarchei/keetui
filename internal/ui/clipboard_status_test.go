@@ -344,6 +344,8 @@ func TestLongTmuxStatusKeepsOneRow(t *testing.T) {
 			via: terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a"}}),
 		copyStatus("history password", copyResult{terminal: true,
 			via: terminalResult{route: routeRemoteTmux, unverified: "remote", version: "3.5a", plain: true}}),
+		"Clipboard cleared; terminal copy left: the terminal that got it detached",
+		"Clipboard cleared; terminal clear failed: terminal clipboard: open /dev/tty: no such device or address",
 	} {
 		m.statusText = text
 		for _, width := range []int{20, 40, 80, 120} {
@@ -361,7 +363,7 @@ func TestClipboardDeferredReleaseKeepsCopy(t *testing.T) {
 	}
 	for _, pending := range []clearOutcome{clearDeferred, clearAway} {
 		term.outcome = pending
-		if outcome, err := c.release(); outcome != pending || err != nil || c.held == nil {
+		if outcome, err := outcomeOf(c.release()); outcome != pending || err != nil || c.held == nil {
 			t.Fatalf("pending release = %v, %v (held %v)", outcome, err, c.held != nil)
 		}
 	}
@@ -376,7 +378,7 @@ func TestClipboardDeferredReleaseKeepsCopy(t *testing.T) {
 
 	term.outcome = clearUnsupported
 	_, _ = c.copy("remote-secret", copyOptions{osc52: config.OSC52Auto})
-	if outcome, _ := c.release(); outcome != clearUnsupported || c.held != nil {
+	if outcome, _ := outcomeOf(c.release()); outcome != clearUnsupported || c.held != nil {
 		t.Fatalf("unsupported release = %v", outcome)
 	}
 }
@@ -470,7 +472,7 @@ func TestAlwaysModeTmuxLegKeepsItsWarnings(t *testing.T) {
 		if got := copyStatus("password", res); got != tc.want {
 			t.Errorf("status = %q, want %q", got, tc.want)
 		}
-		if help := clipboardHelp(res, nil); tc.probeErr == nil && !strings.Contains(help, "local clipboard only") {
+		if help := clipboardHelp(res, nil); tc.probeErr == nil && !strings.Contains(help, "sends the terminal clear once") {
 			t.Errorf("help = %q", help)
 		}
 	}

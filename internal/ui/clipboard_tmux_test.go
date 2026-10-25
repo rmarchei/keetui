@@ -1302,11 +1302,11 @@ func TestTmuxClearSkipsADetachedClient(t *testing.T) {
 		clearDetached:   "Terminal clipboard not cleared: the terminal that got the copy detached",
 		clearReattached: "Clipboard clear requested on the reattached terminal",
 	} {
-		if text, isError := clearStatus(outcome, nil); isError != (outcome == clearDetached) || text != want {
+		if text, isError := clearStatus(clearResult{outcome: outcome}, nil); isError != (outcome == clearDetached) || text != want {
 			t.Errorf("status = %q", text)
 		}
-		if !strings.Contains(clearDetail(outcome), "XTVERSION") {
-			t.Errorf("detail for %v = %q", outcome, clearDetail(outcome))
+		if !strings.Contains(clearDetail(clearResult{outcome: outcome}), "XTVERSION") {
+			t.Errorf("detail for %v = %q", outcome, clearDetail(clearResult{outcome: outcome}))
 		}
 	}
 }
@@ -1446,10 +1446,10 @@ func TestTmuxBroadcastClearWaitsForEveryRecipient(t *testing.T) {
 			t.Fatalf("%s: clear = %v, %v (writes %q), want %v", tc.name, outcome, err, f.writes, tc.want)
 		}
 	}
-	text, isError := clearStatus(clearPartial, nil)
+	text, isError := clearStatus(clearResult{outcome: clearPartial}, nil)
 	if text != "Clipboard clear requested; a terminal that got the copy detached" || !isError ||
-		!strings.Contains(clearDetail(clearPartial), "detached before the clear") {
-		t.Fatalf("partial status = %q (error %v), detail %q", text, isError, clearDetail(clearPartial))
+		!strings.Contains(clearDetail(clearResult{outcome: clearPartial}), "detached before the clear") {
+		t.Fatalf("partial status = %q (error %v), detail %q", text, isError, clearDetail(clearResult{outcome: clearPartial}))
 	}
 }
 
@@ -1666,8 +1666,8 @@ func TestRemoteTmuxPlainLegFollowsMode(t *testing.T) {
 		if got := copyStatus("password", copyResult{native: true, marked: true, terminal: true, via: res.via}); got != tc.leg {
 			t.Errorf("%s %s: leg status = %q, want %q", tc.mode, tc.version, got, tc.leg)
 		}
-		if outcome, err := c.release(); outcome != clearRequested || err != nil {
-			t.Fatalf("%s: release = %v, %v", tc.mode, outcome, err)
+		if r, err := c.release(); r.outcome != clearRequested || err != nil {
+			t.Fatalf("%s: release = %+v, %v", tc.mode, r, err)
 		}
 		if !slices.Equal(writes, tc.writes) {
 			t.Errorf("%s %s: writes = %q, want %q", tc.mode, tc.version, writes, tc.writes)

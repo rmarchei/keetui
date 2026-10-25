@@ -19,7 +19,10 @@ type testClipboard struct {
 	terminalOnly  bool           // an OSC 52-only session: clears cannot be verified
 	via           terminalResult // the route of terminal-only copies
 	outcomes      []clearOutcome // queued terminal clear outcomes; clearRequested after
+	leg           clearOutcome   // what a local clear reports for a terminal leg
 	writeErr      error
+	session       remoteSession // reported with every copy
+	nativeErr     error         // reported with every copy
 	opts          copyOptions
 	reads, clears int
 	releases      int
@@ -27,16 +30,24 @@ type testClipboard struct {
 
 func (c *testClipboard) copy(value string, opts copyOptions) (copyResult, error) {
 	if c.writeErr != nil {
-		return copyResult{}, c.writeErr
+		return copyResult{session: c.session, nativeErr: c.nativeErr}, c.writeErr
 	}
 	c.value, c.copied, c.held, c.opts = value, value, true, opts
 	if c.terminalOnly {
-		return copyResult{terminal: true, via: c.via}, nil
+		return copyResult{terminal: true, via: c.via, session: c.session, nativeErr: c.nativeErr}, nil
 	}
-	return copyResult{native: true, marked: true}, nil
+	return copyResult{native: true, marked: true, session: c.session}, nil
 }
 
-func (c *testClipboard) release() (clearOutcome, error) {
+func (c *testClipboard) release() (clearResult, error) {
+	outcome, err := c.releaseOutcome()
+	if outcome == clearDone {
+		return clearResult{outcome: outcome, leg: c.leg}, err
+	}
+	return clearResult{outcome: outcome}, err
+}
+
+func (c *testClipboard) releaseOutcome() (clearOutcome, error) {
 	if !c.held {
 		return clearNothing, nil
 	}

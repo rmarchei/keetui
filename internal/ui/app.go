@@ -286,7 +286,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case strings.HasPrefix(version.Name, "tmux "):
 			m.terminalKind = terminalKind{class: terminalTmux, tmux: strings.TrimSpace(strings.TrimPrefix(version.Name, "tmux "))}
 		case version.Name != "" && m.terminalKind.class == terminalUnknown:
-			// Once tmux, always tmux: tmux answers for the terminal behind it.
+			// Once tmux, always tmux: its routes never send a plain OSC 52.
 			m.terminalKind = terminalKind{class: terminalOther}
 		}
 		return m, nil
@@ -1023,8 +1023,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			osc52:     m.cfg.OSC52Mode(),
 			terminal:  m.terminalKind,
 		})
+		// Over SSH, a failed X11 connection may have made the ssh client
+		// print its error over the frame: repaint all of it.
+		var repaint tea.Cmd
+		if res.session.remote && res.nativeErr != nil {
+			repaint = tea.ClearScreen
+		}
 		if err != nil {
-			return m, statusDetailCmd(fmt.Sprintf("Clipboard error: %s", err), true, clipboardHelp(res, err))
+			return m, tea.Batch(statusDetailCmd(fmt.Sprintf("Clipboard error: %s", err), true, clipboardHelp(res, err)), repaint)
 		}
 		m.clipboardHeld = true
 		m.clipboardDeferred = false // the new copy replaced the old one
@@ -1036,23 +1042,23 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// than a countdown to a clear that cannot happen.
 			clearCmd = m.cancelClearClipboard()
 		}
-		return m, tea.Batch(statusDetailCmd(copyStatus(msg.Field, res), false, clipboardHelp(res, nil)), clearCmd)
+		return m, tea.Batch(statusDetailCmd(copyStatus(msg.Field, res), false, clipboardHelp(res, nil)), clearCmd, repaint)
 
 	case clipboardClearMsg:
 		if msg.gen != m.clipboardGen || m.clipboardClearAt.IsZero() {
 			return m, nil
 		}
-		outcome, err := m.clipboardBackend().release()
+		result, err := m.clipboardBackend().release()
 		m.forgetCopiedValue()
-		m.clipboardDeferred = outcome.pending() && err == nil
+		m.clipboardDeferred = result.pending() && err == nil
 		cmd := m.ensureSecurityTick()
-		text, isError := clearStatus(outcome, err)
+		text, isError := clearStatus(result, err)
 		if text == "" {
 			return m, cmd
 		}
 		detail := ""
 		if err == nil {
-			detail = clearDetail(outcome)
+			detail = clearDetail(result)
 		}
 		return m, tea.Batch(statusDetailCmd(text, isError, detail), cmd)
 
@@ -1087,9 +1093,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.dirty = false
 		}
-		outcome, err := m.clipboardBackend().release()
+		result, err := m.clipboardBackend().release()
 		m.forgetCopiedValue()
-		m.clipboardDeferred = outcome.pending() && err == nil
+		m.clipboardDeferred = result.pending() && err == nil
 		m.autoLockCheckAt = time.Time{}
 		m.db = nil
 		m.undoStack.clear()

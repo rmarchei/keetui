@@ -4,9 +4,7 @@ package ui
 
 import (
 	"errors"
-	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/rmarchei/keetui/internal/pasteboard"
 )
@@ -22,11 +20,18 @@ type darwinClipboard struct {
 
 func newNativeClipboard() nativeClipboard { return &darwinClipboard{} }
 
-func (*darwinClipboard) available() bool {
-	return !sshSession(os.Getenv, tmuxSSHConnection)
+const darwinDest = "this Mac's pasteboard"
+
+// route uses the pasteboard unless the user is elsewhere: over SSH, or
+// attached over SSH to the tmux or herdr session keetui runs in.
+func (*darwinClipboard) route(s remoteSession) nativeRoute {
+	if s.remote {
+		return nativeRoute{dest: darwinDest, why: "Not copied to " + darwinDest + ": you are not at this Mac."}
+	}
+	return nativeRoute{ok: true, dest: darwinDest}
 }
 
-func (d *darwinClipboard) write(value []byte, transient bool) (bool, error) {
+func (d *darwinClipboard) write(value []byte, transient bool, _ nativeRoute) (bool, error) {
 	count, err := pasteboard.Copy(value, transient)
 	if err == nil {
 		d.count, d.pbcopy = count, false
@@ -71,32 +76,3 @@ func (d *darwinClipboard) clear() error {
 
 // pbcopy and pbpaste pick the text encoding from the locale.
 func utf8Env() []string { return envWith("LANG=en_US.UTF-8", "LC_ALL=en_US.UTF-8") }
-
-// sshSession reports whether keetui runs over SSH, where the local
-// pasteboard belongs to the remote Mac rather than to the user. Inside tmux
-// the pane environment goes stale when a session is re-attached from
-// elsewhere, so the session environment, which tmux refreshes on attach,
-// takes precedence.
-func sshSession(getenv func(string) string, tmuxSSH func() (remote, known bool)) bool {
-	if getenv("TMUX") != "" {
-		if remote, known := tmuxSSH(); known {
-			return remote
-		}
-	}
-	return getenv("SSH_CONNECTION") != "" || getenv("SSH_TTY") != ""
-}
-
-func tmuxSSHConnection() (remote, known bool) {
-	out, err := exec.Command("tmux", "show-environment", "SSH_CONNECTION").Output()
-	if err != nil {
-		return false, false // never set in this session
-	}
-	line := strings.TrimSpace(string(out))
-	switch {
-	case strings.HasPrefix(line, "SSH_CONNECTION="):
-		return true, true
-	case line == "-SSH_CONNECTION": // removed on attach from a local client
-		return false, true
-	}
-	return false, false
-}

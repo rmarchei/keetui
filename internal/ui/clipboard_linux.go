@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -21,6 +23,10 @@ import (
 // owns CLIPBOARD in-process (internal/x11clip), which offers the same marker
 // and tracks ownership through the X server; xclip and xsel, which cannot
 // mark copies, are fallbacks. Tool copies are checked by content.
+//
+// In a remote session (see clipboard_remote.go) WAYLAND_DISPLAY names the
+// remote host's compositor, and only an X display that sshd forwards can be
+// the user's (see route).
 type linuxClipboard struct {
 	getenv func(string) string
 	has    func(string) bool
@@ -30,11 +36,13 @@ type linuxClipboard struct {
 	run    func(env []string, input []byte, name string, args ...string) error
 	runX   func(env []string, input []byte, name string, args ...string) error
 	output func(name string, args ...string) ([]byte, error)
-	newX11 func() x11Owner
+	newX11 func(display string) x11Owner
 
-	tool      string   // backend of the last write: wl-copy, x11, xclip or xsel
-	x11       x11Owner // created on the first X11 copy
-	byContent bool     // holds matched another client's copy of the value
+	tool       string   // backend of the last write: wl-copy, x11, xclip or xsel
+	x11        x11Owner // created on the first X11 copy, for x11Display
+	x11Display string
+	forwarded  bool // x11Display is forwarded by the SSH session
+	byContent  bool // holds matched another client's copy of the value
 
 	sensitiveOnce sync.Once
 	sensitive     bool // wl-copy understands --sensitive
@@ -78,7 +86,7 @@ func newNativeClipboard() nativeClipboard {
 		run:    pipeTo,
 		runX:   pipeDetached,
 		output: outputBounded,
-		newX11: func() x11Owner { return &x11clip.Owner{Name: x11Name} },
+		newX11: func(display string) x11Owner { return &x11clip.Owner{Name: x11Name, Display: display} },
 	}
 }
 
@@ -105,7 +113,57 @@ func x11Fallback(has func(string) bool) string {
 	return ""
 }
 
-func (l *linuxClipboard) available() bool { return linuxTool(l.getenv, l.has) != "" }
+// route picks the clipboard for a copy. Locally that is linuxTool's choice.
+// In a remote session, WAYLAND_DISPLAY belongs to the remote host, and so
+// does an X display that sshd did not forward (:0 of the remote desktop, a
+// VNC server's :1). A forwarded display (localhost:10.0) may be the user's,
+// but on an XQuartz server or through an untrusted ssh -X connection its
+// copies cannot be pasted, so auto also sends the copy to the terminal.
+// Inside tmux, panes keep the DISPLAY they started with, so the session's
+// DISPLAY, which tmux refreshes on attach, takes precedence.
+func (l *linuxClipboard) route(s remoteSession) nativeRoute {
+	if !s.remote {
+		switch linuxTool(l.getenv, l.has) {
+		case "wl-copy":
+			return nativeRoute{ok: true, dest: "the Wayland clipboard (" + l.getenv("WAYLAND_DISPLAY") + ")"}
+		case "x11":
+			display := l.getenv("DISPLAY")
+			return nativeRoute{ok: true, display: display, dest: "X display " + display}
+		}
+		return nativeRoute{why: "No local clipboard: neither WAYLAND_DISPLAY nor DISPLAY is set."}
+	}
+	display, from := l.getenv("DISPLAY"), "DISPLAY"
+	if v, known := s.tmux.lookup("DISPLAY"); known {
+		display, from = v, "the tmux session's DISPLAY"
+	}
+	wayland := ""
+	if l.getenv("WAYLAND_DISPLAY") != "" {
+		wayland = " WAYLAND_DISPLAY belongs to this host's compositor."
+	}
+	switch {
+	case display == "":
+		return nativeRoute{why: "No clipboard of yours here: no X display is forwarded." + wayland}
+	case !forwardedDisplay(display):
+		return nativeRoute{dest: "X display " + display, why: fmt.Sprintf(
+			"Not copied to X display %s (%s): sshd did not forward it, so it belongs to this host, not to you.%s",
+			display, from, wayland)}
+	}
+	return nativeRoute{ok: true, alsoTerminal: true, display: display, forwarded: true,
+		dest: "the X display your SSH session forwards (" + display + ")"}
+}
+
+// forwardedDisplay reports a display as sshd forwards it: a host other than
+// unix and a display number of at least 10 (X11DisplayOffset), as in
+// localhost:10.0 or, with X11UseLocalhost no, hostname:10.0.
+func forwardedDisplay(display string) bool {
+	i := strings.LastIndexByte(display, ':')
+	if i <= 0 || display[:i] == "unix" {
+		return false
+	}
+	number, _, _ := strings.Cut(display[i+1:], ".")
+	n, err := strconv.Atoi(number)
+	return err == nil && n >= 10
+}
 
 func (l *linuxClipboard) wlSensitive() bool {
 	l.sensitiveOnce.Do(func() {
@@ -115,8 +173,14 @@ func (l *linuxClipboard) wlSensitive() bool {
 	return l.sensitive
 }
 
-func (l *linuxClipboard) write(value []byte, _ bool) (bool, error) {
-	tool := linuxTool(l.getenv, l.has)
+func (l *linuxClipboard) write(value []byte, _ bool, r nativeRoute) (bool, error) {
+	tool := ""
+	switch {
+	case r.ok && r.display != "":
+		tool = "x11"
+	case r.ok:
+		tool = "wl-copy"
+	}
 	var err error
 	marked := false
 	switch tool {
@@ -129,7 +193,7 @@ func (l *linuxClipboard) write(value []byte, _ bool) (bool, error) {
 		}
 		err = l.run(wlEnv(l.getenv), value, "wl-copy", args...)
 	case "x11":
-		tool, marked, err = l.writeX11(value)
+		tool, marked, err = l.writeX11(value, r)
 	default:
 		err = errNoClipboard
 	}
@@ -143,15 +207,24 @@ func (l *linuxClipboard) write(value []byte, _ bool) (bool, error) {
 // writeX11 copies through the in-process owner. When the owner fails (no
 // connection, unconfirmed ownership) or the value would need an INCR
 // transfer, xclip or xsel makes an unmarked copy instead, but not after a
-// timeout: they would wait for the same server.
-func (l *linuxClipboard) writeX11(value []byte) (tool string, marked bool, err error) {
-	if l.x11 == nil {
-		l.x11 = l.newX11()
+// timeout, as they would wait for the same server, and not on a forwarded
+// display, where what they fork keeps the SSH session's X11 channel, and so
+// ssh, open after keetui exits.
+func (l *linuxClipboard) writeX11(value []byte, r nativeRoute) (tool string, marked bool, err error) {
+	if l.x11 != nil && l.x11Display != r.display {
+		// The session's display changed: wipe the copy on the old one.
+		l.x11.Blank()
+		_ = l.x11.Close()
+		l.x11 = nil
 	}
+	if l.x11 == nil {
+		l.x11, l.x11Display = l.newX11(r.display), r.display
+	}
+	l.forwarded = r.forwarded
 	if err = l.x11.Copy(value, true); err == nil {
 		return "x11", true, nil
 	}
-	if errors.Is(err, x11clip.ErrTimeout) {
+	if r.forwarded || errors.Is(err, x11clip.ErrTimeout) {
 		return "", false, err
 	}
 	tool = x11Fallback(l.has)
@@ -249,12 +322,15 @@ func (l *linuxClipboard) clearXsel() error {
 // connection, and managers that ignore the marker then restore their newest
 // entry, possibly the secret. An empty copy owned by xclip, which outlives
 // keetui (see pipeDetached), prevents that; xsel cannot own an empty
-// clipboard.
+// clipboard. On a display the SSH session forwards, xclip would hold the
+// session's X11 channel, and with it ssh, open after keetui exits, so there
+// is no hand-off: managers on the user's desktop that ignore the marker may
+// then restore their newest entry.
 func (l *linuxClipboard) close() {
 	if l.x11 == nil {
 		return
 	}
-	if l.x11.Owns() && l.has("xclip") {
+	if !l.forwarded && l.x11.Owns() && l.has("xclip") {
 		l.handOff()
 	}
 	_ = l.x11.Close()

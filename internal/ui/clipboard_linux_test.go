@@ -128,11 +128,16 @@ func newTestLinux(env map[string]string, x *fakeX11, tools *fakeTools) *linuxCli
 		run:    tools.run,
 		runX:   tools.run,
 		output: tools.output,
-		newX11: func() x11Owner { return x },
+		newX11: func(string) x11Owner { return x },
 	}
 }
 
 var x11Env = map[string]string{"DISPLAY": ":0"}
+
+// writeLocal writes as a copy in a local session does.
+func (l *linuxClipboard) writeLocal(value []byte, transient bool) (bool, error) {
+	return l.write(value, transient, l.route(remoteSession{why: "no SSH session found"}))
+}
 
 func matching(value string) func([]byte) bool {
 	return func(b []byte) bool { return string(b) == value }
@@ -141,10 +146,10 @@ func matching(value string) func([]byte) bool {
 func TestX11CopiesThroughOwner(t *testing.T) {
 	x, tools := &fakeX11{}, &fakeTools{installed: []string{"xclip", "xsel"}}
 	l := newTestLinux(x11Env, x, tools)
-	if !l.available() {
+	if !l.route(remoteSession{}).ok {
 		t.Fatal("X11 without tools must still be available")
 	}
-	marked, err := l.write([]byte("synthetic-secret"), true)
+	marked, err := l.writeLocal([]byte("synthetic-secret"), true)
 	if err != nil || !marked || !x.marked || l.tool != "x11" {
 		t.Fatalf("write = %v, %v (tool %q)", marked, err, l.tool)
 	}
@@ -173,7 +178,7 @@ func TestX11FallsBackToTools(t *testing.T) {
 			t.Run(fmt.Sprintf("%v/%s", failure, tc.wantTool), func(t *testing.T) {
 				x, tools := &fakeX11{copyErr: failure}, &fakeTools{installed: tc.installed}
 				l := newTestLinux(x11Env, x, tools)
-				marked, err := l.write([]byte("synthetic-secret"), true)
+				marked, err := l.writeLocal([]byte("synthetic-secret"), true)
 				if err != nil || marked || l.tool != tc.wantTool {
 					t.Fatalf("write = %v, %v (tool %q)", marked, err, l.tool)
 				}
@@ -185,11 +190,11 @@ func TestX11FallsBackToTools(t *testing.T) {
 	}
 
 	x, tools := &fakeX11{copyErr: x11clip.ErrNotOwner}, &fakeTools{}
-	if _, err := newTestLinux(x11Env, x, tools).write([]byte("synthetic-secret"), true); !errors.Is(err, x11clip.ErrNotOwner) {
+	if _, err := newTestLinux(x11Env, x, tools).writeLocal([]byte("synthetic-secret"), true); !errors.Is(err, x11clip.ErrNotOwner) {
 		t.Fatalf("write without tools = %v", err)
 	}
 	tools = &fakeTools{installed: []string{"xclip"}, runErr: errors.New("exit status 1")}
-	_, err := newTestLinux(x11Env, x, tools).write([]byte("synthetic-secret"), true)
+	_, err := newTestLinux(x11Env, x, tools).writeLocal([]byte("synthetic-secret"), true)
 	if !errors.Is(err, x11clip.ErrNotOwner) || !strings.Contains(err.Error(), "xclip: exit status 1") || strings.Contains(err.Error(), "\n") {
 		t.Fatalf("write with a failing fallback = %q, want both causes on one line", err)
 	}
@@ -199,13 +204,13 @@ func TestX11FallsBackToTools(t *testing.T) {
 // xsel waiting too: the copy fails at once and goes to the terminal.
 func TestX11TimeoutSkipsTools(t *testing.T) {
 	x, tools := &fakeX11{copyErr: x11clip.ErrTimeout}, &fakeTools{installed: []string{"xclip", "xsel"}}
-	if _, err := newTestLinux(x11Env, x, tools).write([]byte("synthetic-secret"), true); !errors.Is(err, x11clip.ErrTimeout) || len(tools.runs) != 0 {
+	if _, err := newTestLinux(x11Env, x, tools).writeLocal([]byte("synthetic-secret"), true); !errors.Is(err, x11clip.ErrTimeout) || len(tools.runs) != 0 {
 		t.Fatalf("write = %v, runs %q", err, tools.runs)
 	}
 	c, term := newFakeClipboard(nil)
 	c.native = newTestLinux(x11Env, x, tools)
 	res, err := c.copy("synthetic-secret", copyOptions{transient: true, osc52: config.OSC52Auto})
-	if err != nil || res.native || !res.terminal || len(term.sent) != 1 || len(tools.runs) != 0 {
+	if err != nil || res.native || !res.terminal || !errors.Is(res.nativeErr, x11clip.ErrTimeout) || len(term.sent) != 1 || len(tools.runs) != 0 {
 		t.Fatalf("copy = %+v, %v (terminal %q, runs %q)", res, err, term.sent, tools.runs)
 	}
 }
@@ -213,7 +218,7 @@ func TestX11TimeoutSkipsTools(t *testing.T) {
 func TestX11HoldsFollowsOwnership(t *testing.T) {
 	x, tools := &fakeX11{}, &fakeTools{installed: []string{"xclip"}}
 	l := newTestLinux(x11Env, x, tools)
-	_, _ = l.write([]byte("synthetic-secret"), true)
+	_, _ = l.writeLocal([]byte("synthetic-secret"), true)
 
 	x.stolen("synthetic-secret") // even the same value, copied by another app
 	x.calls = nil
@@ -248,7 +253,7 @@ func TestXselClearKeepsClipboard(t *testing.T) {
 	setup := func(installed ...string) (*linuxClipboard, *fakeX11, *fakeTools) {
 		x, tools := &fakeX11{copyErr: x11clip.ErrTooLarge}, &fakeTools{installed: installed}
 		l := newTestLinux(x11Env, x, tools)
-		if _, err := l.write([]byte("large-synthetic-note"), true); err != nil || l.tool != "xsel" {
+		if _, err := l.writeLocal([]byte("large-synthetic-note"), true); err != nil || l.tool != "xsel" {
 			t.Fatalf("write = %v (tool %q)", err, l.tool)
 		}
 		tools.clip, tools.runs = []byte("large-synthetic-note"), nil
@@ -284,7 +289,7 @@ func isXselClear(run string) bool { return strings.HasPrefix(run, "xsel --clipbo
 func TestXclipFallbackClearsWithEmptyCopy(t *testing.T) {
 	x, tools := &fakeX11{copyErr: x11clip.ErrTooLarge}, &fakeTools{installed: []string{"xclip"}}
 	l := newTestLinux(x11Env, x, tools)
-	_, _ = l.write([]byte("large-synthetic-note"), true)
+	_, _ = l.writeLocal([]byte("large-synthetic-note"), true)
 	tools.clip, tools.runs = []byte("large-synthetic-note"), nil
 	if !l.holds(matching("large-synthetic-note"), false) {
 		t.Fatal("xclip copy not recognized by content")
@@ -312,7 +317,7 @@ func TestToolReadBackTimeoutClears(t *testing.T) {
 		t.Run(tc.outErr.Error(), func(t *testing.T) {
 			x, tools := &fakeX11{copyErr: x11clip.ErrTooLarge}, &fakeTools{installed: []string{"xclip"}}
 			l := newTestLinux(x11Env, x, tools)
-			_, _ = l.write([]byte("large-synthetic-note"), true)
+			_, _ = l.writeLocal([]byte("large-synthetic-note"), true)
 			tools.outErr = tc.outErr
 			if got := l.holds(matching("large-synthetic-note"), false); got != tc.want {
 				t.Fatalf("holds = %v, want %v", got, tc.want)
@@ -362,7 +367,7 @@ func TestX11CloseHandsOffToXclip(t *testing.T) {
 				}
 			}
 			l := newTestLinux(x11Env, x, tools)
-			_, _ = l.write([]byte("synthetic-secret"), true)
+			_, _ = l.writeLocal([]byte("synthetic-secret"), true)
 			if !tc.owned {
 				x.stolen("copied-later")
 			}
@@ -380,7 +385,7 @@ func TestX11CloseHandsOffToXclip(t *testing.T) {
 	// A failing xclip will not take the clipboard: no waiting for it.
 	x, tools := &fakeX11{}, &fakeTools{installed: []string{"xclip"}, runErr: errors.New("exit status 1")}
 	l := newTestLinux(x11Env, x, tools)
-	_, _ = l.write([]byte("synthetic-secret"), true)
+	_, _ = l.writeLocal([]byte("synthetic-secret"), true)
 	x.calls = nil
 	start := time.Now()
 	l.close()
@@ -391,7 +396,7 @@ func TestX11CloseHandsOffToXclip(t *testing.T) {
 	// Without an X11 copy there is nothing to hand over.
 	tools = &fakeTools{installed: []string{"wl-copy", "wl-paste", "xclip"}}
 	l = newTestLinux(map[string]string{"WAYLAND_DISPLAY": "wayland-0"}, nil, tools)
-	_, _ = l.write([]byte("synthetic-secret"), true)
+	_, _ = l.writeLocal([]byte("synthetic-secret"), true)
 	tools.runs = nil
 	l.close()
 	if len(tools.runs) != 0 {
@@ -402,7 +407,7 @@ func TestX11CloseHandsOffToXclip(t *testing.T) {
 func TestWaylandUnchanged(t *testing.T) {
 	tools := &fakeTools{installed: []string{"wl-copy", "wl-paste"}, clip: []byte("synthetic-secret")}
 	l := newTestLinux(map[string]string{"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"}, nil, tools)
-	marked, err := l.write([]byte("synthetic-secret"), true)
+	marked, err := l.writeLocal([]byte("synthetic-secret"), true)
 	if err != nil || !marked {
 		t.Fatalf("write = %v, %v", marked, err)
 	}
@@ -448,7 +453,7 @@ func TestX11ReleaseOutcomes(t *testing.T) {
 				t.Fatalf("copy = %+v, %v", res, err)
 			}
 			tc.after(x)
-			if outcome, err := c.release(); outcome != tc.want || err != nil {
+			if outcome, err := outcomeOf(c.release()); outcome != tc.want || err != nil {
 				t.Fatalf("release = %v, %v", outcome, err)
 			}
 			if got := x.owned && len(x.value) == 0; got != tc.empty {
@@ -477,7 +482,7 @@ func TestX11RefusedCopyLeavesNoSecret(t *testing.T) {
 	if len(x.value) != 0 {
 		t.Fatalf("the X11 clipboard still serves %q", x.value)
 	}
-	if outcome, err := c.release(); outcome != clearRequested || err != nil {
+	if outcome, err := outcomeOf(c.release()); outcome != clearRequested || err != nil {
 		t.Fatalf("release = %v, %v", outcome, err)
 	}
 	if !slices.Equal(term.sent, []string{"huge-synthetic-note", ""}) {
@@ -510,7 +515,7 @@ func TestX11ToolsRunDetached(t *testing.T) {
 	// Fallback copies and their clears.
 	for _, tool := range []string{"xclip", "xsel"} {
 		l := setup(x11Env, &fakeX11{copyErr: x11clip.ErrTooLarge}, tool)
-		if _, err := l.write([]byte("large-synthetic-note"), true); err != nil {
+		if _, err := l.writeLocal([]byte("large-synthetic-note"), true); err != nil {
 			t.Fatal(err)
 		}
 		if err := l.clear(); err != nil {
@@ -519,13 +524,13 @@ func TestX11ToolsRunDetached(t *testing.T) {
 	}
 	// The exit hand-off.
 	l := setup(x11Env, &fakeX11{}, "xclip")
-	if _, err := l.write([]byte("synthetic-secret"), true); err != nil {
+	if _, err := l.writeLocal([]byte("synthetic-secret"), true); err != nil {
 		t.Fatal(err)
 	}
 	l.close()
 	// Wayland.
 	l = setup(map[string]string{"WAYLAND_DISPLAY": "wayland-0"}, nil, "wl-copy", "wl-paste")
-	if _, err := l.write([]byte("synthetic-secret"), true); err != nil {
+	if _, err := l.writeLocal([]byte("synthetic-secret"), true); err != nil {
 		t.Fatal(err)
 	}
 	if err := l.clear(); err != nil {
