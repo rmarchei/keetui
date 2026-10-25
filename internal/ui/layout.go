@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image/color"
 	"path/filepath"
 	"strings"
 
@@ -38,41 +39,81 @@ func fitFrame(content string, width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderHints packs whole key/action pairs into at most two rows. Callers put
-// essentials (including the help shortcut) first; optional actions may be
-// omitted, but a key/action pair is never cut in half.
+// renderHints fits whole "key: action" pairs on one row, drawn as the key in
+// the accent color and the action dimmed. Callers put essentials (including
+// the help shortcut, which lists the rest) first; pairs that do not fit are
+// left out, never cut in half.
 func renderHints(width int, hints ...string) string {
 	width, _ = viewSize(width, 1)
-	var rows []string
+	budget := width - 1 // leading space, aligned with the status bar text
+	var parts []string
+	used := 0
 	seen := make(map[string]bool)
-	line := ""
 	for _, hint := range hints {
 		hint = sanitizeDisplay(strings.TrimSpace(hint))
-		if hint == "" || seen[hint] || lipgloss.Width(hint) > width {
+		if hint == "" || seen[hint] {
 			continue
 		}
 		seen[hint] = true
-		candidate := hint
-		if line != "" {
-			candidate = line + "  " + hint
+		key, action, pair := strings.Cut(hint, ": ")
+		rendered := helpStyle.Render(hint)
+		if pair {
+			rendered = hintKeyStyle.Render(key) + " " + helpStyle.Render(action)
 		}
-		if lipgloss.Width(candidate) <= width {
-			line = candidate
-		} else if len(rows) == 0 {
-			rows = append(rows, line)
-			line = hint
-		} else {
-			break
+		need := lipgloss.Width(rendered)
+		if used > 0 {
+			need += 2
 		}
+		if used+need > budget {
+			continue
+		}
+		used += need
+		parts = append(parts, rendered)
 	}
-	if line != "" {
-		rows = append(rows, line)
+	return " " + strings.Join(parts, "  ")
+}
+
+// onBackground re-applies style's colors after every reset in s. Styled
+// segments end with a full reset, which would otherwise leave them, and the
+// text after them, on the terminal's own background.
+func onBackground(s string, style lipgloss.Style) string {
+	seq := ansi.Style{}
+	if fg := style.GetForeground(); !isNoColor(fg) {
+		seq = seq.ForegroundColor(fg)
 	}
-	return helpStyle.Render(strings.Join(rows, "\n"))
+	if bg := style.GetBackground(); !isNoColor(bg) {
+		seq = seq.BackgroundColor(bg)
+	}
+	return strings.ReplaceAll(s, ansi.ResetStyle, ansi.ResetStyle+seq.String())
+}
+
+func isNoColor(c color.Color) bool {
+	_, none := c.(lipgloss.NoColor)
+	return c == nil || none
+}
+
+// selectedRow draws a list row as the selection: a bar across the width
+// behind the row, which keeps its layout, so the selection never shifts it.
+func selectedRow(row string, width int) string {
+	width, _ = viewSize(width, 1)
+	lines := strings.Split(row, "\n")
+	for i, line := range lines {
+		line = ansi.Truncate(line, width, "…")
+		lines[i] = selectedRowStyle.Width(width).Render(onBackground(line, selectedRowStyle))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func wrapContent(content string, width int) string {
 	return ansi.Wrap(content, max(width, 1), "")
+}
+
+// wrapIndented wraps plain text to width with every line, continuations
+// included, indented by indent cells.
+func wrapIndented(text string, width, indent int) string {
+	pad := strings.Repeat(" ", indent)
+	lines := strings.Split(ansi.Wrap(text, max(width-indent, 1), ""), "\n")
+	return pad + strings.Join(lines, "\n"+pad)
 }
 
 func bodyHeight(height int, footer string) int {

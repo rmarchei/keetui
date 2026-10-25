@@ -31,17 +31,17 @@ func TestLayoutHintsKeepWholeBindings(t *testing.T) {
 	hints := []string{"F1: help", "ctrl+s: save", "esc: cancel", "tab/shift+tab: navigate", "ctrl+r: reveal", "ctrl+g: gen password", "秘密: 日本語"}
 	for _, width := range []int{20, 40, 80, 110, 160} {
 		footer := ansi.Strip(renderHints(width, hints...))
-		if lipgloss.Height(footer) > 2 || !strings.Contains(footer, "F1: help") {
+		if lipgloss.Height(footer) != 1 || !strings.Contains(footer, "F1 help") {
 			t.Fatalf("invalid footer at %d: %q", width, footer)
 		}
 		for _, line := range strings.Split(footer, "\n") {
 			if lipgloss.Width(line) > width {
 				t.Fatalf("footer exceeded %d columns", width)
 			}
-			for _, item := range strings.Split(strings.TrimRight(line, " "), "  ") {
+			for _, item := range strings.Split(strings.TrimSpace(line), "  ") {
 				found := false
 				for _, hint := range hints {
-					found = found || item == hint
+					found = found || item == strings.Replace(hint, ": ", " ", 1)
 				}
 				if !found {
 					t.Fatalf("partial binding at %d: %q", width, item)
@@ -63,7 +63,7 @@ func TestLayoutSettingsEveryFieldReachable(t *testing.T) {
 			if !strings.Contains(plain, settingLabels[m.focused]+":") {
 				t.Fatalf("%v: focused setting %q hidden", size, settingLabels[m.focused])
 			}
-			if !strings.Contains(plain, "ctrl+s: save") || !strings.Contains(plain, "F1: help") {
+			if !strings.Contains(plain, "ctrl+s save") || !strings.Contains(plain, "F1 help") {
 				t.Fatalf("%v: settings footer hidden", size)
 			}
 			updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
@@ -96,7 +96,7 @@ func TestLayoutEditorFocusAndResize(t *testing.T) {
 				t.Fatalf("%v: field %d rows %v outside viewport [%d,%d)", size, m.focused, row, m.offset, m.offset+visible)
 			}
 			plain := ansi.Strip(view)
-			if !strings.Contains(plain, "ctrl+s: save") || !strings.Contains(plain, "esc: cancel") || !strings.Contains(plain, "F1: help") {
+			if !strings.Contains(plain, "ctrl+s save") || !strings.Contains(plain, "esc cancel") || !strings.Contains(plain, "F1 help") {
 				t.Fatalf("%v: editor footer hidden", size)
 			}
 			updated, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
@@ -147,7 +147,7 @@ func TestLayoutUnlockFullErrorAccessible(t *testing.T) {
 		view := m.View().Content
 		assertFrame(t, view, 40, 12)
 		plain := ansi.Strip(view)
-		if !strings.Contains(plain, "test-vault.kdbx") || !strings.Contains(plain, "pgup/pgdown: error") {
+		if !strings.Contains(plain, "test-vault.kdbx") || !strings.Contains(plain, "pgup/pgdown error") {
 			t.Fatal("unlock lost filename or error scrolling hint")
 		}
 		all.WriteString(plain)
@@ -339,7 +339,7 @@ func TestLayoutBrowserSelectionSurvivesShrink(t *testing.T) {
 		m = updated.(BrowserModel)
 		view := m.View().Content
 		assertFrame(t, view, size[0], size[1])
-		if !strings.Contains(ansi.Strip(view), "synthetic-49") || !strings.Contains(ansi.Strip(view), "?: help") {
+		if !strings.Contains(ansi.Strip(view), "synthetic-49") || !strings.Contains(ansi.Strip(view), "? help") {
 			t.Fatal("resize hid the selected entry or help")
 		}
 		updated, cmd := m.Update(tea.MouseClickMsg{X: 4, Y: size[1] - 1, Button: tea.MouseLeft})

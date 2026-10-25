@@ -131,11 +131,12 @@ func (m UnlockModel) errorContent() string {
 }
 
 func (m UnlockModel) footer() string {
-	hints := []string{"enter: unlock", "ctrl+c: quit"}
+	hints := []string{"enter: unlock"}
 	if m.err != nil {
+		// Scrolling is the only way to read a long error: keep it ahead of quit.
 		hints = append(hints, "pgup/pgdown: error")
 	}
-	return renderHints(m.width, hints...)
+	return renderHints(m.width, append(hints, "ctrl+c: quit")...)
 }
 
 func (m UnlockModel) View() tea.View {

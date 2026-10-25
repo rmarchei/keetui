@@ -48,6 +48,13 @@ var settingLabels = [settingCount]string{
 	"Keybindings",
 }
 
+// settingSections heads the settings that start a section.
+var settingSections = map[int]string{
+	settingClipboardClear: "Security",
+	settingPasswordLength: "Password generator",
+	settingTheme:          "General",
+}
+
 var settingDescriptions = [settingCount]string{
 	"Seconds before clipboard is cleared after copying (0: disable, min: 15)",
 	"Copy via OSC 52, which cannot be marked sensitive: auto (only without a local clipboard), always, never",
@@ -96,7 +103,7 @@ type SettingsModel struct {
 
 func NewSettingsModel(cfg config.Config) SettingsModel {
 	var inputs [settingCount]textinput.Model
-	promptStyle := lipgloss.NewStyle().Foreground(secondaryColor).Bold(true)
+	promptStyle := lipgloss.NewStyle().Foreground(labelColor)
 	for i := range inputs {
 		t := newTextInput()
 		t.Prompt = fmt.Sprintf("  %-24s", settingLabels[i]+":")
@@ -337,6 +344,9 @@ func (m SettingsModel) body() (string, []fieldRows) {
 
 	for i := range m.inputs {
 		start := b.row
+		if section, ok := settingSections[i]; ok {
+			b.WriteString(sectionStyle.Render("  "+section) + "\n\n")
+		}
 		if isToggleSetting(i) || isChoiceSetting(i) || i == settingKeyBindings {
 			value := m.inputs[i].Value()
 			switch {
@@ -354,15 +364,15 @@ func (m SettingsModel) body() (string, []fieldRows) {
 			if i == m.focused {
 				style = focusedStyle.Bold(true)
 			}
-			line := labelStyle.Width(0).Render("  "+settingLabels[i]+": ") + style.Render(value)
+			line := labelStyle.Width(0).Render(fmt.Sprintf("  %-24s", settingLabels[i]+":")) + style.Render(value)
 			b.WriteString(wrapContent(line, width))
 		} else {
 			b.WriteString(m.inputs[i].View())
 		}
 		b.WriteString("\n")
-		b.WriteString(wrapContent(hiddenStyle.Render("  "+settingDescriptions[i]), width) + "\n")
+		b.WriteString(hiddenStyle.Render(wrapIndented(settingDescriptions[i], width, 2)) + "\n")
 		if problem := m.fieldErrors[i]; problem != "" {
-			b.WriteString(wrapContent(errorMsgStyle.Render(problem), width) + "\n")
+			b.WriteString(errorMsgStyle.Padding(0).Render(wrapIndented(problem, width, 2)) + "\n")
 		}
 		rows = append(rows, fieldRows{start, b.row - 1})
 		if i < settingCount-1 {

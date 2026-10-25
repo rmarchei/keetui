@@ -166,6 +166,13 @@ func (m AuditModel) View() tea.View {
 
 		vis := m.visibleHeight()
 		end := min(m.offset+vis, len(m.lines))
+		titleWidth := 0
+		for _, line := range m.lines {
+			if !line.blank && !line.isHeader {
+				titleWidth = max(titleWidth, lipgloss.Width(auditTitle(line)))
+			}
+		}
+		titleWidth = min(titleWidth, max(12, m.width*2/5))
 		for i := m.offset; i < end; i++ {
 			line := m.lines[i]
 			if line.blank {
@@ -173,20 +180,16 @@ func (m AuditModel) View() tea.View {
 			} else if line.isHeader {
 				fmt.Fprintf(&b, "  %s\n", helpStyle.Render(line.header))
 			} else {
-				cursor := "  "
+				cursor, style := "  ", entryStyle
 				if i == m.cursor {
-					cursor = selectionCursor
+					cursor, style = selectionCursor, selectedItemStyle
 				}
-				title := sanitizeDisplay(line.entry.Entry.Title)
-				if title == "" {
-					title = "(untitled)"
-				}
-				path := hiddenStyle.Render(fmt.Sprintf("  (%s)", sanitizeDisplay(line.entry.GroupPath)))
+				row := "  " + cursor + style.Render(padCell(auditTitle(line), titleWidth)) +
+					"  " + hiddenStyle.Render(sanitizeDisplay(line.entry.GroupPath))
 				if i == m.cursor {
-					fmt.Fprintf(&b, "  %s%s%s\n", cursor, selectedItemStyle.Render(title), path)
-				} else {
-					fmt.Fprintf(&b, "  %s%s%s\n", cursor, entryStyle.Render(title), path)
+					row = selectedRow(row, m.width)
 				}
+				b.WriteString(row + "\n")
 			}
 		}
 
@@ -201,4 +204,11 @@ func (m AuditModel) View() tea.View {
 
 func (m AuditModel) footer() string {
 	return renderHints(m.width, "esc: back", "F1: help", "j/k: navigate", "enter: view entry", "q: quit")
+}
+
+func auditTitle(line auditLine) string {
+	if title := sanitizeDisplay(line.entry.Entry.Title); title != "" {
+		return title
+	}
+	return "(untitled)"
 }

@@ -139,6 +139,9 @@ func (m HistoryModel) View() tea.View {
 				cursor,
 				style.Render(dateStr),
 				hiddenStyle.Render(pw))
+			if i == m.cursor {
+				line = selectedRow(line, m.width)
+			}
 			b.WriteString(line)
 			b.WriteString("\n")
 		}

@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -69,9 +68,13 @@ func (m SettingsModel) pickerView() string {
 	for i, choice := range m.choices() {
 		cursor, style := "  ", valueStyle
 		if i == m.choice {
-			cursor, style = selectionCursor, focusedStyle.Bold(true)
+			cursor, style = selectionCursor, selectedItemStyle
 		}
-		fmt.Fprintf(&b, "%s%s\n", cursor, style.Render(choice))
+		row := cursor + style.Render(choice)
+		if i == m.choice {
+			row = selectedRow(row, width)
+		}
+		b.WriteString(row + "\n")
 	}
 	footer := renderHints(width, "enter/space: select", "esc: cancel", "↑/↓: choose")
 	footer = m.withSaveError(footer)
@@ -167,14 +170,17 @@ func (m SettingsModel) bindingsView() string {
 		row := b.row
 		cursor, style := "  ", valueStyle
 		if i == m.bindingIndex {
-			cursor, style = selectionCursor, focusedStyle.Bold(true)
+			cursor, style = selectionCursor, selectedItemStyle
 		}
 		key := binding.Key
 		if i == m.bindingIndex && m.recording {
 			key = "press a key…"
 		}
-		line := cursor + binding.Label + ": " + style.Render(sanitizeDisplay(key))
-		b.WriteString(wrapContent(line, width) + "\n")
+		line := wrapContent(cursor+binding.Label+": "+style.Render(sanitizeDisplay(key)), width)
+		if i == m.bindingIndex {
+			line = selectedRow(line, width)
+		}
+		b.WriteString(line + "\n")
 		rows = append(rows, fieldRows{row, b.row - 1})
 	}
 	footer := renderHints(width, "enter: record key", "esc: back", "ctrl+s: save", "↑/↓: choose", "backspace: default")

@@ -165,7 +165,7 @@ func (m PathInputModel) View() tea.View {
 func (m PathInputModel) formatOption(label string, selected bool) string {
 	if selected {
 		if m.focused == focusFormat {
-			return selectedItemStyle.Render("[" + label + "]")
+			return focusedStyle.Bold(true).Render("[" + label + "]")
 		}
 		return valueStyle.Render("[" + label + "]")
 	}

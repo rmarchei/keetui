@@ -2,7 +2,6 @@ package ui
 
 import (
 	"errors"
-	"regexp"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -286,19 +285,7 @@ func TestStatusBarKeepsItsBackgroundBehindStyledSegments(t *testing.T) {
 	m.dirty = true
 	m.undoStack.push(undoAction{description: "edit"})
 	m.width = 100
-	bar := m.statusBar()
-
-	bg := strings.TrimSuffix(strings.TrimPrefix(
-		ansi.Style{}.BackgroundColor(statusBarBgStyle.GetBackground()).String(), "\x1b["), "m")
-	leading := regexp.MustCompile(`^(\x1b\[[0-9;:]*m)*`)
-	for _, piece := range strings.Split(bar, ansi.ResetStyle) {
-		if ansi.Strip(piece) == "" {
-			continue
-		}
-		if lead := leading.FindString(piece); !strings.Contains(lead, bg) {
-			t.Errorf("%q is drawn without the bar background (%s)", ansi.Strip(piece), bg)
-		}
-	}
+	assertOnBackground(t, m.statusBar(), statusBarBgStyle)
 }
 
 func TestCountdownStatusFitsAndKeepsFeedback(t *testing.T) {

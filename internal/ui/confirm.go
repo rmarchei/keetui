@@ -90,10 +90,10 @@ func (m ConfirmModel) View() tea.View {
 
 	var no, yes string
 	if m.selected {
-		yes = selectedItemStyle.Render("  [>Yes ]")
+		yes = focusedStyle.Bold(true).Render("  [>Yes ]")
 		no = helpStyle.Render("  [ No ]")
 	} else {
-		no = selectedItemStyle.Render("  [>No ]")
+		no = focusedStyle.Bold(true).Render("  [>No ]")
 		yes = helpStyle.Render("  [ Yes ]")
 	}
 	fmt.Fprintf(&b, "  %s  %s\n", no, yes)

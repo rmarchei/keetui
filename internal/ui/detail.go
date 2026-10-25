@@ -509,18 +509,21 @@ func truncateLabel(label string) string {
 func (m DetailModel) buildContent() string {
 	var b strings.Builder
 
+	// field writes a selectable field's row: the selected one gets the marker
+	// and the selection bar.
 	fieldIdx := 0
-	cursor := func() string {
+	field := func(format string, args ...any) {
+		row := fmt.Sprintf(format, args...)
 		if fieldIdx == m.selectedField {
-			fieldIdx++
-			return selectedItemStyle.Render(selectionCursor)
+			row = selectedRow(selectionCursor+row, m.width)
+		} else {
+			row = "  " + row
 		}
 		fieldIdx++
-		return "  "
+		b.WriteString(row + "\n")
 	}
 
-	fmt.Fprintf(&b, "%s%s %s\n",
-		cursor(),
+	field("%s %s",
 		labelStyle.Render("Username:"),
 		valueStyle.Render(sanitizeDisplay(m.entry.UserName)))
 
@@ -530,48 +533,40 @@ func (m DetailModel) buildContent() string {
 	}
 	if m.cfg.ShowPasswordStrength {
 		strengthStr := renderStrength(m.strength)
-		fmt.Fprintf(&b, "%s%s %s  %s\n",
-			cursor(),
+		field("%s %s  %s",
 			labelStyle.Render("Password:"),
 			hiddenStyle.Render(pw),
 			strengthStr)
 	} else {
-		fmt.Fprintf(&b, "%s%s %s\n",
-			cursor(),
+		field("%s %s",
 			labelStyle.Render("Password:"),
 			hiddenStyle.Render(pw))
 	}
 
-	fmt.Fprintf(&b, "%s%s %s\n",
-		cursor(),
+	field("%s %s",
 		labelStyle.Render("URL:"),
 		valueStyle.Render(sanitizeDisplay(m.entry.URL)))
 
 	if m.entry.TOTP != "" {
 		if m.revealedFields["builtin:totp"] {
-			fmt.Fprintf(&b, "%s%s %s\n",
-				cursor(),
+			field("%s %s",
 				labelStyle.Render("TOTP:"),
 				valueStyle.Render(sanitizeDisplay(m.entry.TOTP)))
 		} else if m.totpCode != "" {
-			bar := totpCountdownBar(m.totpRemain, int(m.entry.TOTPPeriod()))
-			fmt.Fprintf(&b, "%s%s %s  %s\n",
-				cursor(),
+			field("%s %s  %s",
 				labelStyle.Render("TOTP:"),
-				valueStyle.Render(m.totpCode),
-				helpStyle.Render(fmt.Sprintf("%s %ds", bar, m.totpRemain)))
+				valueStyle.Render(groupDigits(m.totpCode)),
+				totpCountdown(m.totpRemain, int(m.entry.TOTPPeriod())))
 		} else {
 			// TOTP secret exists but code generation failed; show masked
-			fmt.Fprintf(&b, "%s%s %s\n",
-				cursor(),
+			field("%s %s",
 				labelStyle.Render("TOTP:"),
 				hiddenStyle.Render(maskedValue))
 		}
 	}
 
 	if m.entry.Notes != "" {
-		fmt.Fprintf(&b, "%s%s\n",
-			cursor(),
+		field("%s",
 			labelStyle.Render("Notes:"))
 		noteLines := sanitizeNoteLines(m.entry.Notes)
 		show := noteLines
@@ -617,8 +612,7 @@ func (m DetailModel) buildContent() string {
 			val = maskedValue
 		}
 		label := truncateLabel(sanitizeDisplay(cf.Key) + ":")
-		fmt.Fprintf(&b, "%s%s %s\n",
-			cursor(),
+		field("%s %s",
 			labelStyle.Render(label),
 			valueStyle.Render(val))
 	}
@@ -1050,49 +1044,48 @@ func (m DetailModel) View() tea.View {
 	return tea.NewView(fitFrame(m.headerView()+m.viewport.View()+"\n"+m.footerView(), m.width, m.height))
 }
 
-// renderStrength returns a styled strength label.
+// renderStrength returns a strength meter and label, colored by level.
 func renderStrength(s keepass.StrengthResult) string {
 	if s.Unavailable {
-		return warnStyle.Render("[Not rated: invalid text]")
+		return warnStyle.Padding(0).Render("Not rated: invalid text")
 	}
-	label := fmt.Sprintf("[%s ~%.0f guess bits]", s.Label, s.GuessBits)
+	label := fmt.Sprintf("%s ~%.0f guess bits", s.Label, s.GuessBits)
 	if s.AnalyzedLength < s.Length {
-		label = fmt.Sprintf("[%s ~%.0f guess bits; first %d chars]", s.Label, s.GuessBits, s.AnalyzedLength)
+		label += fmt.Sprintf("; first %d chars", s.AnalyzedLength)
 	}
+	style := hiddenStyle
 	switch s.Score {
 	case keepass.StrengthWeak:
-		return errorMsgStyle.Render(label)
+		style = errorMsgStyle.Padding(0)
 	case keepass.StrengthFair:
-		return warnStyle.Render(label)
+		style = warnStyle.Padding(0)
 	case keepass.StrengthGood:
-		return valueStyle.Render(label)
+		style = valueStyle
 	case keepass.StrengthStrong, keepass.StrengthExcellent:
-		return successStyle.Render(label)
-	default:
-		return hiddenStyle.Render(label)
+		style = successStyle.Padding(0)
 	}
+	const segments = 5
+	filled := min(max(int(s.Score)+1, 1), segments)
+	return style.Render(strings.Repeat("▰", filled)) +
+		hiddenStyle.Render(strings.Repeat("▱", segments-filled)) + " " + style.Render(label)
 }
 
 // renderStrengthDetail returns the strength label plus a character class breakdown.
 // Classes describe the password; they do not award strength points.
 func renderStrengthDetail(s keepass.StrengthResult) string {
-	base := renderStrength(s)
-
 	check := func(has bool, label string) string {
 		if has {
-			return successStyle.Render(label)
+			return successStyle.Padding(0).Render(label)
 		}
 		return hiddenStyle.Render(label)
 	}
-
-	classes := fmt.Sprintf(" %s %s %s %s  %s",
+	return renderStrength(s) + "  " + strings.Join([]string{
 		check(s.HasLower, "a-z"),
 		check(s.HasUpper, "A-Z"),
 		check(s.HasDigit, "0-9"),
 		check(s.HasSymbol, "!@#"),
-		hiddenStyle.Render(fmt.Sprintf("len:%d", s.Length)))
-
-	return base + classes
+		hiddenStyle.Render(fmt.Sprintf("len:%d", s.Length)),
+	}, " ")
 }
 
 // cleanInputPath strips surrounding quotes and backslash escapes that terminals
@@ -1186,9 +1179,27 @@ func (m DetailModel) renderQR(text string, maxWidth, maxHeight int) string {
 	return strings.Join(lines, "\n")
 }
 
-// totpCountdownBar renders a visual progress bar for the TOTP countdown.
-func totpCountdownBar(remaining, period int) string {
-	const width = 10
-	filled := min(remaining*width/period, width)
-	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", width-filled) + "]"
+// groupDigits splits an even-length code in two halves for reading:
+// 026242 shows as 026 242. Copies use the code itself.
+func groupDigits(code string) string {
+	if len(code) < 6 || len(code)%2 != 0 {
+		return code
+	}
+	return code[:len(code)/2] + " " + code[len(code)/2:]
+}
+
+// totpCountdown draws the time left on a TOTP code as a bar that turns
+// yellow, then red, as the code nears expiry.
+func totpCountdown(remaining, period int) string {
+	const width = 12
+	filled := min(max(remaining*width/max(period, 1), 0), width)
+	style := successStyle.Padding(0)
+	switch {
+	case remaining <= 5:
+		style = errorMsgStyle.Padding(0)
+	case remaining <= 10:
+		style = warnStyle.Padding(0)
+	}
+	return style.Render(strings.Repeat("━", filled)) +
+		hiddenStyle.Render(strings.Repeat("─", width-filled)) + " " + style.Render(fmt.Sprintf("%ds", remaining))
 }

@@ -1,90 +1,57 @@
 package ui
 
-import "charm.land/lipgloss/v2"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 const selectionCursor = "▸ "
 
+// Styles are built from the active theme by ApplyTheme; the dark theme
+// applies until the configuration names another.
 var (
 	// Colors
-	primaryColor   = lipgloss.Color("#7D56F4")
-	secondaryColor = lipgloss.Color("#AD58B4")
-	mutedColor     = lipgloss.Color("#626262")
-	successColor   = lipgloss.Color("#04B575")
-	errorColor     = lipgloss.Color("#FF4444")
-	warnColor      = lipgloss.Color("#FFAA00")
+	primaryColor color.Color
+	labelColor   color.Color
+	mutedColor   color.Color
+	successColor color.Color
+	errorColor   color.Color
+	warnColor    color.Color
 
-	// Title bar
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#000000")).
-			Background(primaryColor).
-			Padding(0, 1)
-
-	// Breadcrumb / path
-	breadcrumbStyle = lipgloss.NewStyle().
-			Foreground(mutedColor).
-			Padding(0, 1)
+	titleStyle      lipgloss.Style // title bar
+	breadcrumbStyle lipgloss.Style // breadcrumb / path
 
 	// List items
-	itemStyle = lipgloss.NewStyle().
-			PaddingLeft(2)
-
-	selectedItemStyle = lipgloss.NewStyle().
-				PaddingLeft(2).
-				Foreground(primaryColor).
-				Bold(true)
-
-	// Group icon styling
-	groupStyle = lipgloss.NewStyle().
-			Foreground(warnColor)
-
-	entryStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FAFAFA"))
+	itemStyle         lipgloss.Style
+	selectedItemStyle lipgloss.Style // the selected row's main text
+	selectedRowStyle  lipgloss.Style // the bar behind the selected row
+	groupIconStyle    lipgloss.Style
+	groupStyle        lipgloss.Style // group names
+	entryStyle        lipgloss.Style
+	secondaryStyle    lipgloss.Style // secondary columns: usernames
 
 	// Detail view
-	labelStyle = lipgloss.NewStyle().
-			Foreground(secondaryColor).
-			Bold(true).
-			Width(12)
+	labelStyle  lipgloss.Style
+	valueStyle  lipgloss.Style
+	hiddenStyle lipgloss.Style
 
-	valueStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FAFAFA"))
+	successStyle  lipgloss.Style
+	errorMsgStyle lipgloss.Style
+	warnStyle     lipgloss.Style
 
-	hiddenStyle = lipgloss.NewStyle().
-			Foreground(mutedColor)
+	sectionStyle lipgloss.Style // section headings
 
-	successStyle = lipgloss.NewStyle().
-			Foreground(successColor).
-			Padding(0, 1)
+	// Help and key hints
+	helpStyle    lipgloss.Style
+	hintKeyStyle lipgloss.Style
 
-	errorMsgStyle = lipgloss.NewStyle().
-			Foreground(errorColor).
-			Padding(0, 1)
-
-	// Warning
-	warnStyle = lipgloss.NewStyle().
-			Foreground(warnColor).
-			Padding(0, 1)
-
-	// Help
-	helpStyle = lipgloss.NewStyle().
-			Foreground(mutedColor)
-
-	// Input field focused
-	focusedStyle = lipgloss.NewStyle().
-			Foreground(primaryColor)
-
-	// Input field blurred
-	blurredStyle = lipgloss.NewStyle().
-			Foreground(mutedColor)
+	focusedStyle lipgloss.Style // input field focused
+	blurredStyle lipgloss.Style // input field blurred
 
 	// Persistent status bar (bottom of screen)
-	statusBarBgStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#FAFAFA")).
-				Background(lipgloss.Color("#3C3C3C")).
-				Padding(0, 1)
-
-	statusBarModifiedStyle = lipgloss.NewStyle().
-				Foreground(warnColor).
-				Bold(true)
+	statusBarBgStyle       lipgloss.Style
+	statusBarModifiedStyle lipgloss.Style
 )
+
+func init() { ApplyTheme(GetTheme("dark")) }

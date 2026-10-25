@@ -43,7 +43,7 @@ func TestCopyAndBreachActionsAreDistinct(t *testing.T) {
 	m := NewDetailModel(testEntry(), config.Default())
 	m.SetSize(80, 23)
 	m.selectedField = 1
-	if !strings.Contains(ansi.Strip(m.footerView()), "enter: copy password") {
+	if !strings.Contains(ansi.Strip(m.footerView()), "enter copy password") {
 		t.Fatal("copy target not discoverable")
 	}
 	for key, want := range map[string]string{"1": "username", "2": "password", "3": "url"} {
@@ -73,7 +73,7 @@ func TestBrowserUsesSharedUnicodeCursor(t *testing.T) {
 	m := NewBrowserModel(createTestUIDB(t))
 	m.width, m.height = 80, 23
 	view := ansi.Strip(m.View().Content)
-	if !strings.Contains(view, selectionCursor) || !strings.Contains(view, "◇") || strings.Contains(view, "[+]") {
+	if !strings.Contains(view, selectionCursor) || !strings.Contains(view, "◆") || strings.Contains(view, "[+]") {
 		t.Fatal("browser glyphs are inconsistent")
 	}
 }

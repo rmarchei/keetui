@@ -2,12 +2,14 @@ package ui
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/tobischo/gokeepasslib/v3"
 
 	"github.com/rmarchei/keetui/internal/config"
@@ -990,54 +992,9 @@ func (m BrowserModel) View() tea.View {
 	} else {
 		vis := m.visibleHeight()
 		end := min(m.offset+vis, len(m.items))
+		cols := m.columns()
 		for i := m.offset; i < end; i++ {
-			item := m.items[i]
-			cursor := "  "
-			if i == m.cursor {
-				cursor = selectionCursor
-			}
-
-			var line string
-			if item.isGroup {
-				icon := groupStyle.Render("◇   ")
-				if m.db.IsRecycleBin(item.group.UUID) {
-					icon = groupStyle.Render("♲   ")
-				}
-				name := item.name()
-				count := countEntries(item.group)
-				suffix := hiddenStyle.Render(fmt.Sprintf(" (%d)", count))
-				if i == m.cursor {
-					line = fmt.Sprintf("%s%s%s%s", cursor, icon, selectedItemStyle.Render(name), suffix)
-				} else {
-					line = fmt.Sprintf("%s%s%s%s", cursor, icon, groupStyle.Render(name), suffix)
-				}
-			} else {
-				icon := "    "
-				if item.entry.IsExpired() {
-					icon = warnStyle.Render("[!] ")
-				} else if item.entry.IsFavorite() {
-					icon = warnStyle.Render("[*] ")
-				}
-				name := sanitizeDisplay(item.name())
-				if name == "" {
-					name = "(untitled)"
-				}
-				if item.groupPath != "" {
-					suffix := hiddenStyle.Render(fmt.Sprintf("  (%s)", sanitizeDisplay(item.groupPath)))
-					if i == m.cursor {
-						line = fmt.Sprintf("%s%s%s%s", cursor, icon, selectedItemStyle.Render(name), suffix)
-					} else {
-						line = fmt.Sprintf("%s%s%s%s", cursor, icon, entryStyle.Render(name), suffix)
-					}
-				} else {
-					if i == m.cursor {
-						line = fmt.Sprintf("%s%s%s", cursor, icon, selectedItemStyle.Render(name))
-					} else {
-						line = fmt.Sprintf("%s%s%s", cursor, icon, entryStyle.Render(name))
-					}
-				}
-			}
-			b.WriteString(line)
+			b.WriteString(m.renderRow(i, cols))
 			b.WriteString("\n")
 		}
 
@@ -1051,30 +1008,139 @@ func (m BrowserModel) View() tea.View {
 	return tea.NewView(screen(b.String(), m.footerView(), m.width, m.height, 0))
 }
 
+// browserColumns are the widths of a list row's columns, shared by every row
+// so that they line up: title, then username (entry count for groups), then
+// the URL's host or, in search results, the group path.
+type browserColumns struct {
+	title, user, extra int
+}
+
+func (m BrowserModel) columns() browserColumns {
+	width, _ := viewSize(m.width, m.height)
+	avail := width - 4 // selection marker and icon
+	var title, user int
+	for _, item := range m.items {
+		title = max(title, lipgloss.Width(item.title()))
+		user = max(user, lipgloss.Width(item.secondary()))
+	}
+	var cols browserColumns
+	cols.title = min(title, max(12, avail*2/5))
+	if rest := avail - cols.title - 2; rest >= 8 {
+		cols.user = min(user, max(10, avail/4), rest)
+		if extra := rest - cols.user - 2; cols.user > 0 && extra >= 10 {
+			cols.extra = extra
+		}
+	}
+	return cols
+}
+
+// renderRow draws item i: selection marker, icon, then the columns.
+func (m BrowserModel) renderRow(i int, cols browserColumns) string {
+	item := m.items[i]
+	selected := i == m.cursor
+	cursor := "  "
+	if selected {
+		cursor = selectionCursor
+	}
+	icon, nameStyle := "  ", entryStyle
+	switch {
+	case item.isGroup && m.db.IsRecycleBin(item.group.UUID):
+		icon, nameStyle = groupIconStyle.Render("♲")+" ", groupStyle
+	case item.isGroup:
+		icon, nameStyle = groupIconStyle.Render("◆")+" ", groupStyle
+	case item.entry.IsExpired():
+		icon = errorMsgStyle.Padding(0).Render("!") + " "
+	case item.entry.IsFavorite():
+		icon = warnStyle.Padding(0).Render("★") + " "
+	}
+	if selected {
+		nameStyle = selectedItemStyle
+	}
+	row := cursor + icon + nameStyle.Render(padCell(item.title(), cols.title))
+	if cols.user > 0 {
+		style := secondaryStyle
+		if item.isGroup {
+			style = hiddenStyle
+		}
+		row += "  " + style.Render(padCell(item.secondary(), cols.user))
+	}
+	if cols.extra > 0 {
+		row += "  " + hiddenStyle.Render(padCell(item.extra(), cols.extra))
+	}
+	row = strings.TrimRight(row, " ")
+	if selected {
+		return selectedRow(row, m.width)
+	}
+	return row
+}
+
+// padCell fits s to exactly width cells.
+func padCell(s string, width int) string {
+	s = ansi.Truncate(s, width, "…")
+	return s + strings.Repeat(" ", max(0, width-lipgloss.Width(s)))
+}
+
+func (i listItem) title() string {
+	name := sanitizeDisplay(i.name())
+	if name == "" && !i.isGroup {
+		name = "(untitled)"
+	}
+	return name
+}
+
+// secondary is the username of an entry, or a group's entry count.
+func (i listItem) secondary() string {
+	if i.isGroup {
+		n := countEntries(i.group)
+		if n == 1 {
+			return "1 entry"
+		}
+		return fmt.Sprintf("%d entries", n)
+	}
+	return sanitizeDisplay(i.entry.UserName)
+}
+
+// extra is the group path of a search result, or the host of an entry's URL.
+func (i listItem) extra() string {
+	if i.isGroup {
+		return ""
+	}
+	if i.groupPath != "" {
+		return sanitizeDisplay(i.groupPath)
+	}
+	return sanitizeDisplay(urlHost(i.entry.URL))
+}
+
+// urlHost shortens a URL to its host; text that is not a URL stays as is.
+func urlHost(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return strings.TrimPrefix(u.Hostname(), "www.")
+	}
+	return raw
+}
+
 func (m BrowserModel) footerView() string {
-	var help string
-	if m.searching {
-		return renderHints(m.width, "↑/↓: navigate", "enter: open", "esc: cancel", "F1: help")
-	} else if m.readOnly {
-		help = fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: sort  %s: tag  %s: info  %s: audit  %s: quit",
-			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
-			m.keys.Search, m.keys.CycleSort, m.keys.FilterTag, m.keys.ShowStats, m.keys.ShowAudit, m.keys.Quit)
-	} else if m.inRecycleBin() {
-		help = fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: delete permanently  %s: restore  %s: empty bin  %s: save  %s: quit",
-			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
-			m.keys.Delete, m.keys.Restore, m.keys.EmptyRecycleBin,
-			m.keys.Save, m.keys.Quit)
-	} else {
-		help = fmt.Sprintf("  %s/%s: nav  enter/%s: open  %s/esc: back  %s: search  %s: sort  %s: tag  %s: new  %s: group  %s: rename  %s: dup  %s: fav  %s: cut  %s: paste  %s: del  %s: info  %s: audit  %s: config  %s: save  %s: password  %s: quit",
-			m.keys.NavDown, m.keys.NavUp, m.keys.Open, m.keys.Back,
-			m.keys.Search, m.keys.CycleSort, m.keys.FilterTag, m.keys.NewEntry, m.keys.NewGroup,
-			m.keys.RenameGroup, m.keys.Duplicate, m.keys.Favorite, m.keys.Cut, m.keys.Paste,
-			m.keys.Delete, m.keys.ShowStats, m.keys.ShowAudit,
-			m.keys.ShowSettings, m.keys.Save, m.keys.ChangePassword, m.keys.Quit)
+	k := m.keys
+	open := "enter/" + k.Open + ": open"
+	back := k.Back + "/esc: back"
+	nav := k.NavDown + "/" + k.NavUp + ": nav"
+	var hints []string
+	switch {
+	case m.searching:
+		hints = []string{"↑/↓: navigate", "enter: open", "esc: cancel", "F1: help"}
+	case m.readOnly:
+		hints = []string{"?: help", k.Search + ": search", open, back, k.ShowStats + ": info",
+			k.ShowAudit + ": audit", k.Quit + ": quit", nav, k.CycleSort + ": sort", k.FilterTag + ": tag"}
+	case m.inRecycleBin():
+		hints = []string{"?: help", open, k.Restore + ": restore", k.Delete + ": delete permanently",
+			k.EmptyRecycleBin + ": empty bin", back, k.Save + ": save", k.Quit + ": quit", nav}
+	default:
+		hints = []string{"?: help", k.Search + ": search", open, k.NewEntry + ": new", k.Delete + ": del",
+			k.Save + ": save", k.Quit + ": quit", back, nav, k.Favorite + ": fav", k.NewGroup + ": group",
+			k.ShowSettings + ": config", k.CycleSort + ": sort", k.FilterTag + ": tag", k.RenameGroup + ": rename",
+			k.Duplicate + ": dup", k.Cut + ": cut", k.Paste + ": paste", k.ShowStats + ": info",
+			k.ShowAudit + ": audit", k.ChangePassword + ": password"}
 	}
-	essentials := []string{"?: help", m.keys.Quit + ": quit"}
-	if !m.readOnly {
-		essentials = append(essentials, m.keys.Save+": save")
-	}
-	return renderHints(m.width, append(essentials, strings.Split(strings.TrimSpace(help), "  ")...)...)
+	return renderHints(m.width, hints...)
 }

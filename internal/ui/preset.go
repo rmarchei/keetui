@@ -8,6 +8,7 @@ import (
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
@@ -357,27 +358,27 @@ func (m PresetPickerModel) viewList() string {
 	b.WriteString("\n\n")
 
 	defaultPreset := m.cfg.Preset()
+	nameWidth := 0
+	for _, p := range m.presets {
+		nameWidth = max(nameWidth, lipgloss.Width(p.name))
+	}
 
 	for i, p := range m.presets {
-		cursor := "  "
+		cursor, style := "  ", valueStyle
 		if i == m.cursor {
-			cursor = selectedItemStyle.Render(selectionCursor)
+			cursor, style = selectionCursor, selectedItemStyle
 		}
 
 		marker := "  "
 		if p.name == defaultPreset {
-			marker = successStyle.Render("* ")
+			marker = successStyle.Padding(0).Render("*") + " "
 		}
 
-		name := p.name
+		row := cursor + marker + style.Render(padCell(p.name, nameWidth)) + "  " + hiddenStyle.Render(p.desc)
 		if i == m.cursor {
-			name = selectedItemStyle.Render(name)
-		} else {
-			name = valueStyle.Render(name)
+			row = selectedRow(row, width)
 		}
-
-		desc := hiddenStyle.Render(" — " + p.desc)
-		fmt.Fprintf(&b, "%s%s%s%s\n", cursor, marker, name, desc)
+		b.WriteString(row + "\n")
 	}
 
 	if m.err != nil {
@@ -420,13 +421,15 @@ func (m PresetPickerModel) viewCustom() string {
 			check = "[x]"
 		}
 
-		focus := "  "
+		focus, checkStyle := "  ", valueStyle
 		if m.customFocus == i+1 {
-			focus = selectedItemStyle.Render(selectionCursor)
-			check = selectedItemStyle.Render(check)
+			focus, checkStyle = selectionCursor, selectedItemStyle
 		}
-
-		fmt.Fprintf(&b, "  %s%s %s   %s\n", focus, check, tl.label, hiddenStyle.Render(tl.desc))
+		row := fmt.Sprintf("  %s%s %s   %s", focus, checkStyle.Render(check), tl.label, hiddenStyle.Render(tl.desc))
+		if m.customFocus == i+1 {
+			row = selectedRow(row, width)
+		}
+		b.WriteString(row + "\n")
 	}
 
 	if m.err != nil {
