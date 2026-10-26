@@ -307,19 +307,21 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 	addReserved(browser, "left", "back")
 	addReserved(browser, "?", "")
 	addReserved(browser, "f1", "")
-	addReserved(browser, "ctrl+c", "")
+	addReserved(browser, "ctrl+c", "quit")
 	addReserved(browser, "ctrl+z", "")
 	addReserved(browser, "ctrl+s", "save")
 	addReserved(browser, "ctrl+o", "show_settings")
 	addReserved(detail, "enter", "")
 	addReserved(detail, "esc", "back")
 	addReserved(detail, "left", "back")
-	addReserved(detail, "ctrl+c", "")
+	addReserved(detail, "ctrl+c", "quit")
 	addReserved(detail, "f1", "")
 	addReserved(detail, "?", "")
 	addReserved(detail, "up", "nav_up")
 	addReserved(detail, "down", "nav_down")
 	addReserved(detail, "ctrl+z", "")
+	addReserved(detail, "pgup", "")
+	addReserved(detail, "pgdown", "")
 
 	// History lists versions and shows one at a time.
 	history := map[string][]string{}
@@ -336,7 +338,7 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 	addReserved(history, "right", "open")
 	addReserved(history, "esc", "back")
 	addReserved(history, "left", "back")
-	addReserved(history, "ctrl+c", "")
+	addReserved(history, "ctrl+c", "quit")
 	addReserved(history, "ctrl+z", "")
 	addReserved(history, "f1", "")
 
@@ -350,6 +352,7 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 		addKey(context, kb.NavDown, "nav_down")
 		addKey(context, kb.Quit, "quit")
 		addKey(context, kb.Lock, "lock")
+		addReserved(context, "ctrl+c", "quit")
 	}
 	addKey(attachments, kb.Back, "back")
 	addKey(attachments, kb.Save, "save")

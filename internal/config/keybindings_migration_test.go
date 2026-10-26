@@ -16,6 +16,8 @@ func TestLoadRepairsOnlyConflictingOverrides(t *testing.T) {
 		{"unrelated override", KeyBindings{Restore: "d", Delete: "d", ShowStats: "Z"}, KeyBindings{ShowStats: "Z"}, true},
 		{"reserved key", KeyBindings{Edit: "j", Delete: "#"}, KeyBindings{Delete: "#"}, true},
 		{"valid swap", KeyBindings{Delete: "n", NewEntry: "d"}, KeyBindings{Delete: "n", NewEntry: "d"}, false},
+		{"Ctrl+C quit alias", KeyBindings{Quit: "ctrl+c", NewEntry: "q", CopyPassword: "q"}, KeyBindings{Quit: "ctrl+c", NewEntry: "q", CopyPassword: "q"}, false},
+		{"quit alias survives unrelated repair", KeyBindings{Quit: "ctrl+c", NewEntry: "q", Edit: "ctrl+z"}, KeyBindings{Quit: "ctrl+c", NewEntry: "q"}, true},
 		{"cascading reset", KeyBindings{Delete: "n", NewEntry: "f1", ShowStats: "Z"}, KeyBindings{ShowStats: "Z"}, true},
 		{"legacy implicit HIBP", KeyBindings{CopyUsername: "b", Delete: "#"}, KeyBindings{CopyUsername: "b", Delete: "#", HIBPCheck: "5"}, true},
 		{"legacy and reserved", KeyBindings{CopyUsername: "b", Edit: "j"}, KeyBindings{CopyUsername: "b", HIBPCheck: "5"}, true},
@@ -57,6 +59,43 @@ func TestLoadRepairsOnlyConflictingOverrides(t *testing.T) {
 				t.Fatal("loading rewrote the config file")
 			}
 		})
+	}
+}
+
+func TestCtrlCQuitAliasSurvivesConfigSaveRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	path := filepath.Join(dir, "keetui", "config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	want := KeyBindings{Quit: "ctrl+c", NewEntry: "q", CopyPassword: "q"}
+	cfg := Default()
+	cfg.KeyBindingsPtr = &want
+	initial, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, initial, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("loading the built-in quit alias required a repair: %v", err)
+	}
+	loaded.KeyBindingsPtr = loaded.Keys().Overrides()
+	if loaded.KeyBindingsPtr == nil || *loaded.KeyBindingsPtr != want {
+		t.Fatal("normalizing bindings discarded the quit alias or reclaimed q")
+	}
+	if err := loaded.Save(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.KeyBindingsPtr == nil || *reloaded.KeyBindingsPtr != want || reloaded.Keys().Validate() != nil {
+		t.Fatal("saving and reloading did not preserve the Ctrl+C quit alias and reused q bindings")
 	}
 }
 

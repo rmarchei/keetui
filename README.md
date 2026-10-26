@@ -398,8 +398,10 @@ These settings can be set per database: clipboard clear time, terminal
 clipboard, auto-lock, password length and character sets, default preset,
 confirm on quit, and backup on save. The theme, the strength display and
 keybindings stay global. In the editor an empty setting inherits the global
-one, shown beside it; `Space`, `Enter`, `←` and `→` cycle a choice, and `Backspace`
-returns it to inherit. `Ctrl+S` saves the global settings to the config file
+one, shown beside it. `Space`, `Enter`, `←` and `→` cycle a choice or toggle;
+`Backspace` or `Delete` resets that control to inherit. For numbers and text,
+erase the value to inherit; Backspace and Delete keep their normal editing
+behavior. `Ctrl+S` saves the global settings to the config file
 and the database's into the database, which then counts as modified: save the
 database to keep them. The global settings note the ones the database
 overrides. A read-only database shows its settings without changing them.
@@ -448,7 +450,7 @@ git config core.hooksPath .githooks
 - **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered
 - **History**: `H` in an entry lists its earlier versions; `Enter` shows one with what differs from the current entry (protected values masked until `p`), and `R` restores it after asking. The current state goes to the history first, the version brings back its fields, tags, attachments and expiry, and `Ctrl+Z` undoes the restore
 - **Privacy mode**: With `privacy_mode` on, passwords stay hidden while you edit: typing in a protected field does not reveal it briefly, and generated passwords stay masked in the editor and the generator's preview until you press `p` or `Ctrl+R`
-- **Lock now**: `Ctrl+L` (keybinding `lock`) locks the database at once and clears keetui's copy from the clipboard, on the browsing screens and over their help. With unsaved changes it first asks to save them: Yes saves, then locks (a failed save leaves the database open); No keeps it open. A save already running finishes first. Forms (the editor, group names, the master password, save as) keep their input: close them first
+- **Lock now**: `Ctrl+L` (keybinding `lock`) locks the database at once and clears keetui's copy from the clipboard, on the browsing screens and over their help. With unsaved changes it first asks to save them: Yes saves, then locks (a failed save leaves the database open); No keeps it open. A save already running finishes first. Forms (the editor, group names, the master password, save as), search, and attachment path inputs keep their input: close them first. Database Undo (`Ctrl+Z`) also waits until you leave text input
 - **Live security status**: The status bar shows `clip:15s` until clipboard clearing and `lock:4:59` until auto-lock. The lock countdown is highlighted in its final 30 seconds; normal input resets inactivity. Copying again restarts the clipboard timer, even for the same value. `off` means a protection is disabled, or that nothing can clear the copy (some tmux setups, see [Clipboard](#clipboard)), and `clip:wait` that a clear waits for keetui's tmux pane to be visible to the terminal that got the copy (`C:`/`L:` are compact labels on very narrow terminals). Clearing over OSC 52 cannot be verified; a local clipboard that has changed since the copy is left untouched.
 - **Password generator**: Generates random passwords via `crypto/rand` with configurable character sets (uppercase, lowercase, digits, symbols)
 - **Backup on save**: When enabled, the original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback (disabled by default; enable via `backup_on_save` setting)

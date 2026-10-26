@@ -71,7 +71,7 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.onConfirm
 		case "n", "N", "esc":
 			return m, func() tea.Msg { return CancelEditMsg{} }
-		case "left", "right", "tab", "h", "l":
+		case "left", "right", "tab", "shift+tab", "h", "l":
 			m.selected = !m.selected
 		case "enter":
 			if m.selected {

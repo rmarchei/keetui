@@ -8,9 +8,12 @@ func (m AppModel) helpContext() (int, *helpSection) {
 	context := func(index int, title string, bindings ...helpBinding) (int, *helpSection) {
 		return index, &helpSection{title, bindings}
 	}
+	browsing := func(index int, title string, bindings ...helpBinding) (int, *helpSection) {
+		return context(index, title, append(bindings, helpBinding{k.Lock, "Lock"})...)
+	}
 	navigate := helpBinding{k.NavDown + "/" + k.NavUp + "/↓/↑", "Navigate"}
 	back := helpBinding{"esc/" + k.Back + "/←", "Back"}
-	quit := helpBinding{k.Quit + "/ctrl+c", "Quit"}
+	quit := helpBinding{quitHelpKeys(k.Quit), "Quit"}
 	inputQuit := helpBinding{"ctrl+c", "Quit"}
 	cancel := helpBinding{"esc", "Cancel"}
 	fields := helpBinding{"tab/shift+tab", "Navigate fields"}
@@ -28,27 +31,35 @@ func (m AppModel) helpContext() (int, *helpSection) {
 		case m.detail.addingAttachment, m.detail.extractingAttachment:
 			return context(helpDetail, "File path", helpBinding{"enter", "Confirm path"}, cancel, inputQuit)
 		case m.detail.attachMode:
-			return context(helpDetail, "Attachments", navigate,
-				helpBinding{"enter/" + k.Save, "Save to disk"}, helpBinding{k.Delete, "Delete attachment"},
-				helpBinding{"+", "Add file"}, back, quit)
+			bindings := []helpBinding{navigate, {"enter/" + k.Save, "Save to disk"}}
+			if !m.readOnly {
+				bindings = append(bindings, helpBinding{k.Delete, "Delete attachment"}, helpBinding{"+", "Add file"})
+			}
+			return browsing(helpDetail, "Attachments", append(bindings, back, quit)...)
 		case m.detail.showQR:
-			return context(helpDetail, "QR", helpBinding{k.ShowQR, "Close QR"}, back, quit)
+			return browsing(helpDetail, "QR", helpBinding{k.ShowQR, "Close QR"}, back, quit)
 		}
 		return helpDetail, nil
 	case viewHistory:
 		if m.history.previewing {
-			return context(helpDetail, "History version", helpBinding{k.Restore, "Restore this version"},
-				helpBinding{k.TogglePassword, "Reveal / hide protected values"}, helpBinding{k.CopyPassword, "Copy its password"},
-				helpBinding{k.NavDown + "/" + k.NavUp + "/↓/↑", "Scroll"}, back, quit)
+			bindings := []helpBinding{{k.TogglePassword, "Reveal / hide protected values"}, {k.CopyPassword, "Copy its password"},
+				{k.NavDown + "/" + k.NavUp + "/↓/↑", "Scroll"}, back, quit}
+			if !m.readOnly {
+				bindings = append([]helpBinding{{k.Restore, "Restore this version"}}, bindings...)
+			}
+			return browsing(helpDetail, "History version", bindings...)
 		}
-		return context(helpDetail, "History", navigate, helpBinding{"enter/" + k.Open, "View version"},
-			helpBinding{k.Restore, "Restore selected version"}, helpBinding{k.TogglePassword, "Reveal / hide passwords"},
-			helpBinding{k.CopyPassword, "Copy selected password"}, back, quit)
+		bindings := []helpBinding{navigate, {"enter/" + k.Open, "View version"}}
+		if !m.readOnly {
+			bindings = append(bindings, helpBinding{k.Restore, "Restore selected version"})
+		}
+		return browsing(helpDetail, "History", append(bindings, helpBinding{k.TogglePassword, "Reveal / hide passwords"},
+			helpBinding{k.CopyPassword, "Copy selected password"}, back, quit)...)
 	case viewStats:
-		return context(helpBrowser, "Database info", navigate, helpBinding{"pgup/pgdown", "Scroll a page"},
+		return browsing(helpBrowser, "Database info", navigate, helpBinding{"pgup/pgdown", "Scroll a page"},
 			helpBinding{"home/end", "First / last page"}, back, quit)
 	case viewAudit:
-		return context(helpBrowser, "Audit", navigate, helpBinding{"enter/" + k.Open + "/→", "View selected entry"}, back, quit)
+		return browsing(helpBrowser, "Audit", navigate, helpBinding{"enter/" + k.Open + "/→", "View selected entry"}, back, quit)
 	case viewEditor:
 		return helpEditor, nil
 	case viewPresetPicker:
@@ -73,9 +84,26 @@ func (m AppModel) helpContext() (int, *helpSection) {
 			return context(helpSettings, "Choose setting", helpBinding{"↑/↓/k/j/tab", "Choose value"},
 				helpBinding{"enter/space", "Select value"}, cancel, inputQuit)
 		case m.settings.db.editing:
-			return context(helpSettings, "Database settings", fields, helpBinding{"enter", "Next numeric field / change"},
-				helpBinding{"space/←/→", "Cycle toggle / choice"}, helpBinding{"backspace/del", "Clear value to inherit"},
-				helpBinding{"ctrl+s", "Save settings"}, cancel, inputQuit)
+			bindings := []helpBinding{fields, {"↑/↓", "Navigate fields"}}
+			if databaseChoices(databaseSettingList[m.settings.db.focus]) == nil {
+				bindings = append(bindings, helpBinding{"enter", "Next setting"})
+				if !m.settings.db.readOnly {
+					bindings = append(bindings, helpBinding{"text editing", "Empty value inherits"})
+				}
+			} else if !m.settings.db.readOnly {
+				bindings = append(bindings, helpBinding{"space/enter/←/→", "Cycle toggle / choice"},
+					helpBinding{"backspace/del", "Clear choice to inherit"})
+			}
+			save := "Save settings"
+			if m.settings.db.readOnly {
+				save = "Save global settings"
+			}
+			bindings = append(bindings, helpBinding{"ctrl+s", save})
+			return context(helpSettings, "Database settings", append(bindings, cancel, inputQuit)...)
+		}
+		if m.db == nil {
+			section := settingsHelp("Back to unlock")
+			return helpSettings, &section
 		}
 		return helpSettings, nil
 	case viewPathInput:
@@ -90,7 +118,7 @@ func (m AppModel) helpContext() (int, *helpSection) {
 		return context(helpSettings, "Group name", helpBinding{"enter", "Confirm name"}, cancel, inputQuit)
 	case viewConfirm:
 		return context(helpBrowser, "Confirm", helpBinding{"y/n", "Yes / no"}, helpBinding{"esc", "No"},
-			helpBinding{"tab/←/→", "Switch button"}, helpBinding{"enter", "Choose selected button"}, inputQuit)
+			helpBinding{"tab/shift+tab/←/→", "Switch button"}, helpBinding{"enter", "Choose selected button"}, inputQuit)
 	}
 	return helpBrowser, nil
 }

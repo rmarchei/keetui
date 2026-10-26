@@ -34,7 +34,7 @@ func TestF1ShowsActiveScreenControls(t *testing.T) {
 		{"Search", viewBrowser, func(m *AppModel) { m.browser.searching = true }, "Toggle literal/fuzzy", "New entry"},
 		{"Choose setting", viewSettings, func(m *AppModel) { m.settings.picking = true; m.settings.focused = settingTheme }, "Select value", "ctrl+s"},
 		{"Keybindings", viewSettings, func(m *AppModel) { m.settings.editingKeys = true }, "Record shortcut", "Cycle"},
-		{"Database settings", viewSettings, func(m *AppModel) { m.settings.setDatabase(config.Overrides{}, false); m.settings.db.editing = true }, "Clear value to inherit", "Record shortcut"},
+		{"Database settings", viewSettings, func(m *AppModel) { m.settings.setDatabase(config.Overrides{}, false); m.settings.db.editing = true }, "Empty value inherits", "Record shortcut"},
 		{"Confirm", viewConfirm, nil, "Choose selected button", "New entry"},
 	} {
 		t.Run(tc.title, func(t *testing.T) {

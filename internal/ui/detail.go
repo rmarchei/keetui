@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -305,6 +306,12 @@ func (m *DetailModel) syncViewportSize() {
 	if !m.ready {
 		m.viewport = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpHeight))
 		m.viewport.FillHeight = true
+		// Field navigation is handled above the viewport. Its default pager
+		// aliases would otherwise keep old j/k bindings active after a remap.
+		m.viewport.KeyMap = viewport.KeyMap{
+			PageUp:   key.NewBinding(key.WithKeys("pgup")),
+			PageDown: key.NewBinding(key.WithKeys("pgdown")),
+		}
 		m.viewport.SetContent(m.buildContent())
 		m.ready = true
 	} else {

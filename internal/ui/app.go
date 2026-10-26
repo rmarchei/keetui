@@ -391,7 +391,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Handle undo (ctrl+z) in non-text-input views
-	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "ctrl+z" {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "ctrl+z" && !m.browsingInputActive() {
 		if m.readOnly {
 			return m, statusCmd("Read-only mode", true)
 		}
@@ -902,6 +902,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ShowHistoryMsg:
 		history := m.db.EntryHistory(msg.EntryUUID)
 		m.history = NewHistoryModel(msg.EntryTitle, history, m.cfg.Keys())
+		m.history.readOnly = m.readOnly
 		m.history.entryUUID = msg.EntryUUID
 		m.history.current, _ = m.db.GetEntry(msg.EntryUUID)
 		for _, a := range m.db.EntryAttachments(msg.EntryUUID) {
@@ -1205,9 +1206,24 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.updateActive(msg)
 }
 
+// browsingInputActive includes text-entry submodes of browsing screens,
+// including the screen underneath Help. Their printable shortcuts and
+// editing keys belong to the input rather than database actions.
+func (m AppModel) browsingInputActive() bool {
+	state := m.state
+	if state == viewHelp {
+		state = m.helpReturnState
+	}
+	return state == viewBrowser && m.browser.searching ||
+		state == viewDetail && (m.detail.addingAttachment || m.detail.extractingAttachment)
+}
+
 // lockable reports whether a manual lock may close the screen shown: not a
 // form, whose unsaved input it would throw away, nor a pending question.
 func (m AppModel) lockable() bool {
+	if m.browsingInputActive() {
+		return false
+	}
 	state := m.state
 	if state == viewHelp {
 		state = m.helpReturnState
@@ -1291,6 +1307,7 @@ func (m AppModel) openHelp() (tea.Model, tea.Cmd) {
 	}
 	m.helpReturnState = m.state
 	m.help = NewHelpModel(m.cfg.Keys(), m.width, m.viewHeight())
+	m.help.readOnly = m.readOnly
 	m.help.section, m.help.context = m.helpContext()
 	m.help.contextIndex = m.help.section
 	if m.statusText != "" {

@@ -39,6 +39,7 @@ type HistoryModel struct {
 	width      int
 	height     int
 	keys       config.KeyBindings
+	readOnly   bool
 
 	entryUUID          gokeepasslib.UUID
 	current            keepass.Entry // what a version is compared with
@@ -288,10 +289,16 @@ func (m HistoryModel) View() tea.View {
 }
 
 func (m HistoryModel) footer() string {
-	if m.previewing {
-		return renderHints(m.width, "esc: back", m.keys.Restore+": restore", "F1: help", m.keys.TogglePassword+": show/hide",
-			m.keys.CopyPassword+": copy password", m.keys.NavDown+"/"+m.keys.NavUp+": scroll", m.keys.Quit+": quit")
+	var restore []string
+	if !m.readOnly {
+		restore = []string{m.keys.Restore + ": restore"}
 	}
-	return renderHints(m.width, "esc: back", "enter: view", m.keys.Restore+": restore", "F1: help", m.keys.NavDown+"/"+m.keys.NavUp+": navigate",
-		m.keys.TogglePassword+": toggle passwords", m.keys.CopyPassword+": copy password", m.keys.Quit+": quit")
+	if m.previewing {
+		hints := append([]string{"esc: back", "F1: help"}, restore...)
+		return renderHints(m.width, append(hints, m.keys.TogglePassword+": show/hide",
+			m.keys.CopyPassword+": copy password", m.keys.NavDown+"/"+m.keys.NavUp+": scroll", m.keys.Quit+": quit")...)
+	}
+	hints := append([]string{"esc: back", "enter: view", "F1: help"}, restore...)
+	return renderHints(m.width, append(hints, m.keys.NavDown+"/"+m.keys.NavUp+": navigate",
+		m.keys.TogglePassword+": toggle passwords", m.keys.CopyPassword+": copy password", m.keys.Quit+": quit")...)
 }

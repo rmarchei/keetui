@@ -42,6 +42,7 @@ type HelpModel struct {
 	section       int
 	context       *helpSection
 	contextIndex  int
+	readOnly      bool
 }
 
 func NewHelpModel(keys config.KeyBindings, width, height int) HelpModel {
@@ -60,34 +61,48 @@ func NewHelpModel(keys config.KeyBindings, width, height int) HelpModel {
 
 func (m HelpModel) sections() []helpSection {
 	k := m.keys
+	writable := func(bindings []helpBinding, actions ...helpBinding) []helpBinding {
+		if m.readOnly {
+			return bindings
+		}
+		return append(bindings, actions...)
+	}
+	browser := []helpBinding{
+		{k.NavDown + "/" + k.NavUp, "Navigate"}, {"enter/" + k.Open, "Open entry/group"},
+		{"esc/" + k.Back, "Back"}, {k.Search, "Search (literal)"},
+		{"tab (search)", "Toggle literal/fuzzy"},
+	}
+	browser = writable(browser, helpBinding{k.NewEntry, "New entry"}, helpBinding{k.NewGroup, "New group"},
+		helpBinding{k.RenameGroup, "Rename group"}, helpBinding{k.Delete, "Delete"},
+		helpBinding{k.Duplicate, "Duplicate"}, helpBinding{k.Favorite, "Favorite"})
+	browser = append(browser, helpBinding{k.CycleSort, "Sort"}, helpBinding{k.FilterTag, "Filter by tag"})
+	browser = writable(browser, helpBinding{k.Cut, "Move: cut entry/group"}, helpBinding{k.Paste, "Move: paste into selected group"},
+		helpBinding{k.PasteHere, "Move: paste here"}, helpBinding{k.Save + "/ctrl+s", "Save / save as"})
+	browser = append(browser, helpBinding{k.ShowStats, "Database info"}, helpBinding{k.ShowAudit, "Password audit"},
+		helpBinding{k.ShowSettings + "/ctrl+o", "Settings"})
+	browser = writable(browser, helpBinding{k.ChangePassword, "Master password"}, helpBinding{"ctrl+z", "Undo"})
+	browser = append(browser, helpBinding{k.Lock, "Lock (also in entries, stats, audit)"},
+		helpBinding{"?/F1", "Help"}, helpBinding{quitHelpKeys(k.Quit), "Quit"})
+
+	entry := []helpBinding{
+		{k.NavDown + "/" + k.NavUp, "Select field"}, {"enter", "Copy selected field"},
+		{"pgup/pgdown", "Scroll a page"},
+		{k.CopyUsername, "Copy username"}, {k.CopyPassword, "Copy password"},
+		{k.CopyURL, "Copy URL"}, {k.CopyTOTP, "Copy TOTP"},
+		{k.HIBPCheck, "Check breaches (HIBP)"}, {k.TogglePassword, "Reveal / hide"}, {k.ShowQR, "Show QR"},
+	}
+	entry = writable(entry, helpBinding{k.Edit, "Edit entry"})
+	entry = append(entry, helpBinding{k.OpenURL, "Open URL"})
+	entry = writable(entry, helpBinding{k.Attachments, "Attachments"})
+	entry = append(entry, helpBinding{k.ShowHistory, "Password history"}, helpBinding{k.Lock, "Lock"},
+		helpBinding{"esc/" + k.Back, "Back"}, helpBinding{"?/F1", "Help"}, helpBinding{quitHelpKeys(k.Quit), "Quit"})
+
+	bin := writable(nil, helpBinding{k.Delete, "Delete permanently"}, helpBinding{k.Restore, "Restore to root"},
+		helpBinding{k.EmptyRecycleBin, "Empty bin"}, helpBinding{k.Save, "Save database"})
+	bin = append(bin, helpBinding{k.NavDown + "/" + k.NavUp, "Navigate"}, helpBinding{"enter/" + k.Open, "Open entry/group"},
+		helpBinding{"esc/" + k.Back, "Back"}, helpBinding{k.Lock, "Lock"}, helpBinding{quitHelpKeys(k.Quit), "Quit"})
 	result := []helpSection{
-		{"Browser", []helpBinding{
-			{k.NavDown + "/" + k.NavUp, "Navigate"}, {"enter/" + k.Open, "Open entry/group"},
-			{"esc/" + k.Back, "Back"}, {k.Search, "Search (literal)"},
-			{"tab (search)", "Toggle literal/fuzzy"},
-			{k.NewEntry, "New entry"}, {k.NewGroup, "New group"},
-			{k.RenameGroup, "Rename group"}, {k.Delete, "Delete"},
-			{k.Duplicate, "Duplicate"}, {k.Favorite, "Favorite"},
-			{k.CycleSort, "Sort"}, {k.FilterTag, "Filter by tag"},
-			{k.Cut, "Move: cut entry/group"}, {k.Paste, "Move: paste into selected group"},
-			{k.PasteHere, "Move: paste here"},
-			{k.Save + "/ctrl+s", "Save / save as"}, {k.ShowStats, "Database info"},
-			{k.ShowAudit, "Password audit"}, {k.ShowSettings + "/ctrl+o", "Settings"},
-			{k.ChangePassword, "Master password"}, {"ctrl+z", "Undo"},
-			{k.Lock, "Lock (also in entries, stats, audit)"},
-			{"?/F1", "Help"}, {k.Quit + "/ctrl+c", "Quit"},
-		}},
-		{"Entry", []helpBinding{
-			{k.NavDown + "/" + k.NavUp, "Select field"}, {"enter", "Copy selected field"},
-			{k.CopyUsername, "Copy username"}, {k.CopyPassword, "Copy password"},
-			{k.CopyURL, "Copy URL"}, {k.CopyTOTP, "Copy TOTP"},
-			{k.HIBPCheck, "Check breaches (HIBP)"},
-			{k.TogglePassword, "Reveal / hide"}, {k.ShowQR, "Show QR"},
-			{k.Edit, "Edit entry"}, {k.OpenURL, "Open URL"},
-			{k.Attachments, "Attachments"}, {k.ShowHistory, "Password history"},
-			{k.Lock, "Lock"},
-			{"esc/" + k.Back, "Back"}, {"?/F1", "Help"}, {k.Quit + "/ctrl+c", "Quit"},
-		}},
+		{"Browser", browser}, {"Entry", entry},
 		{"Editor", []helpBinding{
 			{"tab/shift+tab", "Navigate fields"}, {"ctrl+s", "Save entry"},
 			{"ctrl+r", "Reveal / hide"}, {"ctrl+g", "Generate password"},
@@ -95,16 +110,8 @@ func (m HelpModel) sections() []helpSection {
 			{"ctrl+d", "Delete custom field"}, {"esc", "Cancel"},
 			{"F1", "Help (keeps edits)"}, {"ctrl+c", "Quit"},
 		}},
-		{"Settings", []helpBinding{
-			{"tab/shift+tab", "Navigate fields"}, {"space", "Toggle / open picker"},
-			{"ctrl+s", "Save settings"}, {"enter", "Next / change / open"},
-			{"esc", "Back to browser"}, {"↑/↓", "Navigate fields"},
-			{"ctrl+c", "Quit"}, {"F1", "Help / full status"},
-		}},
-		{"Bin", []helpBinding{
-			{k.Delete, "Delete permanently"}, {k.Restore, "Restore to root"},
-			{k.EmptyRecycleBin, "Empty bin"}, {"esc/" + k.Back, "Back"}, {k.Save, "Save database"},
-		}},
+		settingsHelp("Back to browser"),
+		{"Bin", bin},
 	}
 	// Replace the matching overview tab with the current screen's controls.
 	// This keeps contextual help visible without adding a long row of tabs.
@@ -115,6 +122,21 @@ func (m HelpModel) sections() []helpSection {
 		result = append(result, helpSection{title: "Message"})
 	}
 	return result
+}
+
+func settingsHelp(back string) helpSection {
+	return helpSection{"Settings", []helpBinding{
+		{"tab/shift+tab", "Navigate fields"}, {"space", "Toggle / open picker"},
+		{"ctrl+s", "Save settings"}, {"enter", "Next / change / open"},
+		{"esc", back}, {"↑/↓", "Navigate fields"}, {"ctrl+c", "Quit"}, {"F1", "Help / full status"},
+	}}
+}
+
+func quitHelpKeys(configured string) string {
+	if configured == "ctrl+c" {
+		return configured
+	}
+	return configured + "/ctrl+c"
 }
 
 func (m HelpModel) header() string {

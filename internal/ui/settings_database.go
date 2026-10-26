@@ -423,11 +423,20 @@ func (m SettingsModel) databaseFooter() string {
 		}
 		fmt.Fprintf(&b, "%s\n", wrapContent(style.Render(sanitizeDisplay(m.status)), width))
 	}
-	action := "enter: next"
-	if databaseChoices(databaseSettingList[m.db.focus]) != nil {
-		action = "space/enter: change"
+	choice := databaseChoices(databaseSettingList[m.db.focus]) != nil
+	if m.db.readOnly {
+		hints := []string{"esc: back", "F1: help", "ctrl+s: save global settings", "tab/shift+tab: navigate"}
+		if !choice {
+			hints = append(hints, "enter: next")
+		}
+		b.WriteString(renderHints(width, hints...))
+	} else {
+		action, inherit := "enter: next", "Empty value inherits"
+		if choice {
+			action, inherit = "space/enter: change", "backspace: inherit"
+		}
+		b.WriteString(renderHints(width, "ctrl+s: save", "esc: back", "F1: help", action, inherit, "tab/shift+tab: navigate"))
 	}
-	b.WriteString(renderHints(width, "ctrl+s: save", "esc: back", "F1: help", action, "backspace: inherit", "tab/shift+tab: navigate"))
 	return m.withSaveError(b.String())
 }
 

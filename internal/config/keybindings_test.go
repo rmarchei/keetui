@@ -80,6 +80,8 @@ func TestValidateSharedScreenBindings(t *testing.T) {
 		{"help tabs shadow quit", KeyBindings{Quit: "tab"}, false},
 		{"help paging shadows navigation", KeyBindings{NavUp: "pgup"}, false},
 		{"stats paging shadows Back", KeyBindings{Back: "home"}, false},
+		{"detail paging shadows password copy", KeyBindings{CopyPassword: "pgup"}, false},
+		{"detail paging shadows password reveal", KeyBindings{TogglePassword: "pgdown"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.overrides.Merge(DefaultKeyBindings()).Validate()
@@ -87,6 +89,34 @@ func TestValidateSharedScreenBindings(t *testing.T) {
 				t.Fatalf("Validate() = %v, want valid=%v", err, tc.valid)
 			}
 		})
+	}
+}
+
+func TestCtrlCQuitAliasFreesQForOtherActions(t *testing.T) {
+	kb := (KeyBindings{Quit: "ctrl+c", NewEntry: "q", CopyPassword: "q"}).Merge(DefaultKeyBindings())
+	if err := kb.Validate(); err != nil {
+		t.Fatalf("Ctrl+C already quits, so its alias should free q: %v", err)
+	}
+}
+
+func TestCtrlCRemainsReservedForQuit(t *testing.T) {
+	for _, quit := range []string{"q", "ctrl+c"} {
+		for _, binding := range DefaultKeyBindings().Bindings() {
+			if binding.ID == "quit" {
+				continue
+			}
+			t.Run(quit+"/"+binding.ID, func(t *testing.T) {
+				kb := DefaultKeyBindings()
+				kb.Quit = quit
+				kb, err := kb.WithBinding(binding.ID, "ctrl+c")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := kb.Validate(); err == nil {
+					t.Fatalf("Ctrl+C was accepted for %s while Quit=%s", binding.ID, quit)
+				}
+			})
+		}
 	}
 }
 
