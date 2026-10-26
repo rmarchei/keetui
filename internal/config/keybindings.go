@@ -315,6 +315,25 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 	addReserved(detail, "down", "nav_down")
 	addReserved(detail, "ctrl+z", "")
 
+	// History lists versions and shows one at a time.
+	history := map[string][]string{}
+	for _, b := range []struct{ key, name string }{
+		{kb.NavUp, "nav_up"}, {kb.NavDown, "nav_down"}, {kb.Open, "open"}, {kb.Back, "back"},
+		{kb.TogglePassword, "toggle_password"}, {kb.CopyPassword, "copy_password"}, {kb.Restore, "restore"},
+		{kb.Quit, "quit"}, {kb.Lock, "lock"},
+	} {
+		addKey(history, b.key, b.name)
+	}
+	addReserved(history, "up", "nav_up")
+	addReserved(history, "down", "nav_down")
+	addReserved(history, "enter", "open")
+	addReserved(history, "right", "open")
+	addReserved(history, "esc", "back")
+	addReserved(history, "left", "back")
+	addReserved(history, "ctrl+c", "")
+	addReserved(history, "ctrl+z", "")
+	addReserved(history, "f1", "")
+
 	// These screens share navigation but have additional fixed controls.
 	// History, QR and audit use subsets of the contexts checked above.
 	attachments := map[string][]string{}
@@ -340,7 +359,7 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 
 	var conflicts []bindingConflict
 	for context, bindings := range map[string]map[string][]string{
-		"browser": browser, "detail": detail, "attachments": attachments, "stats": stats, "help": help,
+		"browser": browser, "detail": detail, "history": history, "attachments": attachments, "stats": stats, "help": help,
 	} {
 		for key, names := range bindings {
 			if len(names) > 1 {

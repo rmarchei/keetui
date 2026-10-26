@@ -187,7 +187,7 @@ Use `PageUp` / `PageDown` to read long unlock errors, and `j` / `k` or
 | `e` | Edit entry |
 | `o` | Open URL in system browser |
 | `a` | Attachments (add/extract/delete) |
-| `H` | Password history |
+| `H` | History: earlier versions of the entry (`Enter` views one, `R` restores it) |
 | `1` | Copy username to clipboard |
 | `2` | Copy password to clipboard |
 | `3` | Copy URL to clipboard |
@@ -445,6 +445,7 @@ git config core.hooksPath .githooks
 
 - **Clipboard auto-clear**: Copied passwords and TOTP codes are automatically cleared from the clipboard (configurable, default 15s), and marked as sensitive where the platform supports it (see [Clipboard](#clipboard))
 - **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered
+- **History**: `H` in an entry lists its earlier versions; `Enter` shows one with what differs from the current entry (protected values masked until `p`), and `R` restores it after asking. The current state goes to the history first, the version brings back its fields, tags, attachments and expiry, and `Ctrl+Z` undoes the restore
 - **Privacy mode**: With `privacy_mode` on, passwords stay hidden while you edit: typing in a protected field does not reveal it briefly, and generated passwords stay masked in the editor and the generator's preview until you press `p` or `Ctrl+R`
 - **Lock now**: `Ctrl+L` (keybinding `lock`) locks the database at once and clears keetui's copy from the clipboard, on the browsing screens and over their help. With unsaved changes it first asks to save them: Yes saves, then locks (a failed save leaves the database open); No keeps it open. A save already running finishes first. Forms (the editor, group names, the master password, save as) keep their input: close them first
 - **Live security status**: The status bar shows `clip:15s` until clipboard clearing and `lock:4:59` until auto-lock. The lock countdown is highlighted in its final 30 seconds; normal input resets inactivity. Copying again restarts the clipboard timer, even for the same value. `off` means a protection is disabled, or that nothing can clear the copy (some tmux setups, see [Clipboard](#clipboard)), and `clip:wait` that a clear waits for keetui's tmux pane to be visible to the terminal that got the copy (`C:`/`L:` are compact labels on very narrow terminals). Clearing over OSC 52 cannot be verified; a local clipboard that has changed since the copy is left untouched.

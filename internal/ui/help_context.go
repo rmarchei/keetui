@@ -36,7 +36,13 @@ func (m AppModel) helpContext() (int, *helpSection) {
 		}
 		return helpDetail, nil
 	case viewHistory:
-		return context(helpDetail, "History", navigate, helpBinding{k.TogglePassword, "Reveal / hide passwords"},
+		if m.history.previewing {
+			return context(helpDetail, "History version", helpBinding{k.Restore, "Restore this version"},
+				helpBinding{k.TogglePassword, "Reveal / hide protected values"}, helpBinding{k.CopyPassword, "Copy its password"},
+				helpBinding{k.NavDown + "/" + k.NavUp + "/↓/↑", "Scroll"}, back, quit)
+		}
+		return context(helpDetail, "History", navigate, helpBinding{"enter/" + k.Open, "View version"},
+			helpBinding{k.Restore, "Restore selected version"}, helpBinding{k.TogglePassword, "Reveal / hide passwords"},
 			helpBinding{k.CopyPassword, "Copy selected password"}, back, quit)
 	case viewStats:
 		return context(helpBrowser, "Database info", navigate, helpBinding{"pgup/pgdown", "Scroll a page"},

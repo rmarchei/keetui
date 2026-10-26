@@ -78,6 +78,23 @@ func (d *DB) InsertEntrySnapshot(groupUUID gokeepasslib.UUID, s *EntrySnapshot) 
 	return nil
 }
 
+// ReplaceEntrySnapshot puts a copy of the snapshot's entry back in place of
+// the entry with its UUID, wherever that is now, attachments and history
+// included: the undo of a change that replaced the whole entry.
+func (d *DB) ReplaceEntrySnapshot(s *EntrySnapshot) error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	entry := findEntry(&d.Database.Content.Root.Groups[0], s.entry.UUID)
+	if entry == nil {
+		return fmt.Errorf("entry not found")
+	}
+	restored := cloneEntry(s.entry)
+	rebindEntryBinaries(&restored, d.repoolBinaries(s.binaries))
+	*entry = restored
+	return nil
+}
+
 // InsertGroupSnapshot inserts a copy of the snapshot's group (preserving its
 // UUID and subtree) into the given parent group, putting its attachments
 // back in the pool.

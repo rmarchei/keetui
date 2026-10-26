@@ -900,10 +900,48 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ShowHistoryMsg:
 		history := m.db.EntryHistory(msg.EntryUUID)
 		m.history = NewHistoryModel(msg.EntryTitle, history, m.cfg.Keys())
+		m.history.entryUUID = msg.EntryUUID
+		m.history.current, _ = m.db.GetEntry(msg.EntryUUID)
+		for _, a := range m.db.EntryAttachments(msg.EntryUUID) {
+			m.history.currentAttachments = append(m.history.currentAttachments, a.Name)
+		}
 		m.history.width = m.width
 		m.history.height = m.viewHeight()
 		m.state = viewHistory
 		return m, nil
+
+	case RestoreHistoryMsg:
+		if m.readOnly {
+			return m, statusCmd("Read-only mode", true)
+		}
+		m.confirm = NewConfirmModel(viewHistory, fmt.Sprintf("Restore the version of %s? The current one stays in the history.",
+			versionLabel(msg.When)), func() tea.Msg { return confirmRestoreHistoryMsg(msg) })
+		m.state = viewConfirm
+		return m, nil
+
+	case confirmRestoreHistoryMsg:
+		// A self-contained copy, attachments included: undo puts it back
+		// whole, however many saves happen in between.
+		snapshot, err := m.db.SnapshotEntry(msg.EntryUUID)
+		if err == nil {
+			err = m.db.RestoreHistory(msg.EntryUUID, msg.Index)
+		}
+		var entry keepass.Entry
+		if err == nil {
+			entry, err = m.db.GetEntry(msg.EntryUUID)
+		}
+		if err != nil {
+			m.state = viewHistory
+			return m, statusCmd(fmt.Sprintf("Restore failed: %s", err), true)
+		}
+		m.undoStack.push(undoAction{
+			actionType:    undoRestoreEntry,
+			description:   fmt.Sprintf("restore of %q", entry.Title),
+			entrySnapshot: snapshot,
+		})
+		m.dirty = true
+		updated, cmd := m.update(ViewEntryMsg{Entry: entry})
+		return updated, tea.Batch(cmd, statusCmd(fmt.Sprintf("Restored the version of %s (ctrl+z undoes)", versionLabel(msg.When)), false))
 
 	case BackToDetailMsg:
 		m.state = viewDetail
@@ -1230,7 +1268,8 @@ func needsDatabase(msg tea.Msg) bool {
 		ShowAuditMsg, ShowStatsMsg, ShowPresetPickerMsg, GeneratedPasswordMsg, CancelPresetMsg, SetDefaultPresetMsg,
 		ShowHistoryMsg, BackToDetailMsg, hibpResultMsg, ExtractAttachmentMsg, confirmExtractAttachmentMsg,
 		DeleteAttachmentMsg, confirmDeleteAttachmentMsg, AddAttachmentMsg, SaveEntryMsg, SaveGroupMsg,
-		SaveAsStartMsg, SaveAsMsg, confirmSaveAsMsg, CopyToClipboardMsg, OpenURLMsg, confirmLockMsg:
+		SaveAsStartMsg, SaveAsMsg, confirmSaveAsMsg, CopyToClipboardMsg, OpenURLMsg, confirmLockMsg,
+		RestoreHistoryMsg, confirmRestoreHistoryMsg:
 		return true
 	}
 	return false
@@ -1481,6 +1520,8 @@ func (m AppModel) handleUndo() (tea.Model, tea.Cmd) {
 		err = m.db.InsertGroupSnapshot(action.parentUUID, action.groupSnapshot)
 	case undoEditEntry:
 		err = m.db.UpdateEntry(action.entryUUID, *action.prevEntry)
+	case undoRestoreEntry:
+		err = m.db.ReplaceEntrySnapshot(action.entrySnapshot)
 	case undoRenameGroup:
 		err = m.db.RenameGroup(action.groupUUID, action.oldName)
 	case undoMoveEntry:
@@ -1783,6 +1824,9 @@ type confirmEmptyRecycleBinMsg struct{}
 
 // confirmLockMsg saves the database, then locks it.
 type confirmLockMsg struct{}
+
+// confirmRestoreHistoryMsg restores the version a RestoreHistoryMsg named.
+type confirmRestoreHistoryMsg RestoreHistoryMsg
 
 // RenameGroupStartMsg is sent to initiate group renaming.
 type RenameGroupStartMsg struct {

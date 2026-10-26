@@ -20,6 +20,7 @@ const (
 	undoAddEntry
 	undoAddGroup
 	undoToggleFavorite
+	undoRestoreEntry
 )
 
 // undoAction captures a reversible operation.
@@ -29,6 +30,7 @@ type undoAction struct {
 
 	// For delete entry: a self-contained copy of the entry and its parent
 	// group UUID. Raw copies would keep binary pool IDs, which saving renumbers.
+	// For restore entry: the copy taken before the restore, put back in place.
 	entrySnapshot *keepass.EntrySnapshot
 	parentUUID    gokeepasslib.UUID
 

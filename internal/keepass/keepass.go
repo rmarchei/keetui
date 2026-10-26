@@ -209,6 +209,8 @@ type HistoryEntry struct {
 	ModificationTime time.Time
 	Title            string
 	UserName         string
+	Entry            Entry    // the whole version
+	Attachments      []string // the names of the version's attachments
 }
 
 // Group is a simplified view of a KeePass group.
@@ -366,33 +368,39 @@ func convertGroup(g gokeepasslib.Group) Group {
 		group.Groups = append(group.Groups, convertGroup(sg))
 	}
 	for _, e := range g.Entries {
-		entry := Entry{
-			UUID:     e.UUID,
-			Title:    e.GetContent("Title"),
-			UserName: e.GetContent("UserName"),
-			Password: e.GetContent("Password"),
-			URL:      e.GetContent("URL"),
-			Notes:    e.GetContent("Notes"),
-			TOTP:     extractTOTP(e),
-		}
-		if e.Times.CreationTime != nil {
-			entry.CreationTime = e.Times.CreationTime.Time
-		}
-		if e.Times.LastModificationTime != nil {
-			entry.ModificationTime = e.Times.LastModificationTime.Time
-		}
-		entry.Tags = e.Tags
-		entry.Expires = e.Times.Expires.Bool
-		if e.Times.ExpiryTime != nil {
-			entry.ExpiryTime = e.Times.ExpiryTime.Time
-		}
+		entry := simplifyEntry(e)
 		for _, h := range e.Histories {
 			entry.HistoryCount += len(h.Entries)
 		}
-		entry.CustomFields = extractCustomFields(e)
 		group.Entries = append(group.Entries, entry)
 	}
 	return group
+}
+
+// simplifyEntry is the simplified view of an entry, without its history.
+func simplifyEntry(e gokeepasslib.Entry) Entry {
+	entry := Entry{
+		UUID:     e.UUID,
+		Title:    e.GetContent("Title"),
+		UserName: e.GetContent("UserName"),
+		Password: e.GetContent("Password"),
+		URL:      e.GetContent("URL"),
+		Notes:    e.GetContent("Notes"),
+		TOTP:     extractTOTP(e),
+		Tags:     e.Tags,
+		Expires:  e.Times.Expires.Bool,
+	}
+	if e.Times.CreationTime != nil {
+		entry.CreationTime = e.Times.CreationTime.Time
+	}
+	if e.Times.LastModificationTime != nil {
+		entry.ModificationTime = e.Times.LastModificationTime.Time
+	}
+	if e.Times.ExpiryTime != nil {
+		entry.ExpiryTime = e.Times.ExpiryTime.Time
+	}
+	entry.CustomFields = extractCustomFields(e)
+	return entry
 }
 
 // Save writes the database back to its file.
@@ -698,26 +706,84 @@ func (d *DB) EntryHistory(entryUUID gokeepasslib.UUID) []HistoryEntry {
 	if entry == nil {
 		return nil
 	}
-	var history []HistoryEntry
-	for _, h := range entry.Histories {
-		for _, he := range h.Entries {
-			var modTime time.Time
-			if he.Times.LastModificationTime != nil {
-				modTime = he.Times.LastModificationTime.Time
-			}
-			history = append(history, HistoryEntry{
-				Password:         he.GetContent("Password"),
-				ModificationTime: modTime,
-				Title:            he.GetContent("Title"),
-				UserName:         he.GetContent("UserName"),
-			})
+	versions := historyVersions(entry)
+	history := make([]HistoryEntry, 0, len(versions))
+	// Most recent first: versions are kept oldest first.
+	for i := len(versions) - 1; i >= 0; i-- {
+		version := simplifyEntry(*versions[i])
+		h := HistoryEntry{
+			Password:         version.Password,
+			ModificationTime: version.ModificationTime,
+			Title:            version.Title,
+			UserName:         version.UserName,
+			Entry:            version,
 		}
-	}
-	// Sort most recent first
-	for i, j := 0, len(history)-1; i < j; i, j = i+1, j-1 {
-		history[i], history[j] = history[j], history[i]
+		for _, ref := range versions[i].Binaries {
+			h.Attachments = append(h.Attachments, ref.Name)
+		}
+		history = append(history, h)
 	}
 	return history
+}
+
+// historyVersions lists an entry's history versions, oldest first.
+func historyVersions(entry *gokeepasslib.Entry) []*gokeepasslib.Entry {
+	var versions []*gokeepasslib.Entry
+	for i := range entry.Histories {
+		for j := range entry.Histories[i].Entries {
+			versions = append(versions, &entry.Histories[i].Entries[j])
+		}
+	}
+	return versions
+}
+
+// RestoreHistory makes an earlier version of the entry its current one:
+// index counts as EntryHistory lists them, most recent first. The current
+// state goes to the history first, as an edit's would, and the version
+// brings back everything it held (fields, tags, attachments, icon, colors,
+// auto-type, expiry). The entry keeps its UUID, creation time and place.
+func (d *DB) RestoreHistory(entryUUID gokeepasslib.UUID, index int) error {
+	if len(d.Database.Content.Root.Groups) == 0 {
+		return fmt.Errorf("database has no root group")
+	}
+	entry := findEntry(&d.Database.Content.Root.Groups[0], entryUUID)
+	if entry == nil {
+		return fmt.Errorf("entry not found")
+	}
+	versions := historyVersions(entry)
+	if index < 0 || index >= len(versions) {
+		return fmt.Errorf("the entry has no history version %d", index)
+	}
+	// Copied before the history changes under the pointers.
+	version := cloneEntry(*versions[len(versions)-1-index])
+	d.addHistory(entry)
+	times := entry.Times
+	times.Expires, times.ExpiryTime = version.Times.Expires, version.Times.ExpiryTime
+	times.LastModificationTime = &w.TimeWrapper{Time: time.Now()}
+	version.UUID, version.Histories, version.Times = entry.UUID, entry.Histories, times
+	*entry = version
+	return nil
+}
+
+// addHistory saves the entry's current state to its history, before a
+// change. Meta.HistoryMaxItems follows KeePass semantics: negative =
+// unlimited, 0 = keep no history. cloneEntry (not Clone) keeps the entry's
+// UUID, as the KDBX format requires for history records.
+func (d *DB) addHistory(entry *gokeepasslib.Entry) {
+	maxItems := int(d.Database.Content.Meta.HistoryMaxItems)
+	if maxItems == 0 {
+		return
+	}
+	historyClone := cloneEntry(*entry)
+	if len(entry.Histories) == 0 {
+		entry.Histories = []gokeepasslib.History{{}}
+	}
+	// Clear the clone's history to avoid nesting
+	historyClone.Histories = nil
+	entry.Histories[0].Entries = append(entry.Histories[0].Entries, historyClone)
+	if maxItems > 0 && len(entry.Histories[0].Entries) > maxItems {
+		entry.Histories[0].Entries = entry.Histories[0].Entries[len(entry.Histories[0].Entries)-maxItems:]
+	}
 }
 
 // UpdateEntry updates an existing entry identified by entryUUID.
@@ -731,23 +797,7 @@ func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 	}
 
 	// Save current state to history before applying changes.
-	// Meta.HistoryMaxItems follows KeePass semantics: negative = unlimited,
-	// 0 = keep no history. cloneEntry (not Clone) keeps the entry's UUID,
-	// as the KDBX format requires for history records.
-	maxItems := int(d.Database.Content.Meta.HistoryMaxItems)
-	if maxItems != 0 {
-		historyClone := cloneEntry(*entry)
-		if len(entry.Histories) == 0 {
-			entry.Histories = []gokeepasslib.History{{}}
-		}
-		// Clear the clone's history to avoid nesting
-		historyClone.Histories = nil
-		entry.Histories[0].Entries = append(entry.Histories[0].Entries, historyClone)
-
-		if maxItems > 0 && len(entry.Histories[0].Entries) > maxItems {
-			entry.Histories[0].Entries = entry.Histories[0].Entries[len(entry.Histories[0].Entries)-maxItems:]
-		}
-	}
+	d.addHistory(entry)
 
 	setEntryValue(entry, "Title", e.Title, false)
 	setEntryValue(entry, "UserName", e.UserName, false)
@@ -1403,28 +1453,7 @@ func (d *DB) GetEntry(entryUUID gokeepasslib.UUID) (Entry, error) {
 	if raw == nil {
 		return Entry{}, fmt.Errorf("entry not found")
 	}
-	entry := Entry{
-		UUID:     raw.UUID,
-		Title:    raw.GetContent("Title"),
-		UserName: raw.GetContent("UserName"),
-		Password: raw.GetContent("Password"),
-		URL:      raw.GetContent("URL"),
-		Notes:    raw.GetContent("Notes"),
-		TOTP:     extractTOTP(*raw),
-		Tags:     raw.Tags,
-		Expires:  raw.Times.Expires.Bool,
-	}
-	if raw.Times.CreationTime != nil {
-		entry.CreationTime = raw.Times.CreationTime.Time
-	}
-	if raw.Times.LastModificationTime != nil {
-		entry.ModificationTime = raw.Times.LastModificationTime.Time
-	}
-	if raw.Times.ExpiryTime != nil {
-		entry.ExpiryTime = raw.Times.ExpiryTime.Time
-	}
-	entry.CustomFields = extractCustomFields(*raw)
-	return entry, nil
+	return simplifyEntry(*raw), nil
 }
 
 func findGroupParent(g *gokeepasslib.Group, uuid gokeepasslib.UUID) *gokeepasslib.Group {
