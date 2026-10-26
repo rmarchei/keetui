@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 
@@ -1153,10 +1154,13 @@ func (m BrowserModel) footerView() string {
 			k.EmptyRecycleBin + ": empty bin", back, k.Save + ": save", k.Quit + ": quit", nav}
 	default:
 		hints = []string{"?: help", k.Search + ": search", open, k.NewEntry + ": new", k.Delete + ": del",
-			k.Save + ": save", k.Quit + ": quit", back, nav, k.Favorite + ": fav", k.NewGroup + ": group",
+			k.Cut + ": move", k.Save + ": save", k.Quit + ": quit", back, nav, k.Favorite + ": fav", k.NewGroup + ": group",
 			k.ShowSettings + ": config", k.CycleSort + ": sort", k.FilterTag + ": tag", k.RenameGroup + ": rename",
-			k.Duplicate + ": dup", k.Cut + ": cut", k.Paste + ": paste", k.ShowStats + ": info",
-			k.ShowAudit + ": audit", k.ChangePassword + ": password"}
+			k.Duplicate + ": dup", k.ShowStats + ": info", k.ShowAudit + ": audit", k.ChangePassword + ": password"}
+		if m.cutEntry != nil || m.cutGroup != nil {
+			// Something is cut: pasting it is the next step.
+			hints = slices.Insert(hints, 1, k.Paste+": paste here")
+		}
 	}
 	return renderHints(m.width, hints...)
 }

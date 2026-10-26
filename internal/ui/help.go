@@ -69,7 +69,7 @@ func (m HelpModel) sections() []helpSection {
 			{k.RenameGroup, "Rename group"}, {k.Delete, "Delete"},
 			{k.Duplicate, "Duplicate"}, {k.Favorite, "Favorite"},
 			{k.CycleSort, "Sort"}, {k.FilterTag, "Filter by tag"},
-			{k.Cut, "Cut"}, {k.Paste, "Paste"},
+			{k.Cut, "Move: cut entry/group"}, {k.Paste, "Move: paste here"},
 			{k.Save + "/ctrl+s", "Save / save as"}, {k.ShowStats, "Database info"},
 			{k.ShowAudit, "Password audit"}, {k.ShowSettings + "/ctrl+o", "Settings"},
 			{k.ChangePassword, "Master password"}, {"ctrl+z", "Undo"},

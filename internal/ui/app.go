@@ -491,7 +491,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewBrowser
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
-			statusCmd("Group renamed (use 's' to save to file)", false),
+			m.unsavedStatus("Group renamed"),
 		)
 
 	case RenameGroupStartMsg:
@@ -747,7 +747,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshEntryCount()
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
-			statusCmd("Entry duplicated (use 's' to save to file)", false),
+			m.unsavedStatus("Entry duplicated"),
 		)
 
 	case PasteEntryMsg:
@@ -768,7 +768,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.browser.cutEntry = nil
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
-			statusCmd("Entry moved (use 's' to save to file)", false),
+			m.unsavedStatus("Entry moved"),
 		)
 
 	case PasteGroupMsg:
@@ -789,7 +789,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.browser.cutGroup = nil
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
-			statusCmd("Group moved (use 's' to save to file)", false),
+			m.unsavedStatus("Group moved"),
 		)
 
 	case ChangePasswordStartMsg:
@@ -810,7 +810,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, statusCmd(fmt.Sprintf("Error changing password: %s", err), true)
 		}
 		m.dirty = true
-		return m, statusCmd("Master password changed (use 's' to save to file)", false)
+		return m, m.unsavedStatus("Master password changed")
 
 	case ShowAuditMsg:
 		return m.startHealthScan(viewAudit)
@@ -1022,7 +1022,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.RefreshContent()
 		m.state = viewDetail
 		tick := m.detail.startTOTPTick()
-		return m, tea.Batch(statusCmd("Attachment deleted (use 's' to save to file)", false), tick)
+		return m, tea.Batch(m.unsavedStatus("Attachment deleted"), tick)
 
 	case AddAttachmentMsg:
 		if m.readOnly {
@@ -1037,7 +1037,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.attachMode = true
 		m.detail.attachIdx = len(m.detail.attachments) - 1
 		m.detail.RefreshContent()
-		return m, statusCmd("Attachment added (use 's' to save to file)", false)
+		return m, m.unsavedStatus("Attachment added")
 
 	case SaveEntryMsg:
 		if m.readOnly {
@@ -1659,7 +1659,7 @@ func (m AppModel) handleSaveEntry(msg SaveEntryMsg) (tea.Model, tea.Cmd) {
 	m.state = viewBrowser
 	return m, tea.Batch(
 		func() tea.Msg { return RefreshMsg{} },
-		statusCmd("Entry saved (use 's' to save to file)", false),
+		m.unsavedStatus("Entry saved"),
 	)
 }
 
@@ -1687,7 +1687,7 @@ func (m AppModel) handleSaveGroup(msg SaveGroupMsg) (tea.Model, tea.Cmd) {
 		m.state = viewBrowser
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
-			statusCmd("Group renamed (use 's' to save to file)", false),
+			m.unsavedStatus("Group renamed"),
 		)
 	}
 	newUUID, err := m.db.AddGroup(msg.ParentUUID, msg.Name)
@@ -1704,7 +1704,7 @@ func (m AppModel) handleSaveGroup(msg SaveGroupMsg) (tea.Model, tea.Cmd) {
 	m.state = viewBrowser
 	return m, tea.Batch(
 		func() tea.Msg { return RefreshMsg{} },
-		statusCmd("Group created (use 's' to save to file)", false),
+		m.unsavedStatus("Group created"),
 	)
 }
 
@@ -1774,6 +1774,12 @@ func repaintAfter(r clearResult) tea.Cmd {
 // clipboard is left alone when the user has since copied something else.
 func (m AppModel) clearClipboardOnQuit() {
 	_, _ = m.clipboardBackend().release()
+}
+
+// unsavedStatus reports a change that is not in the file yet, naming the
+// save key as bound.
+func (m AppModel) unsavedStatus(what string) tea.Cmd {
+	return statusCmd(fmt.Sprintf("%s (use '%s' to save to file)", what, m.cfg.Keys().Save), false)
 }
 
 func statusCmd(text string, isError bool) tea.Cmd {
