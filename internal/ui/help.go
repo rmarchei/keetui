@@ -73,6 +73,7 @@ func (m HelpModel) sections() []helpSection {
 			{k.Save + "/ctrl+s", "Save / save as"}, {k.ShowStats, "Database info"},
 			{k.ShowAudit, "Password audit"}, {k.ShowSettings + "/ctrl+o", "Settings"},
 			{k.ChangePassword, "Master password"}, {"ctrl+z", "Undo"},
+			{k.Lock, "Lock (also in entries, stats, audit)"},
 			{"?/F1", "Help"}, {k.Quit + "/ctrl+c", "Quit"},
 		}},
 		{"Entry", []helpBinding{
@@ -83,6 +84,7 @@ func (m HelpModel) sections() []helpSection {
 			{k.TogglePassword, "Reveal / hide"}, {k.ShowQR, "Show QR"},
 			{k.Edit, "Edit entry"}, {k.OpenURL, "Open URL"},
 			{k.Attachments, "Attachments"}, {k.ShowHistory, "Password history"},
+			{k.Lock, "Lock"},
 			{"esc/" + k.Back, "Back"}, {"?/F1", "Help"}, {k.Quit + "/ctrl+c", "Quit"},
 		}},
 		{"Editor", []helpBinding{

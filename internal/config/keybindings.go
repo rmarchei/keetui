@@ -35,6 +35,7 @@ type KeyBindings struct {
 	CycleSort      string `json:"cycle_sort,omitempty"`
 	FilterTag      string `json:"filter_tag,omitempty"`
 	Quit           string `json:"quit,omitempty"`
+	Lock           string `json:"lock,omitempty"` // also in entry details, history, stats, audit and help
 
 	// Detail view
 	TogglePassword string `json:"toggle_password,omitempty"`
@@ -80,6 +81,7 @@ func DefaultKeyBindings() KeyBindings {
 		CycleSort:      "S",
 		FilterTag:      "t",
 		Quit:           "q",
+		Lock:           "ctrl+l",
 
 		TogglePassword: "p",
 		Edit:           "e",
@@ -162,6 +164,9 @@ func (kb KeyBindings) Merge(defaults KeyBindings) KeyBindings {
 	}
 	if kb.Quit == "" {
 		kb.Quit = defaults.Quit
+	}
+	if kb.Lock == "" {
+		kb.Lock = defaults.Lock
 	}
 	if kb.TogglePassword == "" {
 		kb.TogglePassword = defaults.TogglePassword
@@ -257,6 +262,7 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 	addKey(browser, kb.Restore, "restore")
 	addKey(browser, kb.EmptyRecycleBin, "empty_recycle_bin")
 	addKey(browser, kb.Quit, "quit")
+	addKey(browser, kb.Lock, "lock")
 
 	// Detail context keys
 	detail := map[string][]string{}
@@ -275,6 +281,7 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 	addKey(detail, kb.ShowHistory, "show_history")
 	addKey(detail, kb.Back, "back")
 	addKey(detail, kb.Quit, "quit")
+	addKey(detail, kb.Lock, "lock")
 
 	// Hardcoded keys handled before configurable bindings in the key
 	// switches; a user binding that collides with one is shadowed and
@@ -317,6 +324,7 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 		addKey(context, kb.NavUp, "nav_up")
 		addKey(context, kb.NavDown, "nav_down")
 		addKey(context, kb.Quit, "quit")
+		addKey(context, kb.Lock, "lock")
 	}
 	addKey(attachments, kb.Back, "back")
 	addKey(attachments, kb.Save, "save")
@@ -502,6 +510,7 @@ func (kb KeyBindings) String() string {
 		{"filter_tag", kb.FilterTag},
 		{"change_password", kb.ChangePassword},
 		{"quit", kb.Quit},
+		{"lock", kb.Lock},
 	})
 
 	section("Detail", []struct{ name, key string }{

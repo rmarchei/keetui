@@ -42,7 +42,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Read-only mode (`--read-only`) to prevent accidental modifications
 - Keyboard shortcut help overlay (`?` key)
 - Save changes back to the `.kdbx` file, or save as a new file path
-- Auto-lock after 5 minutes of inactivity
+- Auto-lock after 5 minutes of inactivity, or lock at once with `Ctrl+L`
 - Color themes -- dark, light, and high-contrast presets, or auto (follows the terminal background), via config or settings UI
 - Configurable keybindings and settings via `~/.config/keetui/config.json`
 
@@ -173,6 +173,7 @@ Use `PageUp` / `PageDown` to read long unlock errors, and `j` / `k` or
 | `P` | Change master password |
 | `Ctrl+Z` | Undo last action |
 | `s` / `Ctrl+S` | Save database (edit path, select format) |
+| `Ctrl+L` | Lock (also in entry details, history, stats and audit) |
 | `?` | Keyboard shortcut help |
 | `q` | Quit |
 
@@ -421,7 +422,7 @@ Keybindings can be customized by adding a `keybindings` section to the config fi
 
 Run `keetui -config` to see all available keybinding names and their current values.
 
-Navigation and quit bindings also apply in entry details, history, attachments,
+Navigation, quit and lock bindings also apply in entry details, history, attachments,
 statistics, audit results, and Help (where navigation scrolls). Back applies to
 the browsing screens; Help uses `Esc` or `F1` to close. Attachments use the
 configured save and delete keys. Conflicts are checked across these screens.
@@ -440,6 +441,7 @@ git config core.hooksPath .githooks
 
 - **Clipboard auto-clear**: Copied passwords and TOTP codes are automatically cleared from the clipboard (configurable, default 15s), and marked as sensitive where the platform supports it (see [Clipboard](#clipboard))
 - **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered
+- **Lock now**: `Ctrl+L` (keybinding `lock`) locks the database at once and clears keetui's copy from the clipboard, on the browsing screens and over their help. With unsaved changes it first asks to save them: Yes saves, then locks (a failed save leaves the database open); No keeps it open. A save already running finishes first. Forms (the editor, group names, the master password, save as) keep their input: close them first
 - **Live security status**: The status bar shows `clip:15s` until clipboard clearing and `lock:4:59` until auto-lock. The lock countdown is highlighted in its final 30 seconds; normal input resets inactivity. Copying again restarts the clipboard timer, even for the same value. `off` means a protection is disabled, or that nothing can clear the copy (some tmux setups, see [Clipboard](#clipboard)), and `clip:wait` that a clear waits for keetui's tmux pane to be visible to the terminal that got the copy (`C:`/`L:` are compact labels on very narrow terminals). Clearing over OSC 52 cannot be verified; a local clipboard that has changed since the copy is left untouched.
 - **Password generator**: Generates random passwords via `crypto/rand` with configurable character sets (uppercase, lowercase, digits, symbols)
 - **Backup on save**: When enabled, the original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback (disabled by default; enable via `backup_on_save` setting)

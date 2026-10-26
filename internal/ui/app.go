@@ -148,6 +148,7 @@ type AppModel struct {
 	dbOverrides     config.Overrides // the open database's settings
 	dirty           bool             // true when in-memory changes haven't been saved
 	saving          bool             // true while a save runs in the background; input is gated
+	lockAfterSave   bool             // a manual lock waits for the save in flight
 	clipboardHeld   bool             // a keetui copy may still be on the clipboard
 	helpReturnState viewState        // help must not overwrite a pending confirmation
 	quitReturn      *quitContext
@@ -332,7 +333,14 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// deferred instead of dropped so the timer stays armed.
 	if m.saving {
 		switch msg := msg.(type) {
-		case tea.KeyPressMsg, tea.MouseMsg, tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
+		case tea.KeyPressMsg:
+			if msg.String() == m.cfg.Keys().Lock && m.lockable() {
+				m.lockAfterSave = true
+				m.statusText, m.statusError, m.statusDetail = "Saving… keetui locks when it is done", false, ""
+				return m, nil
+			}
+			return m.saveBusy()
+		case tea.MouseMsg, tea.PasteMsg, tea.PasteStartMsg, tea.PasteEndMsg:
 			return m.saveBusy()
 		case autoLockMsg:
 			if msg.gen != m.autoLockGen {
@@ -353,6 +361,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == "f1" && m.state != viewUnlock && m.state != viewHelp {
 		m.recordActivity()
 		return m.openHelp()
+	}
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.String() == m.cfg.Keys().Lock && m.lockable() {
+		return m.requestLock()
 	}
 	// Ctrl+O opens the settings wherever they can be opened, including the
 	// unlock screen, whose password field takes every printable key. The
@@ -1142,22 +1153,69 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.dirty = false
 		}
-		result, err := m.clipboardBackend().release()
-		m.forgetCopiedValue()
-		m.clipboardDeferred = result.pending() && err == nil
-		m.autoLockCheckAt = time.Time{}
-		m.db = nil
-		m.dropDatabaseViews()
-		m.setOverrides(config.Overrides{})
-		m.undoStack.clear()
-		m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
+		cmd := m.lockDatabase()
 		m.unlock.err = fmt.Errorf("locked due to inactivity")
-		m.state = viewUnlock
-		m.quitReturn = nil
-		return m, tea.Batch(m.unlock.Init(), m.ensureSecurityTick(), repaintAfter(result))
+		return m, cmd
+
+	case confirmLockMsg:
+		m.lockAfterSave = true
+		return m.handleSaveAs(m.filePath, false)
 	}
 
 	return m.updateActive(msg)
+}
+
+// lockable reports whether a manual lock may close the screen shown: not a
+// form, whose unsaved input it would throw away, nor a pending question.
+func (m AppModel) lockable() bool {
+	state := m.state
+	if state == viewHelp {
+		state = m.helpReturnState
+	}
+	switch state {
+	case viewBrowser, viewDetail, viewHistory, viewStats, viewAudit:
+		return m.db != nil && m.quitReturn == nil
+	}
+	return false
+}
+
+// requestLock locks the database, asking first when it has unsaved
+// changes: Yes saves, then locks; No keeps it open. A read-only database
+// has nothing it could save.
+func (m AppModel) requestLock() (tea.Model, tea.Cmd) {
+	if !m.dirty || m.readOnly {
+		cmd := m.lockDatabase()
+		m.unlock.notice = "Locked."
+		return m, cmd
+	}
+	returnState := m.state
+	if returnState == viewHelp {
+		returnState = m.helpReturnState
+	}
+	m.confirm = NewConfirmModel(returnState, "You have unsaved changes. Save them and lock?", func() tea.Msg {
+		return confirmLockMsg{}
+	})
+	m.state = viewConfirm
+	return m, nil
+}
+
+// lockDatabase closes the database: it clears keetui's copy from the
+// clipboard, forgets everything shown from the database and asks for the
+// password again.
+func (m *AppModel) lockDatabase() tea.Cmd {
+	result, err := m.clipboardBackend().release()
+	m.forgetCopiedValue()
+	m.clipboardDeferred = result.pending() && err == nil
+	m.autoLockCheckAt = time.Time{}
+	m.lockAfterSave = false
+	m.db = nil
+	m.dropDatabaseViews()
+	m.setOverrides(config.Overrides{})
+	m.undoStack.clear()
+	m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
+	m.state = viewUnlock
+	m.quitReturn = nil
+	return tea.Batch(m.unlock.Init(), m.ensureSecurityTick(), repaintAfter(result))
 }
 
 // needsDatabase reports a message that acts on the open database or shows
@@ -1172,7 +1230,7 @@ func needsDatabase(msg tea.Msg) bool {
 		ShowAuditMsg, ShowStatsMsg, ShowPresetPickerMsg, GeneratedPasswordMsg, CancelPresetMsg, SetDefaultPresetMsg,
 		ShowHistoryMsg, BackToDetailMsg, hibpResultMsg, ExtractAttachmentMsg, confirmExtractAttachmentMsg,
 		DeleteAttachmentMsg, confirmDeleteAttachmentMsg, AddAttachmentMsg, SaveEntryMsg, SaveGroupMsg,
-		SaveAsStartMsg, SaveAsMsg, confirmSaveAsMsg, CopyToClipboardMsg, OpenURLMsg:
+		SaveAsStartMsg, SaveAsMsg, confirmSaveAsMsg, CopyToClipboardMsg, OpenURLMsg, confirmLockMsg:
 		return true
 	}
 	return false
@@ -1631,12 +1689,22 @@ func (m AppModel) handleSaveAs(path string, upgrade bool) (tea.Model, tea.Cmd) {
 
 func (m AppModel) handleSaveResult(msg saveResultMsg) (tea.Model, tea.Cmd) {
 	m.saving = false
+	lock := m.lockAfterSave
+	m.lockAfterSave = false
 	if msg.err != nil {
+		if lock {
+			return m, statusCmd(fmt.Sprintf("Not locked: error saving: %s", msg.err), true)
+		}
 		return m, statusCmd(fmt.Sprintf("Error saving: %s", msg.err), true)
 	}
 	m.db.Path = msg.path
 	m.filePath = msg.path
 	m.dirty = false
+	if lock {
+		cmd := m.lockDatabase()
+		m.unlock.notice = "Saved and locked."
+		return m, cmd
+	}
 	text := fmt.Sprintf("Database saved as %s", filepath.Base(msg.path))
 	if msg.upgrade {
 		text = fmt.Sprintf("Upgraded to KDBX 4 and saved as %s", filepath.Base(msg.path))
@@ -1712,6 +1780,9 @@ type confirmPermanentDeleteGroupMsg struct {
 }
 
 type confirmEmptyRecycleBinMsg struct{}
+
+// confirmLockMsg saves the database, then locks it.
+type confirmLockMsg struct{}
 
 // RenameGroupStartMsg is sent to initiate group renaming.
 type RenameGroupStartMsg struct {

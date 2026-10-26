@@ -15,7 +15,8 @@ type UnlockModel struct {
 	keyFilePath string
 	input       textinput.Model
 	err         error
-	unlocking   bool // true while the database is being opened in the background
+	notice      string // why the screen shows, when that is no error ("Locked.")
+	unlocking   bool   // true while the database is being opened in the background
 	width       int
 	height      int
 	errorOffset int
@@ -87,7 +88,7 @@ func (m UnlockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = fmt.Errorf("password cannot be empty")
 				return m, nil
 			}
-			m.err = nil
+			m.err, m.notice = nil, ""
 			// Unlocking from now on, not from when the app gets the open
 			// request: an enter queued behind this one is ignored.
 			m.unlocking = true
@@ -165,6 +166,8 @@ func (m UnlockModel) card() (card string, fits bool) {
 	case m.err != nil:
 		border = errorColor
 		lines = append(lines, "", errorMsgStyle.Padding(0).Render(wrapContent("Error: "+sanitizeDisplay(m.err.Error()), inner)))
+	case m.notice != "":
+		lines = append(lines, "", helpStyle.Render(m.notice))
 	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -190,6 +193,8 @@ func (m UnlockModel) View() tea.View {
 	body := header
 	if m.unlocking {
 		body += "\n" + helpStyle.Render("  Unlocking…")
+	} else if m.err == nil && m.notice != "" {
+		body += "\n" + helpStyle.Render("  "+m.notice)
 	} else if m.err != nil {
 		available := max(1, height-strings.Count(header, "\n")-lipgloss.Height(m.footer()))
 		body += contentWindow(m.errorContent(), width, available, m.errorOffset)
