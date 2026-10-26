@@ -1924,11 +1924,16 @@ func (m AppModel) saveOnDisk(save diskSave, status string, run func(*keepass.DB)
 }
 
 // mergedIn follows a merge of the changes on disk: the database differs
-// from the one the undo history and the views were of.
+// from the one the undo history and the views were of, and its settings
+// may have been changed there (by keetui elsewhere). Settings made
+// unreadable there leave the ones in effect.
 func (m *AppModel) mergedIn() tea.Cmd {
 	m.dirty = true
 	m.undoStack.clear()
 	m.refreshEntryCount()
+	if overrides, err := config.ParseOverrides(m.db.CustomData(config.OverridesKey)); err == nil {
+		m.setOverrides(overrides)
+	}
 	return func() tea.Msg { return RefreshMsg{} }
 }
 
@@ -1973,8 +1978,13 @@ func syncSummary(r keepass.SyncResult) string {
 			parts = append(parts, fmt.Sprintf("%d %s", p.n, p.what))
 		}
 	}
-	if r.Groups > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s", r.Groups, plural(r.Groups, "group", "groups")))
+	for _, p := range []struct {
+		n         int
+		one, many string
+	}{{r.Groups, "group", "groups"}, {r.Icons, "icon", "icons"}, {r.Settings, "database setting", "database settings"}} {
+		if p.n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", p.n, plural(p.n, p.one, p.many)))
+		}
 	}
 	if len(parts) == 0 {
 		return "nothing new"

@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
 )
 
@@ -229,5 +230,29 @@ func TestAutoLockMergesAChangedFile(t *testing.T) {
 	}
 	if on := titlesOnDisk(t, m.filePath); !strings.Contains(on, ",Ours,") || !strings.Contains(on, ",Theirs,") {
 		t.Fatalf("auto-lock saved without both sides: %s", on)
+	}
+}
+
+// Settings keetui saved in the file elsewhere take effect once merged in.
+func TestMergedDatabaseSettingsTakeEffect(t *testing.T) {
+	m := createTestApp(t)
+	m.dirty = true
+	other, err := keepass.Open(m.filePath, "testmaster")
+	if err != nil {
+		t.Fatal(err)
+	}
+	length := 42
+	other.SetCustomData(config.OverridesKey, config.Overrides{PasswordLength: &length}.Encode())
+	if err := other.Save(); err != nil {
+		t.Fatal(err)
+	}
+	m = saveNow(t, m)
+	m, save := answer(t, m, keyY)
+	m = finishSave(t, m, save)
+	if m.cfg.PasswordLength != 42 || m.dbOverrides.PasswordLength == nil {
+		t.Fatalf("password length %d, status %q: want the merged database setting", m.cfg.PasswordLength, m.statusText)
+	}
+	if !strings.Contains(m.statusText, "1 database setting") {
+		t.Errorf("status %q does not name the merged setting", m.statusText)
 	}
 }

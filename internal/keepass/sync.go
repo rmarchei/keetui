@@ -21,6 +21,8 @@ type SyncResult struct {
 	Deleted  int // entries the file records as deleted there after their last change here
 	Kept     int // entries missing there without such a record, kept here
 	Groups   int // groups added
+	Icons    int // custom icons added or changed there
+	Settings int // database settings taken from there: name, description, default user name, custom data items
 }
 
 // MergeDisk merges the database file, as another program or a sync left it,
@@ -38,6 +40,10 @@ type SyncResult struct {
 //     deletion (KeePass clients keep DeletedObjects) after the entry's last
 //     change here. One merely missing there is kept: an older copy of the
 //     file (a sync conflict, a restored backup) must not delete entries.
+//   - Custom icons the file has and this database lacks are added. The
+//     database's name, description and default user name come from the
+//     file when they changed there more recently, and its custom data
+//     (applications' per-database settings) is merged item by item.
 //
 // Afterwards a save no longer counts the file as changed (see CheckDisk).
 func (d *DB) MergeDisk() (SyncResult, error) {
@@ -115,6 +121,8 @@ func (s *syncer) run() {
 	}
 	s.adoptRecycleBin()
 	s.joinDeletedObjects()
+	s.result.Icons = s.d.joinCustomIcons(s.theirs)
+	s.syncSettings()
 }
 
 // walk merges their group tg, placed in the group parent resolves to. Their
@@ -359,6 +367,90 @@ func (s *syncer) joinDeletedObjects() {
 			*ours = append(*ours, o)
 		}
 	}
+}
+
+// joinCustomIcons adds the custom icons of other that d lacks, such as
+// favicons downloaded there, which entries and groups taken from other
+// refer to by UUID; one changed there more recently (KDBX 4.1 records
+// when) replaces d's. Fields only KDBX 4.1 holds are dropped for an older
+// file. It returns how many icons it added or replaced.
+func (d *DB) joinCustomIcons(other *DB) (n int) {
+	meta := d.Database.Content.Meta
+	kdbx41 := d.Database.Header.IsKdbx41()
+	for _, icon := range other.Database.Content.Meta.CustomIcons {
+		if !kdbx41 {
+			icon.Name, icon.LastModificationTime = "", nil
+		}
+		i := slices.IndexFunc(meta.CustomIcons, func(c gokeepasslib.CustomIcon) bool { return c.UUID.Compare(icon.UUID) })
+		switch {
+		case i < 0:
+			meta.CustomIcons = append(meta.CustomIcons, icon)
+		case timeOf(icon.LastModificationTime).After(timeOf(meta.CustomIcons[i].LastModificationTime)):
+			meta.CustomIcons[i] = icon
+		default:
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// syncSettings takes the database's name, description and default user
+// name from the file where they changed there more recently, and merges
+// its custom data.
+func (s *syncer) syncSettings() {
+	ours, theirs := s.d.Database.Content.Meta, s.theirs.Database.Content.Meta
+	take := func(value *string, changed **w.TimeWrapper, theirValue string, theirChanged *w.TimeWrapper) {
+		if *value != theirValue && timeOf(theirChanged).After(timeOf(*changed)) {
+			*value, *changed = theirValue, theirChanged
+			s.result.Settings++
+		}
+	}
+	take(&ours.DatabaseName, &ours.DatabaseNameChanged, theirs.DatabaseName, theirs.DatabaseNameChanged)
+	take(&ours.DatabaseDescription, &ours.DatabaseDescriptionChanged, theirs.DatabaseDescription, theirs.DatabaseDescriptionChanged)
+	take(&ours.DefaultUserName, &ours.DefaultUserNameChanged, theirs.DefaultUserName, theirs.DefaultUserNameChanged)
+	s.syncCustomData()
+}
+
+// syncCustomData merges the database-level custom data, where applications
+// keep their per-database settings (keetui's own, KeePassXC's browser
+// pairings), item by item against the file as keetui last read it: an item
+// added, changed or removed on one side only takes that side's change (a
+// pairing revoked there stays revoked), and one changed on both keeps the
+// more recent value (KDBX 4.1 records when), else this one.
+func (s *syncer) syncCustomData() {
+	meta := s.d.Database.Content.Meta
+	theirs := s.theirs.Database.Content.Meta.CustomData
+	index := func(items []gokeepasslib.CustomData, key string) int {
+		return slices.IndexFunc(items, func(c gokeepasslib.CustomData) bool { return c.Key == key })
+	}
+	for _, t := range theirs {
+		baseValue, known := s.base.customData[t.Key]
+		unchangedThere := known && t.Value == baseValue
+		i := index(meta.CustomData, t.Key)
+		switch {
+		case i < 0 && unchangedThere: // removed here
+			continue
+		case i < 0:
+			meta.CustomData = append(meta.CustomData, t)
+		case meta.CustomData[i].Value == t.Value || unchangedThere:
+			continue
+		case known && meta.CustomData[i].Value == baseValue,
+			timeOf(t.LastModificationTime).After(timeOf(meta.CustomData[i].LastModificationTime)):
+			meta.CustomData[i] = t
+		default:
+			continue
+		}
+		s.result.Settings++
+	}
+	meta.CustomData = slices.DeleteFunc(meta.CustomData, func(c gokeepasslib.CustomData) bool {
+		baseValue, known := s.base.customData[c.Key]
+		removedThere := known && c.Value == baseValue && index(theirs, c.Key) < 0
+		if removedThere {
+			s.result.Settings++
+		}
+		return removedThere
+	})
 }
 
 // recordDeleted notes that g's entries and groups, and g itself unless it

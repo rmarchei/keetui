@@ -2,10 +2,15 @@ package keepass
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/tobischo/gokeepasslib/v3"
+	w "github.com/tobischo/gokeepasslib/v3/wrappers"
 )
 
 func TestMerge(t *testing.T) {
@@ -459,5 +464,40 @@ func TestMergeUpdateCopiesAttachments(t *testing.T) {
 	history := target.EntryHistory(uuid)
 	if len(history) == 0 || history[0].Password != "v1" {
 		t.Errorf("history = %+v, want the pre-merge state (v1) preserved", history)
+	}
+}
+
+// Entries merged from another database keep their custom icons; a target
+// older than KDBX 4.1 drops the icon fields only 4.1 holds.
+func TestMergeCopiesCustomIcons(t *testing.T) {
+	for _, target4 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("target4=%t", target4), func(t *testing.T) {
+			source := newFormatDB(t, true)
+			gokeepasslib.WithDatabaseKDBXVersion41()(source.Database)
+			icon := syntheticIcon()
+			icon.Name, icon.LastModificationTime = "Favicon", &w.TimeWrapper{Time: syncBase}
+			source.Database.Content.Meta.CustomIcons = append(source.Database.Content.Meta.CustomIcons, icon)
+			id, err := source.AddEntry(source.RootGroup().UUID, Entry{Title: "Favicon"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			findEntry(&source.Database.Content.Root.Groups[0], id).CustomIconUUID = icon.UUID
+			target := newFormatDB(t, target4)
+			if _, err := target.Merge(source); err != nil {
+				t.Fatal(err)
+			}
+			target = saveAndReopen(t, target)
+			if e := findEntry(&target.Database.Content.Root.Groups[0], id); e == nil || !e.CustomIconUUID.Compare(icon.UUID) {
+				t.Fatal("the merged entry lost its icon")
+			}
+			if !slices.ContainsFunc(target.Database.Content.Meta.CustomIcons, func(c gokeepasslib.CustomIcon) bool {
+				return c.UUID.Compare(icon.UUID) && c.Data == icon.Data
+			}) {
+				t.Fatal("the saved file lacks the icon its merged entry uses")
+			}
+			if source.Database.Content.Meta.CustomIcons[0].Name != "Favicon" {
+				t.Fatal("merging changed the source's icon")
+			}
+		})
 	}
 }

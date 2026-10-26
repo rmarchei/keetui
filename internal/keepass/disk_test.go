@@ -2,8 +2,10 @@ package keepass
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -508,5 +510,113 @@ func TestMergeDiskAdoptsANewerFormat(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(out); string(data) != syncAttachment {
 		t.Fatalf("attachment reads %q after the format change", data)
+	}
+}
+
+// syntheticIcon is a custom icon as another client adds one (a downloaded
+// favicon): the PNG signature, base64.
+func syntheticIcon() gokeepasslib.CustomIcon {
+	return gokeepasslib.CustomIcon{UUID: gokeepasslib.NewUUID(), Data: "iVBORw0KGgo="}
+}
+
+// Icons and database settings changed there come along: the icon of an
+// entry added there, the name changed there more recently, and the custom
+// data item by item against the file as keetui last read it. KDBX 4.1 dates
+// items, so an item changed on both sides keeps the more recent value.
+func TestMergeDiskJoinsIconsAndSettings(t *testing.T) {
+	for _, kdbx41 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("kdbx41=%t", kdbx41), func(t *testing.T) {
+			path, ours, _, _ := syncFixture(t, true)
+			if kdbx41 {
+				gokeepasslib.WithDatabaseKDBXVersion41()(ours.Database)
+			}
+			later := syncBase.Add(time.Hour)
+			setItem := func(db *DB, key, value string, at time.Time) {
+				t.Helper()
+				db.SetCustomData(key, value)
+				if !kdbx41 || value == "" {
+					return
+				}
+				items := db.Database.Content.Meta.CustomData
+				items[slices.IndexFunc(items, func(c gokeepasslib.CustomData) bool { return c.Key == key })].LastModificationTime = &w.TimeWrapper{Time: at}
+			}
+			for _, key := range []string{"Changed there", "Changed here", "Changed on both", "Removed there", "Removed here", "Removed here, changed there"} {
+				setItem(ours, key, "base", syncBase)
+			}
+			meta := ours.Database.Content.Meta
+			meta.DatabaseName, meta.DatabaseNameChanged = "Base name", &w.TimeWrapper{Time: syncBase}
+			meta.DatabaseDescription, meta.DatabaseDescriptionChanged = "Base description", &w.TimeWrapper{Time: syncBase}
+			if err := ours.Overwrite(); err != nil {
+				t.Fatal(err)
+			}
+
+			theirs, err := Open(path, "synthetic-master")
+			if err != nil {
+				t.Fatal(err)
+			}
+			setItem(theirs, "Changed there", "there", later)
+			setItem(theirs, "Changed on both", "there", later.Add(time.Minute))
+			setItem(theirs, "Removed there", "", later)
+			setItem(theirs, "Removed here, changed there", "there", later)
+			setItem(theirs, "Added there", "there", later)
+			theirMeta := theirs.Database.Content.Meta
+			theirMeta.DatabaseName, theirMeta.DatabaseNameChanged = "Their name", &w.TimeWrapper{Time: later}
+			theirMeta.DatabaseDescription, theirMeta.DatabaseDescriptionChanged = "Their description", &w.TimeWrapper{Time: later}
+			icon := syntheticIcon()
+			theirMeta.CustomIcons = append(theirMeta.CustomIcons, icon)
+			id, err := theirs.AddEntry(theirs.RootGroup().UUID, Entry{Title: "Favicon"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			findEntry(&theirs.Database.Content.Root.Groups[0], id).CustomIconUUID = icon.UUID
+			if err := theirs.Save(); err != nil {
+				t.Fatal(err)
+			}
+
+			setItem(ours, "Changed here", "here", later)
+			setItem(ours, "Changed on both", "here", later)
+			setItem(ours, "Removed here", "", later)
+			setItem(ours, "Removed here, changed there", "", later)
+			setItem(ours, "Added here", "here", later)
+			meta.DatabaseDescription, meta.DatabaseDescriptionChanged = "Our description", &w.TimeWrapper{Time: later.Add(time.Minute)}
+
+			r, err := ours.MergeDisk()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The name; changed there, removed there, added there, removed
+			// here but changed there since; with dates, changed on both.
+			bothChanged, settings := "here", 5
+			if kdbx41 {
+				bothChanged, settings = "there", 6
+			}
+			if r.Icons != 1 || r.Settings != settings {
+				t.Fatalf("icons %d, settings %d: want 1 and %d", r.Icons, r.Settings, settings)
+			}
+			if err := ours.Save(); err != nil {
+				t.Fatal(err)
+			}
+			saved, err := Open(path, "synthetic-master")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range map[string]string{"Changed there": "there", "Changed here": "here", "Changed on both": bothChanged,
+				"Removed there": "", "Removed here": "", "Removed here, changed there": "there", "Added there": "there", "Added here": "here"} {
+				if got := saved.CustomData(key); got != want {
+					t.Errorf("%s: %q, want %q", key, got, want)
+				}
+			}
+			if m := saved.Database.Content.Meta; m.DatabaseName != "Their name" || m.DatabaseDescription != "Our description" {
+				t.Errorf("name %q, description %q: want each side's more recent one", m.DatabaseName, m.DatabaseDescription)
+			}
+			if e := findEntry(&saved.Database.Content.Root.Groups[0], id); e == nil || !e.CustomIconUUID.Compare(icon.UUID) {
+				t.Fatal("the entry added there lost its icon")
+			}
+			if !slices.ContainsFunc(saved.Database.Content.Meta.CustomIcons, func(c gokeepasslib.CustomIcon) bool {
+				return c.UUID.Compare(icon.UUID) && c.Data == icon.Data
+			}) {
+				t.Fatal("the saved file lacks the icon its entry uses")
+			}
+		})
 	}
 }

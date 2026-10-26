@@ -45,25 +45,27 @@ func (e *DiskError) Error() string {
 // diskStamp is what keetui last read from or wrote to the database file: a
 // checksum to notice another writer, the credentials the file is encrypted
 // with (a master password changed since applies only from the next save),
-// and the entries and groups it held, so that MergeDisk can tell an entry
-// deleted here from one added there.
+// and the entries, groups and custom data it held, so that MergeDisk can
+// tell an entry deleted here from one added there.
 type diskStamp struct {
-	known   bool
-	path    string // filepath.Clean of the path read or written
-	sum     [sha256.Size]byte
-	creds   *gokeepasslib.DBCredentials
-	entries map[gokeepasslib.UUID]time.Time // modification times
-	groups  map[gokeepasslib.UUID]bool
+	known      bool
+	path       string // filepath.Clean of the path read or written
+	sum        [sha256.Size]byte
+	creds      *gokeepasslib.DBCredentials
+	entries    map[gokeepasslib.UUID]time.Time // modification times
+	groups     map[gokeepasslib.UUID]bool
+	customData map[string]string // database-level custom data items
 }
 
 func newDiskStamp(path string, sum [sha256.Size]byte, creds *gokeepasslib.DBCredentials, db *gokeepasslib.Database) diskStamp {
 	s := diskStamp{
-		known:   true,
-		path:    filepath.Clean(path),
-		sum:     sum,
-		creds:   creds,
-		entries: make(map[gokeepasslib.UUID]time.Time),
-		groups:  make(map[gokeepasslib.UUID]bool),
+		known:      true,
+		path:       filepath.Clean(path),
+		sum:        sum,
+		creds:      creds,
+		entries:    make(map[gokeepasslib.UUID]time.Time),
+		groups:     make(map[gokeepasslib.UUID]bool),
+		customData: make(map[string]string),
 	}
 	var walk func(g *gokeepasslib.Group)
 	walk = func(g *gokeepasslib.Group) {
@@ -73,6 +75,11 @@ func newDiskStamp(path string, sum [sha256.Size]byte, creds *gokeepasslib.DBCred
 		}
 		for i := range g.Groups {
 			walk(&g.Groups[i])
+		}
+	}
+	if db.Content != nil && db.Content.Meta != nil {
+		for _, item := range db.Content.Meta.CustomData {
+			s.customData[item.Key] = item.Value
 		}
 	}
 	if db.Content != nil && db.Content.Root != nil {

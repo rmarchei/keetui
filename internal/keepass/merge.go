@@ -49,6 +49,8 @@ func (d *DB) Merge(other *DB) (MergeResult, error) {
 	result := MergeResult{}
 
 	d.mergeGroup(&otherRoot, other, d.RootGroup().UUID, &result)
+	// Merged entries and groups refer to the source's custom icons.
+	d.joinCustomIcons(other)
 
 	return result, nil
 }
