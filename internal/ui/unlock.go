@@ -138,7 +138,7 @@ func (m UnlockModel) footer() string {
 		// Scrolling is the only way to read a long error: keep it ahead of quit.
 		hints = append(hints, "pgup/pgdown: error")
 	}
-	return renderHints(m.width, append(hints, "ctrl+o: settings", "ctrl+c: quit")...)
+	return alignRight(renderHints(m.width, append(hints, "ctrl+o: settings", "ctrl+c: quit")...), Version, m.width)
 }
 
 // card lays the form out as a box centered above the footer, its border in

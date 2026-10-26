@@ -141,8 +141,8 @@ Screens adapt to the terminal size. Settings and entry forms scroll to keep the
 focused field visible; use `Tab` / `Shift+Tab` to move between fields. Shortcut
 hints use up to two rows, showing essential actions when space is limited.
 Press `F1` in any unlocked screen for context-specific help (and the full current
-status message); its header shows keetui's version (`keetui -version` prints it
-too). `Tab` / left / right switches help sections; wider terminals
+status message); its header shows keetui's version, as does the unlock screen's
+bottom right (`keetui -version` prints it too). `Tab` / left / right switches help sections; wider terminals
 show shortcuts in two columns. `Esc` / `F1` returns without losing form edits. `?` also opens help in
 the browser and entry detail, but remains ordinary text inside inputs.
 Use `PageUp` / `PageDown` to read long unlock errors, and `j` / `k` or

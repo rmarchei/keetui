@@ -162,3 +162,22 @@ func TestLateOpenResultIsDropped(t *testing.T) {
 		t.Fatalf("db %p, dirty %v, state %v: a late open replaced the open database", app.db, app.dirty, app.state)
 	}
 }
+
+// The unlock screen ends its hint row with keetui's version, when it fits.
+func TestUnlockFooterShowsTheVersion(t *testing.T) {
+	prev := Version
+	Version = "v9.8.7"
+	t.Cleanup(func() { Version = prev })
+	for _, tc := range []struct {
+		width int
+		shown bool
+	}{{80, true}, {40, true}, {34, false}} {
+		m := NewUnlockModel("synthetic.kdbx", "")
+		updated, _ := m.Update(tea.WindowSizeMsg{Width: tc.width, Height: 24})
+		lines := strings.Split(ansi.Strip(updated.(UnlockModel).View().Content), "\n")
+		last := lines[len(lines)-1]
+		if strings.HasSuffix(last, "v9.8.7 ") != tc.shown || !strings.Contains(last, "enter unlock") || ansi.StringWidth(last) > tc.width {
+			t.Errorf("width %d: footer %q, want the version shown %v after the hints", tc.width, last, tc.shown)
+		}
+	}
+}

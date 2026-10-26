@@ -73,6 +73,18 @@ func renderHints(width int, hints ...string) string {
 	return " " + strings.Join(parts, "  ")
 }
 
+// alignRight ends a one-row footer with right, muted, when it fits beside
+// what the row already holds, which comes first.
+func alignRight(row, right string, width int) string {
+	width, _ = viewSize(width, 1)
+	right = sanitizeDisplay(right)
+	gap := width - lipgloss.Width(row) - lipgloss.Width(right) - 1 // a trailing space, as the status bar has
+	if right == "" || gap < 2 {
+		return row
+	}
+	return row + strings.Repeat(" ", gap) + helpStyle.Render(right) + " "
+}
+
 // onBackground re-applies style's colors after every reset in s. Styled
 // segments end with a full reset, which would otherwise leave them, and the
 // text after them, on the terminal's own background.
