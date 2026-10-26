@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -17,9 +21,51 @@ type UnlockModel struct {
 	err         error
 	notice      string // why the screen shows, when that is no error ("Locked.")
 	unlocking   bool   // true while the database is being opened in the background
+	missing     string // what is wrong with the files' paths (see fileProblem); "" when they are there
 	width       int
 	height      int
 	errorOffset int
+}
+
+// fileCheckInterval is how often the unlock screen looks at its files again,
+// so that its warning appears and goes without a key press: a volume
+// unmounted while keetui was locked, then mounted again.
+var fileCheckInterval = 2 * time.Second
+
+// unlockFilesMsg reports what checkUnlockFiles found.
+type unlockFilesMsg struct {
+	gen     int    // AppModel.fileCheckGen when the check was started
+	missing string // fileProblem's answer
+}
+
+// checkUnlockFiles looks at the database and key file paths after wait. It
+// runs as a command: a stat on an unresponsive mount can block.
+func checkUnlockFiles(gen int, dbPath, keyPath string, wait time.Duration) tea.Cmd {
+	check := func(time.Time) tea.Msg {
+		return unlockFilesMsg{gen: gen, missing: fileProblem(dbPath, keyPath)}
+	}
+	if wait <= 0 {
+		return func() tea.Msg { return check(time.Time{}) }
+	}
+	return tea.Tick(wait, check)
+}
+
+// fileProblem describes a database or key file path with nothing to open,
+// "" when both are there. Other errors (permissions) are left to the open,
+// which reports them.
+func fileProblem(dbPath, keyPath string) string {
+	for _, f := range []struct{ path, name string }{{dbPath, "Database file"}, {keyPath, "Key file"}} {
+		if f.path == "" {
+			continue
+		}
+		switch info, err := os.Stat(f.path); {
+		case errors.Is(err, fs.ErrNotExist):
+			return f.name + " not found"
+		case err == nil && info.IsDir():
+			return f.name + " path is a folder"
+		}
+	}
+	return ""
 }
 
 // DatabaseOpenedMsg is sent when the database is successfully opened.
@@ -118,6 +164,9 @@ func (m UnlockModel) header() string {
 	if m.keyFilePath != "" {
 		fmt.Fprintf(&b, "  Key:  %s\n", pathLabel(m.keyFilePath, width-8))
 	}
+	if m.missing != "" {
+		fmt.Fprintf(&b, " %s\n", warnStyle.Render(m.missing))
+	}
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "  %s\n", m.input.View())
 	return b.String()
@@ -163,6 +212,9 @@ func (m UnlockModel) card() (card string, fits bool) {
 	lines := []string{titleStyle.Render("keetui"), "", label("File") + " " + pathLabel(m.filePath, inner-6)}
 	if m.keyFilePath != "" {
 		lines = append(lines, label("Key")+" "+pathLabel(m.keyFilePath, inner-6))
+	}
+	if m.missing != "" {
+		lines = append(lines, warnStyle.Padding(0).Render(m.missing))
 	}
 	lines = append(lines, "", m.input.View())
 	border := primaryColor

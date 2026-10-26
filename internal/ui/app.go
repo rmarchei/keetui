@@ -2,7 +2,9 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"os/exec"
@@ -142,6 +144,7 @@ type AppModel struct {
 	height          int
 	lastActivity    time.Time        // tracks last user interaction for auto-lock
 	openGen         int              // the latest unlock attempt; older results are dropped
+	fileCheckGen    int              // the unlock screen's latest file check; older results are dropped
 	autoLockGen     int              // current auto-lock timer generation; see autoLockMsg
 	filePath        string           // remember file path for re-lock
 	keyFilePath     string           // remember key file path for re-lock
@@ -199,7 +202,15 @@ func (m AppModel) Init() tea.Cmd {
 	// A tmux reply with $TMUX unset means a tmux elsewhere (SSH from a tmux
 	// pane), which needs terminal copies wrapped; another name with $TMUX
 	// set means keetui is not directly in tmux. No reply changes nothing.
-	return tea.Batch(m.unlock.Init(), tea.RequestTerminalVersion, tea.RequestBackgroundColor)
+	return tea.Batch(m.unlock.Init(), checkUnlockFiles(m.fileCheckGen, m.filePath, m.keyFilePath, 0),
+		tea.RequestTerminalVersion, tea.RequestBackgroundColor)
+}
+
+// watchUnlockFiles starts the unlock screen's file check over, ending the
+// one that ran before.
+func (m *AppModel) watchUnlockFiles() tea.Cmd {
+	m.fileCheckGen++
+	return checkUnlockFiles(m.fileCheckGen, m.filePath, m.keyFilePath, 0)
 }
 
 // scheduleAutoLock arms the auto-lock timer for the full configured interval.
@@ -440,6 +451,18 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case databaseOpenResultMsg:
 		return m.handleDatabaseOpenResult(msg)
+
+	case unlockFilesMsg:
+		if msg.gen != m.fileCheckGen || m.db != nil {
+			return m, nil
+		}
+		m.unlock.missing = msg.missing
+		if m.state != viewUnlock {
+			// Settings over the unlock screen: the check starts over on
+			// the way back.
+			return m, nil
+		}
+		return m, checkUnlockFiles(msg.gen, m.filePath, m.keyFilePath, fileCheckInterval)
 
 	case ViewEntryMsg:
 		m.detail = NewDetailModel(msg.Entry, m.cfg)
@@ -885,7 +908,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.db == nil {
 			// Saved from the unlock screen: back to it, in the new theme.
 			m.state = viewUnlock
-			return m, m.unlock.Init()
+			return m, tea.Batch(m.unlock.Init(), m.watchUnlockFiles())
 		}
 		m.browser.keys = m.cfg.Keys()
 		// Styles captured at construction time don't see ApplyTheme's
@@ -1093,7 +1116,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.db == nil {
 			// Settings opened from the unlock screen return to it.
 			m.state = viewUnlock
-			return m, m.unlock.Init()
+			return m, tea.Batch(m.unlock.Init(), m.watchUnlockFiles())
 		}
 		m.state = viewBrowser
 		return m, func() tea.Msg { return RefreshMsg{} }
@@ -1271,7 +1294,7 @@ func (m *AppModel) lockDatabase() tea.Cmd {
 	m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
 	m.state = viewUnlock
 	m.quitReturn = nil
-	return tea.Batch(m.unlock.Init(), m.ensureSecurityTick(), repaintAfter(result))
+	return tea.Batch(m.unlock.Init(), m.watchUnlockFiles(), m.ensureSecurityTick(), repaintAfter(result))
 }
 
 // needsDatabase reports a message that acts on the open database or shows
@@ -1602,7 +1625,7 @@ func (m AppModel) handleDatabaseOpenResult(msg databaseOpenResultMsg) (tea.Model
 	}
 	m.unlock.unlocking = false
 	if msg.err != nil {
-		m.unlock.err = fmt.Errorf("failed to unlock: %w", msg.err)
+		m.unlock.err = m.openError(msg.err)
 		return m, nil
 	}
 	db := msg.db
@@ -1635,6 +1658,21 @@ func (m AppModel) handleDatabaseOpenResult(msg databaseOpenResultMsg) (tea.Model
 			statusCmd(fmt.Sprintf("This database's settings are unreadable, using the global ones: %s", overridesErr), true))
 	}
 	return m, autoLockCmd
+}
+
+// openError describes a failed unlock. A file that is not there is named
+// plainly rather than through the open call's error chain.
+func (m AppModel) openError(err error) error {
+	var path *fs.PathError
+	if errors.As(err, &path) && errors.Is(path.Err, fs.ErrNotExist) {
+		switch path.Path {
+		case m.filePath:
+			return fmt.Errorf("database file not found: %s", path.Path)
+		case m.keyFilePath:
+			return fmt.Errorf("key file not found: %s", path.Path)
+		}
+	}
+	return fmt.Errorf("failed to unlock: %w", err)
 }
 
 // setOverrides makes o the open database's settings: the settings in

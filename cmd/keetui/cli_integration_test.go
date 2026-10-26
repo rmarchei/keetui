@@ -109,6 +109,7 @@ func TestCLIRejectsUnsafeArgumentsBeforeReadingPasswords(t *testing.T) {
 		{"multiple paths", []string{vault, source}, "unexpected arguments"},
 		{"legacy format", []string{filepath.Join(dir, "old.KDB")}, "KeePass 1.x"},
 		{"missing vault", []string{filepath.Join(dir, "missing.kdbx")}, "does not exist"},
+		{"folder vault", []string{dir}, "is a folder, not a database file"},
 		{"missing key", []string{"-keyfile", filepath.Join(dir, "missing.key"), vault}, "key file"},
 		{"existing new vault", []string{"-new", vault}, "already exists"},
 		{"dry run without merge", []string{"-dry-run", vault}, "--dry-run requires --merge"},

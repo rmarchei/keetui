@@ -148,6 +148,10 @@ the browser and entry detail, but remains ordinary text inside inputs.
 Use `PageUp` / `PageDown` to read long unlock errors, and `j` / `k` or
 `PageUp` / `PageDown` to scroll database statistics. `Esc` or `Ctrl+C` quits
 from the unlock screen; in settings opened from it, `Esc` returns to it first.
+The unlock screen warns when the database or key file is missing, for example
+on a volume unmounted while keetui was locked, and looks again every 2 seconds,
+so the warning goes once the volume is mounted. keetui refuses to start on a
+missing file or a folder.
 
 ### Browser
 

@@ -138,8 +138,13 @@ func main() {
 		}
 		fmt.Printf("Database created: %s\n", dbPath)
 	} else {
-		if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		info, err := os.Stat(dbPath)
+		if os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "Error: file %q does not exist\n", dbPath)
+			os.Exit(1)
+		}
+		if err == nil && info.IsDir() {
+			fmt.Fprintf(os.Stderr, "Error: %q is a folder, not a database file\n", dbPath)
 			os.Exit(1)
 		}
 	}
