@@ -8,8 +8,8 @@ import (
 )
 
 // dicewareWordList is a curated list of 1050 four-letter words for
-// generating passphrases (~10.0 bits of entropy per word, so the default
-// 6-word passphrase carries ~60 bits). It is inspired by, but not
+// generating passphrases (~10.0 bits of entropy per word, so keetui's
+// default 8-word passphrase carries ~80 bits). It is inspired by, but not
 // identical to, the EFF short word list.
 var dicewareWordList = []string{
 	"acid", "acme", "acre", "aged", "also", "arch", "area", "army",
@@ -147,14 +147,9 @@ var dicewareWordList = []string{
 }
 
 // GeneratePassphrase creates a diceware-style passphrase with the given
-// number of words, separated by the given separator.
+// number of words (4 to 12), separated by the given separator.
 func GeneratePassphrase(wordCount int, separator string) (string, error) {
-	if wordCount < 3 {
-		wordCount = 3
-	}
-	if wordCount > 10 {
-		wordCount = 10
-	}
+	wordCount = min(max(wordCount, 4), 12)
 
 	listLen := big.NewInt(int64(len(dicewareWordList)))
 	words := make([]string, wordCount)

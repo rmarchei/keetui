@@ -24,6 +24,9 @@ const (
 	settingPWLowercase
 	settingPWDigits
 	settingPWSymbols
+	settingPINLength
+	settingPassphraseWords
+	settingPassphraseSeparator
 	settingDefaultPreset
 	settingTheme
 	settingConfirmQuit
@@ -44,6 +47,9 @@ var settingLabels = [settingCount]string{
 	"Lowercase (a-z)",
 	"Digits (0-9)",
 	"Symbols (!@#...)",
+	"PIN length",
+	"Passphrase words",
+	"Passphrase separator",
 	"Default preset",
 	"Theme",
 	"Confirm on quit",
@@ -71,6 +77,9 @@ var settingDescriptions = [settingCount]string{
 	"Include lowercase letters in generated passwords",
 	"Include digits in generated passwords",
 	"Include symbols in generated passwords",
+	"Digits in a generated PIN (4 to 16)",
+	"Words in a generated passphrase (4 to 12; each adds about 10 bits)",
+	"What separates passphrase words: 1 to 3 visible characters, no spaces",
 	"Choose the default password generation preset",
 	"Choose the color theme; auto follows the terminal background, terminal uses its palette",
 	"Confirm before quitting, even without unsaved changes",
@@ -149,6 +158,13 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 	inputs[settingPWDigits].CharLimit = 1
 	inputs[settingPWSymbols].SetValue(boolToStr(cfg.PasswordHasSymbols()))
 	inputs[settingPWSymbols].CharLimit = 1
+
+	inputs[settingPINLength].SetValue(strconv.Itoa(cfg.PINLen()))
+	inputs[settingPINLength].CharLimit = 2
+	inputs[settingPassphraseWords].SetValue(strconv.Itoa(cfg.PassphraseWordCount()))
+	inputs[settingPassphraseWords].CharLimit = 2
+	inputs[settingPassphraseSeparator].SetValue(cfg.PassphraseSep())
+	inputs[settingPassphraseSeparator].CharLimit = config.MaxSeparatorLength
 
 	inputs[settingDefaultPreset].CharLimit = 15
 	inputs[settingDefaultPreset].SetValue(cfg.Preset())
@@ -321,6 +337,19 @@ func (m SettingsModel) draftConfig() (config.Config, map[int]string) {
 	}
 	cfg.AutoLockMinutes = number(settingAutoLock, 5, true)
 	cfg.PasswordLength = number(settingPasswordLength, 8, false)
+	upTo := func(i, minimum, maximum int) int {
+		n := number(i, minimum, false)
+		if errs[i] == "" && n > maximum {
+			errs[i] = fmt.Sprintf("Must be at most %d", maximum)
+		}
+		return n
+	}
+	cfg.PINLength = upTo(settingPINLength, config.MinPINLength, config.MaxPINLength)
+	cfg.PassphraseWords = upTo(settingPassphraseWords, config.MinPassphraseWords, config.MaxPassphraseWords)
+	cfg.PassphraseSeparator = m.inputs[settingPassphraseSeparator].Value()
+	if !config.ValidSeparator(cfg.PassphraseSeparator) {
+		errs[settingPassphraseSeparator] = "Use 1 to 3 visible characters, no spaces"
+	}
 	toggle := func(i int) bool {
 		v := m.inputs[i].Value()
 		if v != "0" && v != "1" {

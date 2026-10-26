@@ -611,3 +611,33 @@ func TestDefaultPresetFallsBackToStrong(t *testing.T) {
 		}
 	}
 }
+
+// PIN length, passphrase words and separator default when unset or out of
+// range, in the config file and in a database's settings.
+func TestGeneratorSettingsLimits(t *testing.T) {
+	if c := Default(); c.PINLen() != 6 || c.PassphraseWordCount() != 8 || c.PassphraseSep() != "-" {
+		t.Errorf("defaults = %d, %d, %q", c.PINLen(), c.PassphraseWordCount(), c.PassphraseSep())
+	}
+	c := Config{PINLength: 3, PassphraseWords: 13, PassphraseSeparator: "a b"}
+	c.Sanitize()
+	if c.PINLength != 0 || c.PassphraseWords != 0 || c.PassphraseSeparator != "" {
+		t.Errorf("sanitized = %d, %d, %q; want all repaired", c.PINLength, c.PassphraseWords, c.PassphraseSeparator)
+	}
+	c = Config{PINLength: 16, PassphraseWords: 4, PassphraseSeparator: "·"}
+	c.Sanitize()
+	if c.PINLen() != 16 || c.PassphraseWordCount() != 4 || c.PassphraseSep() != "·" {
+		t.Errorf("valid values changed: %d, %d, %q", c.PINLen(), c.PassphraseWordCount(), c.PassphraseSep())
+	}
+	for sep, want := range map[string]bool{"-": true, "_-_": true, "": false, "    ": false, "\t": false, "abcd": false, "\x1b": false} {
+		if ValidSeparator(sep) != want {
+			t.Errorf("ValidSeparator(%q) = %v", sep, !want)
+		}
+	}
+	o, err := ParseOverrides(`{"pin_length": 20, "passphrase_words": 10, "passphrase_separator": " "}`)
+	if err != nil || o.PINLength != nil || o.PassphraseWords == nil || *o.PassphraseWords != 10 || o.PassphraseSeparator != nil {
+		t.Fatalf("overrides = %+v, %v", o, err)
+	}
+	if got := Default().Apply(o); got.PassphraseWordCount() != 10 || got.PINLen() != 6 {
+		t.Errorf("applied: %d words, PIN %d", got.PassphraseWordCount(), got.PINLen())
+	}
+}

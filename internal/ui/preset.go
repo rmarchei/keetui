@@ -73,10 +73,10 @@ type PresetPickerModel struct {
 
 func NewPresetPickerModel(cfg config.Config, currentPassword string) PresetPickerModel {
 	presets := []presetOption{
-		{"PIN", "6 digits"},
+		{"PIN", fmt.Sprintf("%d digits", cfg.PINLen())},
 		{"Alphanumeric", "16 chars, A-Z a-z 0-9"},
 		{"Strong", "20 chars, A-Z a-z 0-9 !@#"},
-		{"Passphrase", "6 words, separated by -"},
+		{"Passphrase", fmt.Sprintf("%d words, separated by %s", cfg.PassphraseWordCount(), cfg.PassphraseSep())},
 	}
 	if currentPassword != "" {
 		presets = append(presets, presetOption{"Like current", describePassword(currentPassword)})
@@ -203,13 +203,13 @@ func (m PresetPickerModel) selectPreset() (tea.Model, tea.Cmd) {
 func (m PresetPickerModel) generateForPreset(name string) (string, error) {
 	switch name {
 	case "PIN":
-		return generatePassword(6, "0123456789")
+		return generatePassword(m.cfg.PINLen(), "0123456789")
 	case "Alphanumeric":
 		return generatePassword(16, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 	case "Strong":
 		return generatePassword(20, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+")
 	case "Passphrase":
-		return keepass.GeneratePassphrase(6, "-")
+		return keepass.GeneratePassphrase(m.cfg.PassphraseWordCount(), m.cfg.PassphraseSep())
 	case "Like current":
 		return generateLikeCurrent(m.currentPassword)
 	case "Custom":

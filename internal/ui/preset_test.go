@@ -115,8 +115,31 @@ func TestPresetPickerSelectPassphrasePreview(t *testing.T) {
 		t.Fatalf("expected preview mode, got %d", m.mode)
 	}
 	words := strings.Split(m.generatedPassword, "-")
-	if len(words) != 6 {
-		t.Errorf("passphrase word count = %d, want 6", len(words))
+	if len(words) != 8 {
+		t.Errorf("passphrase word count = %d, want the default 8", len(words))
+	}
+}
+
+// PIN length, passphrase words and separator come from the settings, and
+// the list describes what they make.
+func TestPresetPickerUsesGeneratorSettings(t *testing.T) {
+	cfg := config.Default()
+	cfg.PINLength, cfg.PassphraseWords, cfg.PassphraseSeparator = 10, 5, "."
+	m := NewPresetPickerModel(cfg, "")
+	descriptions := map[string]string{}
+	for _, p := range m.presets {
+		descriptions[p.name] = p.desc
+	}
+	if descriptions["PIN"] != "10 digits" || descriptions["Passphrase"] != "5 words, separated by ." {
+		t.Errorf("descriptions = %q", descriptions)
+	}
+	pin, err := m.generateForPreset("PIN")
+	if err != nil || len(pin) != 10 || strings.Trim(pin, "0123456789") != "" {
+		t.Errorf("PIN = %q, %v", pin, err)
+	}
+	phrase, err := m.generateForPreset("Passphrase")
+	if err != nil || len(strings.Split(phrase, ".")) != 5 {
+		t.Errorf("passphrase = %q, %v", phrase, err)
 	}
 }
 
@@ -434,5 +457,34 @@ func TestPresetPickerFallsBackToStrong(t *testing.T) {
 		if got := m.presets[m.cursor].name; got != "Strong" {
 			t.Errorf("default_preset %q selects %q, want Strong", name, got)
 		}
+	}
+}
+
+// The settings editors check the generator settings' limits.
+func TestGeneratorSettingsValidation(t *testing.T) {
+	m := NewSettingsModel(config.Default())
+	m.inputs[settingPINLength].SetValue("17")
+	m.inputs[settingPassphraseWords].SetValue("3")
+	m.inputs[settingPassphraseSeparator].SetValue(" ")
+	_, errs := m.draftConfig()
+	for _, i := range []int{settingPINLength, settingPassphraseWords, settingPassphraseSeparator} {
+		if errs[i] == "" {
+			t.Errorf("%s accepted an invalid value", settingLabels[i])
+		}
+	}
+	m.inputs[settingPINLength].SetValue("8")
+	m.inputs[settingPassphraseWords].SetValue("10")
+	m.inputs[settingPassphraseSeparator].SetValue("_")
+	cfg, errs := m.draftConfig()
+	if len(errs) != 0 || cfg.PINLen() != 8 || cfg.PassphraseWordCount() != 10 || cfg.PassphraseSep() != "_" {
+		t.Errorf("draft = %d, %d, %q; errors %v", cfg.PINLen(), cfg.PassphraseWordCount(), cfg.PassphraseSep(), errs)
+	}
+
+	m.setDatabase(config.Overrides{}, false)
+	m.db.values[settingPINLength].SetValue("99")
+	m.db.values[settingPassphraseSeparator].SetValue(".")
+	o, errs := m.draftOverrides(cfg)
+	if errs[settingPINLength] == "" || o.PINLength != nil || o.PassphraseSeparator == nil || *o.PassphraseSeparator != "." {
+		t.Errorf("database draft = %+v, errors %v", o, errs)
 	}
 }

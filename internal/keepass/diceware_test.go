@@ -25,28 +25,28 @@ func TestGeneratePassphrase(t *testing.T) {
 }
 
 func TestGeneratePassphraseMinWords(t *testing.T) {
-	// Should enforce minimum of 3 words
+	// Should enforce minimum of 4 words
 	passphrase, err := GeneratePassphrase(1, " ")
 	if err != nil {
 		t.Fatalf("GeneratePassphrase: %v", err)
 	}
 
 	words := strings.Split(passphrase, " ")
-	if len(words) < 3 {
-		t.Errorf("word count = %d, want at least 3", len(words))
+	if len(words) != 4 {
+		t.Errorf("word count = %d, want 4", len(words))
 	}
 }
 
 func TestGeneratePassphraseMaxWords(t *testing.T) {
-	// Should enforce maximum of 10 words
+	// Should enforce maximum of 12 words
 	passphrase, err := GeneratePassphrase(20, " ")
 	if err != nil {
 		t.Fatalf("GeneratePassphrase: %v", err)
 	}
 
 	words := strings.Split(passphrase, " ")
-	if len(words) > 10 {
-		t.Errorf("word count = %d, want at most 10", len(words))
+	if len(words) != 12 {
+		t.Errorf("word count = %d, want 12", len(words))
 	}
 }
 

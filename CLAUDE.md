@@ -175,6 +175,9 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 | `password_length` | 20 | Default length for generated passwords (min: 8) |
 | `show_password_strength` | true | Show password strength indicator in detail and editor views |
 | `default_preset` | `"Strong"` | Default password preset: `PIN`, `Alphanumeric`, `Strong`, `Passphrase`, `Custom` |
+| `pin_length` | 6 | Digits in a generated PIN (4 to 16) |
+| `passphrase_words` | 8 | Words in a generated passphrase (4 to 12; about 10 bits each, so 8 give about 80) |
+| `passphrase_separator` | `"-"` | What separates passphrase words: 1 to 3 visible characters, no spaces |
 | `theme` | `"auto"` | Color theme: `auto` (follows the terminal background, dark without an answer), `dark`, `light`, `high-contrast`, or `terminal` (ANSI palette, never painted) |
 | `colors` | (none) | Per-theme color overrides: theme name → role (`config.ColorRoles`) → `#RGB`/`#RRGGBB`, ANSI `0`-`255`, or `""` (terminal default) |
 | `confirm_quit` | true | Confirm before quitting, even without unsaved changes (`false`: disable) |

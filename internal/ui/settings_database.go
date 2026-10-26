@@ -17,7 +17,8 @@ import (
 // keybindings belong to the user, not the vault, and stay global.
 var databaseSettingList = []int{
 	settingClipboardClear, settingClipboardOSC52, settingAutoLock,
-	settingPasswordLength, settingPWUppercase, settingPWLowercase, settingPWDigits, settingPWSymbols, settingDefaultPreset,
+	settingPasswordLength, settingPWUppercase, settingPWLowercase, settingPWDigits, settingPWSymbols,
+	settingPINLength, settingPassphraseWords, settingPassphraseSeparator, settingDefaultPreset,
 	settingConfirmQuit, settingBackupOnSave,
 }
 
@@ -88,6 +89,12 @@ func overrideValue(o config.Overrides, i int) string {
 		return flag(o.PasswordDigits)
 	case settingPWSymbols:
 		return flag(o.PasswordSymbols)
+	case settingPINLength:
+		return number(o.PINLength)
+	case settingPassphraseWords:
+		return number(o.PassphraseWords)
+	case settingPassphraseSeparator:
+		return text(o.PassphraseSeparator)
 	case settingDefaultPreset:
 		return text(o.DefaultPreset)
 	case settingConfirmQuit:
@@ -123,6 +130,12 @@ func globalValue(cfg config.Config, i int) string {
 		return onOff(cfg.PasswordHasDigits())
 	case settingPWSymbols:
 		return onOff(cfg.PasswordHasSymbols())
+	case settingPINLength:
+		return strconv.Itoa(cfg.PINLen())
+	case settingPassphraseWords:
+		return strconv.Itoa(cfg.PassphraseWordCount())
+	case settingPassphraseSeparator:
+		return cfg.PassphraseSep()
 	case settingDefaultPreset:
 		return cfg.Preset()
 	case settingConfirmQuit:
@@ -246,6 +259,23 @@ func (m SettingsModel) draftOverrides(global config.Config) (config.Overrides, m
 	o.PasswordDigits = flag(settingPWDigits)
 	o.PasswordSymbols = flag(settingPWSymbols)
 	o.DefaultPreset = choice(settingDefaultPreset)
+	upTo := func(i, minimum, maximum int) *int {
+		n := number(i, minimum, false)
+		if n != nil && *n > maximum {
+			errs[i] = fmt.Sprintf("Must be at most %d, or empty to inherit", maximum)
+			return nil
+		}
+		return n
+	}
+	o.PINLength = upTo(settingPINLength, config.MinPINLength, config.MaxPINLength)
+	o.PassphraseWords = upTo(settingPassphraseWords, config.MinPassphraseWords, config.MaxPassphraseWords)
+	if v := value(settingPassphraseSeparator); v != "" {
+		if config.ValidSeparator(v) {
+			o.PassphraseSeparator = &v
+		} else {
+			errs[settingPassphraseSeparator] = "Use 1 to 3 visible characters, no spaces, or empty to inherit"
+		}
+	}
 	o.ConfirmQuit = flag(settingConfirmQuit)
 	o.BackupOnSave = flag(settingBackupOnSave)
 	pick := func(override *bool, inherited bool) bool {

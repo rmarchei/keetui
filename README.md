@@ -20,7 +20,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Copy username, password, URL, or TOTP code to clipboard (auto-cleared after 15s)
 - Mouse support -- click to select fields and entries, scroll wheel navigation
 - Open entry URL in system browser
-- Password generator with preset picker (PIN, Alphanumeric, Strong, Passphrase, Like current, Custom)
+- Password generator with preset picker (PIN, Alphanumeric, Strong, Passphrase, Like current, Custom); PIN length and passphrase words and separator are configurable
 - Offline, pattern-aware password strength estimates and optional HIBP breach checks
 - Create, edit, and delete entries and groups
 - Rename groups
@@ -309,6 +309,9 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `password_digits` | true | Include digits (0-9) in generated passwords |
 | `password_symbols` | true | Include symbols (!@#$%^&*()-_=+) in generated passwords |
 | `default_preset` | `"Strong"` | Default password preset: `PIN`, `Alphanumeric`, `Strong`, `Passphrase`, `Custom` |
+| `pin_length` | 6 | Digits in a generated PIN (4 to 16) |
+| `passphrase_words` | 8 | Words in a generated passphrase (4 to 12; about 10 bits each, so 8 give about 80) |
+| `passphrase_separator` | `"-"` | What separates passphrase words: 1 to 3 visible characters, no spaces |
 | `theme` | `"auto"` | Color theme: `auto` (light or dark, following the terminal background; dark if the terminal does not say), `dark`, `light`, `high-contrast`, or `terminal` (the terminal's own palette). A theme chosen by name paints its own background when the terminal reports one of the other tone, such as `light` on a dark terminal |
 | `colors` | (none) | Override theme colors, per theme: see [Colors](#colors) |
 | `confirm_quit` | true | Confirm before quitting, even without unsaved changes (`false`: disable) |

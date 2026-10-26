@@ -25,6 +25,9 @@ type Overrides struct {
 	PasswordDigits        *bool   `json:"password_digits,omitempty"`
 	PasswordSymbols       *bool   `json:"password_symbols,omitempty"`
 	DefaultPreset         *string `json:"default_preset,omitempty"`
+	PINLength             *int    `json:"pin_length,omitempty"`
+	PassphraseWords       *int    `json:"passphrase_words,omitempty"`
+	PassphraseSeparator   *string `json:"passphrase_separator,omitempty"`
 	ConfirmQuit           *bool   `json:"confirm_quit,omitempty"`
 	BackupOnSave          *bool   `json:"backup_on_save,omitempty"`
 }
@@ -63,6 +66,16 @@ func (o *Overrides) sanitize() {
 	}
 	if o.ClipboardOSC52 != nil && !slices.Contains(OSC52Modes, *o.ClipboardOSC52) {
 		o.ClipboardOSC52 = nil
+	}
+	within := func(p **int, minimum, maximum int) {
+		if *p != nil && (**p < minimum || **p > maximum) {
+			*p = nil
+		}
+	}
+	within(&o.PINLength, MinPINLength, MaxPINLength)
+	within(&o.PassphraseWords, MinPassphraseWords, MaxPassphraseWords)
+	if o.PassphraseSeparator != nil && !ValidSeparator(*o.PassphraseSeparator) {
+		o.PassphraseSeparator = nil
 	}
 	if o.DefaultPreset != nil {
 		if name, ok := CanonicalPreset(*o.DefaultPreset); ok {
@@ -108,6 +121,15 @@ func (c Config) Apply(o Overrides) Config {
 	}
 	if o.DefaultPreset != nil {
 		c.DefaultPreset = *o.DefaultPreset
+	}
+	if o.PINLength != nil {
+		c.PINLength = *o.PINLength
+	}
+	if o.PassphraseWords != nil {
+		c.PassphraseWords = *o.PassphraseWords
+	}
+	if o.PassphraseSeparator != nil {
+		c.PassphraseSeparator = *o.PassphraseSeparator
 	}
 	if o.ConfirmQuit != nil {
 		c.ConfirmQuit = boolPtr(*o.ConfirmQuit)

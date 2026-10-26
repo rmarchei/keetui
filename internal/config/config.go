@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Config holds all configurable settings.
@@ -27,6 +29,9 @@ type Config struct {
 	PasswordDigits        *bool        `json:"password_digits,omitempty"`
 	PasswordSymbols       *bool        `json:"password_symbols,omitempty"`
 	DefaultPreset         string       `json:"default_preset,omitempty"`
+	PINLength             int          `json:"pin_length,omitempty"`
+	PassphraseWords       int          `json:"passphrase_words,omitempty"`
+	PassphraseSeparator   string       `json:"passphrase_separator,omitempty"`
 	ThemeName             string       `json:"theme,omitempty"`
 	ConfirmQuit           *bool        `json:"confirm_quit,omitempty"`
 	BackupOnSave          *bool        `json:"backup_on_save,omitempty"`
@@ -159,6 +164,47 @@ func (c Config) PasswordCharset() string {
 // Confirmation is enabled unless explicitly disabled.
 func (c Config) ConfirmOnQuit() bool {
 	return c.ConfirmQuit == nil || *c.ConfirmQuit
+}
+
+// Generator limits. Passphrase words carry about 10 bits each, so the
+// default 8 give about 80.
+const (
+	MinPINLength, MaxPINLength, DefaultPINLength                   = 4, 16, 6
+	MinPassphraseWords, MaxPassphraseWords, DefaultPassphraseWords = 4, 12, 8
+	MaxSeparatorLength                                             = 3
+	DefaultSeparator                                               = "-"
+)
+
+// PINLen returns the length of generated PINs.
+func (c Config) PINLen() int {
+	if c.PINLength < MinPINLength || c.PINLength > MaxPINLength {
+		return DefaultPINLength
+	}
+	return c.PINLength
+}
+
+// PassphraseWordCount returns the number of words in generated passphrases.
+func (c Config) PassphraseWordCount() int {
+	if c.PassphraseWords < MinPassphraseWords || c.PassphraseWords > MaxPassphraseWords {
+		return DefaultPassphraseWords
+	}
+	return c.PassphraseWords
+}
+
+// PassphraseSep returns what separates the words of generated passphrases.
+func (c Config) PassphraseSep() string {
+	if !ValidSeparator(c.PassphraseSeparator) {
+		return DefaultSeparator
+	}
+	return c.PassphraseSeparator
+}
+
+// ValidSeparator reports a passphrase separator keetui accepts: one to
+// MaxSeparatorLength visible characters, no spaces.
+func ValidSeparator(s string) bool {
+	n := utf8.RuneCountInString(s)
+	return n >= 1 && n <= MaxSeparatorLength && utf8.ValidString(s) &&
+		!strings.ContainsFunc(s, func(r rune) bool { return !unicode.IsGraphic(r) || unicode.IsSpace(r) })
 }
 
 // HidePasswords reports privacy mode: passwords stay hidden while editing,
@@ -321,6 +367,15 @@ func (c *Config) Sanitize() {
 		c.PasswordLength = 20
 	}
 	c.DefaultPreset, _ = CanonicalPreset(c.DefaultPreset) // "": Strong
+	if c.PINLength != 0 && c.PINLen() != c.PINLength {
+		c.PINLength = 0
+	}
+	if c.PassphraseWords != 0 && c.PassphraseWordCount() != c.PassphraseWords {
+		c.PassphraseWords = 0
+	}
+	if c.PassphraseSeparator != "" && !ValidSeparator(c.PassphraseSeparator) {
+		c.PassphraseSeparator = ""
+	}
 }
 
 // Load reads config from ~/.config/keetui/config.json, falling back to defaults.
