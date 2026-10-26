@@ -2,7 +2,9 @@
 package keepass
 
 import (
+	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/url"
@@ -29,6 +31,7 @@ type DB struct {
 	// binary garbage, i.e. the inner stream cipher was misaligned while
 	// decoding (e.g. a format feature the KeePass library does not handle).
 	suspectCorruption bool
+	disk              diskStamp // what keetui last read from or wrote to Path
 }
 
 // SuspectCorruption reports whether the database's protected values looked
@@ -266,7 +269,8 @@ func CreateWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	if err := gokeepasslib.NewEncoder(file).Encode(db); err != nil {
+	sum := sha256.New()
+	if err := gokeepasslib.NewEncoder(io.MultiWriter(file, sum)).Encode(db); err != nil {
 		return nil, fmt.Errorf("encode database: %w", err)
 	}
 
@@ -280,6 +284,7 @@ func CreateWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 		keyFilePath:       keyFilePath,
 		unlocked:          true,
 		suspectCorruption: detectCorruptedProtectedValues(db),
+		disk:              newDiskStamp(path, [sha256.Size]byte(sum.Sum(nil)), creds, db),
 	}, nil
 }
 
@@ -288,16 +293,16 @@ func Open(path, password string) (*DB, error) {
 	if err := checkFileExtension(path); err != nil {
 		return nil, err
 	}
-	file, err := os.Open(path)
+	// Read whole, so that the checksum is of exactly what was decoded.
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
 	}
-	defer func() { _ = file.Close() }()
 
 	db := gokeepasslib.NewDatabase()
 	db.Credentials = gokeepasslib.NewPasswordCredentials(password)
 
-	if err := gokeepasslib.NewDecoder(file).Decode(db); err != nil {
+	if err := gokeepasslib.NewDecoder(bytes.NewReader(data)).Decode(db); err != nil {
 		return nil, fmt.Errorf("decode database: %w", err)
 	}
 
@@ -312,6 +317,7 @@ func Open(path, password string) (*DB, error) {
 		Database:          db,
 		unlocked:          true,
 		suspectCorruption: detectCorruptedProtectedValues(db),
+		disk:              newDiskStamp(path, sha256.Sum256(data), db.Credentials, db),
 	}, nil
 }
 
@@ -320,11 +326,10 @@ func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 	if err := checkFileExtension(path); err != nil {
 		return nil, err
 	}
-	file, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
 	}
-	defer func() { _ = file.Close() }()
 
 	creds, err := buildCredentials(password, keyFilePath)
 	if err != nil {
@@ -334,7 +339,7 @@ func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 	db := gokeepasslib.NewDatabase()
 	db.Credentials = creds
 
-	if err := gokeepasslib.NewDecoder(file).Decode(db); err != nil {
+	if err := gokeepasslib.NewDecoder(bytes.NewReader(data)).Decode(db); err != nil {
 		return nil, fmt.Errorf("decode database: %w", err)
 	}
 
@@ -348,6 +353,7 @@ func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 		keyFilePath:       keyFilePath,
 		unlocked:          true,
 		suspectCorruption: detectCorruptedProtectedValues(db),
+		disk:              newDiskStamp(path, sha256.Sum256(data), creds, db),
 	}, nil
 }
 
@@ -408,10 +414,24 @@ func (d *DB) Save() error {
 	return d.SaveAs(d.Path)
 }
 
-// SaveAs writes the database to the given path using atomic file replacement.
-// It writes to a temporary file first, then renames it to the target path
-// to avoid data loss if the process is interrupted during save.
+// SaveAs writes the database to the given path, which becomes its path. On
+// its own file it first checks that the file still holds what keetui last
+// read or wrote there, and returns a *DiskError instead of overwriting
+// another program's changes or recreating a file that is gone.
 func (d *DB) SaveAs(path string) error {
+	if d.ownsPath(path) {
+		if state := d.CheckDisk(); state != DiskUnchanged {
+			return &DiskError{State: state, Path: d.Path}
+		}
+	}
+	return d.write(path)
+}
+
+// write saves the database to path using atomic file replacement. It writes
+// to a temporary file first, then renames it to the target path to avoid
+// data loss if the process is interrupted during save.
+func (d *DB) write(path string) error {
+	given := path
 	// Follow a symlinked database path so the final rename lands on the
 	// link's target instead of replacing the link with a regular file
 	// (which would silently fork the database from its real location).
@@ -457,7 +477,8 @@ func (d *DB) SaveAs(path string) error {
 
 	// os.CreateTemp already creates with mode 0600 (O_EXCL ensures no race).
 
-	if err := gokeepasslib.NewEncoder(tmpFile).Encode(d.Database); err != nil {
+	sum := sha256.New()
+	if err := gokeepasslib.NewEncoder(io.MultiWriter(tmpFile, sum)).Encode(d.Database); err != nil {
 		_ = tmpFile.Close()
 		return fmt.Errorf("encode database: %w", err)
 	}
@@ -488,6 +509,8 @@ func (d *DB) SaveAs(path string) error {
 	}
 
 	success = true
+	d.Path = given
+	d.disk = newDiskStamp(given, [sha256.Size]byte(sum.Sum(nil)), d.Database.Credentials, d.Database)
 	return nil
 }
 
@@ -872,7 +895,15 @@ func (d *DB) ToggleFavorite(entryUUID gokeepasslib.UUID) error {
 		tags = append(tags, "favorite")
 	}
 	entry.Tags = strings.Join(tags, ";")
+	touch(entry)
 	return nil
+}
+
+// touch records a change to the entry, so that a sync (MergeDisk) can tell
+// which side changed it last.
+func touch(entry *gokeepasslib.Entry) {
+	now := w.Now()
+	entry.Times.LastModificationTime = &now
 }
 
 // RecycleBinEnabled returns whether the recycle bin is enabled in database metadata.
@@ -941,10 +972,7 @@ func (d *DB) DeleteEntry(entryUUID gokeepasslib.UUID) error {
 		rbUUID = d.ensureRecycleBin()
 		return d.MoveEntry(entryUUID, rbUUID)
 	}
-	if !removeEntry(&d.Database.Content.Root.Groups[0], entryUUID) {
-		return fmt.Errorf("entry not found")
-	}
-	return nil
+	return d.PermanentlyDeleteEntry(entryUUID)
 }
 
 // PermanentlyDeleteEntry removes an entry without using the recycle bin.
@@ -955,6 +983,7 @@ func (d *DB) PermanentlyDeleteEntry(entryUUID gokeepasslib.UUID) error {
 	if !removeEntry(&d.Database.Content.Root.Groups[0], entryUUID) {
 		return fmt.Errorf("entry not found")
 	}
+	d.recordDeletedEntry(entryUUID)
 	return nil
 }
 
@@ -993,6 +1022,9 @@ func (d *DB) MoveEntry(entryUUID, targetGroupUUID gokeepasslib.UUID) error {
 		return fmt.Errorf("entry not found")
 	}
 
+	// As KeePass does: a sync takes the most recent location (MergeDisk).
+	now := w.Now()
+	entry.Times.LocationChanged = &now
 	target.Entries = append(target.Entries, *entry)
 	return nil
 }
@@ -1041,6 +1073,8 @@ func (d *DB) MoveGroup(groupUUID, targetGroupUUID gokeepasslib.UUID) error {
 		return fmt.Errorf("target group lost after extraction")
 	}
 
+	now := w.Now()
+	extracted.Times.LocationChanged = &now
 	target.Groups = append(target.Groups, *extracted)
 	return nil
 }
@@ -1086,6 +1120,8 @@ func (d *DB) RenameGroup(groupUUID gokeepasslib.UUID, newName string) error {
 		return fmt.Errorf("group not found")
 	}
 	g.Name = newName
+	now := w.Now()
+	g.Times.LastModificationTime = &now
 	return nil
 }
 
@@ -1113,10 +1149,7 @@ func (d *DB) DeleteGroup(groupUUID gokeepasslib.UUID) error {
 		rbUUID := d.ensureRecycleBin()
 		return d.MoveGroup(groupUUID, rbUUID)
 	}
-	if !removeGroup(&d.Database.Content.Root.Groups[0], groupUUID) {
-		return fmt.Errorf("group not found")
-	}
-	return nil
+	return d.PermanentlyDeleteGroup(groupUUID)
 }
 
 // PermanentlyDeleteGroup removes a group without using the recycle bin.
@@ -1124,9 +1157,11 @@ func (d *DB) PermanentlyDeleteGroup(groupUUID gokeepasslib.UUID) error {
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return fmt.Errorf("database has no root group")
 	}
-	if !removeGroup(&d.Database.Content.Root.Groups[0], groupUUID) {
+	g := extractGroup(&d.Database.Content.Root.Groups[0], groupUUID)
+	if g == nil {
 		return fmt.Errorf("group not found")
 	}
+	d.recordDeleted(g, false)
 	return nil
 }
 
@@ -1150,6 +1185,7 @@ func (d *DB) EmptyRecycleBin() error {
 	if rbGroup == nil {
 		return fmt.Errorf("recycle bin not found")
 	}
+	d.recordDeleted(rbGroup, true)
 	rbGroup.Entries = nil
 	rbGroup.Groups = nil
 	return nil

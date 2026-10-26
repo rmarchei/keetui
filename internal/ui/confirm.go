@@ -13,8 +13,9 @@ type ConfirmModel struct {
 	returnState viewState // owned by this dialog, including when a quit prompt replaces it
 	message     string
 	onConfirm   tea.Cmd
-	selected    bool // false = No, true = Yes
-	destructive bool // Yes loses data: drawn in the error color
+	onNo        tea.Cmd // nil: No cancels, as esc always does
+	selected    bool    // false = No, true = Yes
+	destructive bool    // Yes loses data: drawn in the error color
 	width       int
 	height      int
 }
@@ -23,6 +24,21 @@ type ConfirmModel struct {
 func (m ConfirmModel) Destructive() ConfirmModel {
 	m.destructive = true
 	return m
+}
+
+// OnNo gives No an action of its own, such as a second question; esc still
+// cancels.
+func (m ConfirmModel) OnNo(cmd tea.Cmd) ConfirmModel {
+	m.onNo = cmd
+	return m
+}
+
+// no is what No does.
+func (m ConfirmModel) no() tea.Cmd {
+	if m.onNo != nil {
+		return m.onNo
+	}
+	return func() tea.Msg { return CancelEditMsg{} }
 }
 
 // The return target is required: creating a dialog cannot accidentally reuse
@@ -53,7 +69,7 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch {
 			case d.no.contains(msg.X, msg.Y):
 				m.selected = false
-				return m, func() tea.Msg { return CancelEditMsg{} }
+				return m, m.no()
 			case d.yes.contains(msg.X, msg.Y):
 				m.selected = true
 				return m, m.onConfirm
@@ -69,7 +85,9 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return RequestQuitMsg{} }
 		case "y", "Y":
 			return m, m.onConfirm
-		case "n", "N", "esc":
+		case "n", "N":
+			return m, m.no()
+		case "esc":
 			return m, func() tea.Msg { return CancelEditMsg{} }
 		case "left", "right", "tab", "shift+tab", "h", "l":
 			m.selected = !m.selected
@@ -77,7 +95,7 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.selected {
 				return m, m.onConfirm
 			}
-			return m, func() tea.Msg { return CancelEditMsg{} }
+			return m, m.no()
 		}
 	}
 
@@ -126,7 +144,11 @@ func (m ConfirmModel) dialog() confirmDialog {
 	no := button("No", !m.selected, false)
 	yes := button("Yes", m.selected, m.destructive)
 	message := valueStyle.Render(wrapContent(sanitizeDisplay(m.message), inner))
-	hints := ansi.Truncate(strings.TrimSpace(renderHints(inner+1, "y: yes", "n/esc: no", "tab: switch")), inner, "…")
+	keys := []string{"y: yes", "n/esc: no", "tab: switch"}
+	if m.onNo != nil {
+		keys = []string{"y: yes", "n: no", "esc: cancel", "tab: switch"}
+	}
+	hints := ansi.Truncate(strings.TrimSpace(renderHints(inner+1, keys...)), inner, "…")
 	body := message + "\n\n" + no + "  " + yes + "\n\n" + hints
 
 	border := primaryColor

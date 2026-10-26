@@ -75,6 +75,7 @@ func (d *DB) InsertEntrySnapshot(groupUUID gokeepasslib.UUID, s *EntrySnapshot) 
 	entry := cloneEntry(s.entry)
 	rebindEntryBinaries(&entry, d.repoolBinaries(s.binaries))
 	g.Entries = append(g.Entries, entry)
+	d.forgetDeleted(entry.UUID)
 	return nil
 }
 
@@ -109,6 +110,7 @@ func (d *DB) InsertGroupSnapshot(parentUUID gokeepasslib.UUID, s *GroupSnapshot)
 	group := cloneGroup(s.group)
 	rebindGroupBinaries(&group, d.repoolBinaries(s.binaries))
 	parent.Groups = append(parent.Groups, group)
+	d.forgetDeleted(groupIDs(&group)...)
 	return nil
 }
 

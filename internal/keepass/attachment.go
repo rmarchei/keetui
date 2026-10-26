@@ -120,6 +120,7 @@ func (d *DB) AddAttachment(entryUUID gokeepasslib.UUID, name string, data []byte
 
 	bin := d.Database.AddBinary(data)
 	entry.Binaries = append(entry.Binaries, bin.CreateReference(name))
+	touch(entry)
 
 	return nil
 }
@@ -151,6 +152,7 @@ func (d *DB) DeleteAttachment(entryUUID gokeepasslib.UUID, name string) error {
 	for i, ref := range entry.Binaries {
 		if ref.Name == name {
 			entry.Binaries = append(entry.Binaries[:i], entry.Binaries[i+1:]...)
+			touch(entry)
 			return nil
 		}
 	}

@@ -64,7 +64,24 @@ type saveResultMsg struct {
 	err     error
 	path    string
 	upgrade bool
+	merged  *keepass.SyncResult // the changes on disk merged in before the save
 }
+
+// diskSave is a save waiting on what to do about the file on disk (see
+// keepass.DiskError): what the save was for.
+type diskSave struct {
+	lock, upgrade bool
+	path          string
+}
+
+// diskMergeMsg merges the changes made to the file on disk, then saves.
+type diskMergeMsg struct{ diskSave }
+
+// diskOverwriteAskMsg asks whether to overwrite the changes on disk.
+type diskOverwriteAskMsg struct{ diskSave }
+
+// diskOverwriteMsg saves over the file on disk as it is, or writes it again.
+type diskOverwriteMsg struct{ diskSave }
 
 // DuplicateEntryMsg requests duplicating an entry.
 type DuplicateEntryMsg struct {
@@ -1112,6 +1129,27 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case saveResultMsg:
 		return m.handleSaveResult(msg)
 
+	case diskMergeMsg:
+		return m.saveOnDisk(msg.diskSave, "Merging the changes on disk…", func(db *keepass.DB) saveResultMsg {
+			result, err := db.MergeDisk()
+			if err != nil {
+				return saveResultMsg{err: fmt.Errorf("could not merge the changes on disk: %w", err)}
+			}
+			return saveResultMsg{err: db.SaveAs(msg.path), merged: &result}
+		})
+
+	case diskOverwriteAskMsg:
+		m.confirm = NewConfirmModel(viewBrowser,
+			fmt.Sprintf("Overwrite %s with your version? The changes made to it elsewhere are lost.", filepath.Base(msg.path)),
+			func() tea.Msg { return diskOverwriteMsg(msg) }).Destructive()
+		m.state = viewConfirm
+		return m, nil
+
+	case diskOverwriteMsg:
+		return m.saveOnDisk(msg.diskSave, "Saving…", func(db *keepass.DB) saveResultMsg {
+			return saveResultMsg{err: db.Overwrite()}
+		})
+
 	case BackToBrowserMsg:
 		if m.db == nil {
 			// Settings opened from the unlock screen return to it.
@@ -1205,20 +1243,29 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.scheduleAutoLockIn(d - idle)
 			return m, cmd
 		}
+		merged := false
 		if m.dirty && !m.readOnly {
-			if err := m.db.Save(); err != nil {
+			var err error
+			if merged, err = m.saveBeforeLock(); err != nil {
 				// Abort the lock rather than discard unsaved changes; keep the
 				// database open, surface the error, and retry next interval.
+				var refresh tea.Cmd
+				if merged {
+					refresh = m.mergedIn()
+				}
 				cmd := m.scheduleAutoLock()
 				return m, tea.Batch(
 					statusCmd(fmt.Sprintf("Auto-lock aborted: save failed: %s", err), true),
-					cmd,
+					cmd, refresh,
 				)
 			}
 			m.dirty = false
 		}
 		cmd := m.lockDatabase()
 		m.unlock.err = fmt.Errorf("locked due to inactivity")
+		if merged {
+			m.unlock.err = fmt.Errorf("locked due to inactivity; the changes another program made to the file were merged in before saving")
+		}
 		return m, cmd
 
 	case confirmLockMsg:
@@ -1310,6 +1357,7 @@ func needsDatabase(msg tea.Msg) bool {
 		ShowHistoryMsg, BackToDetailMsg, hibpResultMsg, ExtractAttachmentMsg, confirmExtractAttachmentMsg,
 		DeleteAttachmentMsg, confirmDeleteAttachmentMsg, AddAttachmentMsg, SaveEntryMsg, SaveGroupMsg,
 		SaveAsStartMsg, SaveAsMsg, confirmSaveAsMsg, CopyToClipboardMsg, OpenURLMsg, confirmLockMsg,
+		diskMergeMsg, diskOverwriteAskMsg, diskOverwriteMsg,
 		RestoreHistoryMsg, confirmRestoreHistoryMsg:
 		return true
 	}
@@ -1789,11 +1837,20 @@ func (m AppModel) handleSaveResult(msg saveResultMsg) (tea.Model, tea.Cmd) {
 	m.saving = false
 	lock := m.lockAfterSave
 	m.lockAfterSave = false
+	var refresh tea.Cmd
+	if msg.merged != nil {
+		refresh = m.mergedIn()
+	}
+	var diskErr *keepass.DiskError
+	if errors.As(msg.err, &diskErr) {
+		next, cmd := m.askDisk(diskErr, diskSave{lock: lock, upgrade: msg.upgrade, path: msg.path})
+		return next, tea.Batch(refresh, cmd)
+	}
 	if msg.err != nil {
 		if lock {
-			return m, statusCmd(fmt.Sprintf("Not locked: error saving: %s", msg.err), true)
+			return m, tea.Batch(refresh, statusCmd(fmt.Sprintf("Not locked: error saving: %s", msg.err), true))
 		}
-		return m, statusCmd(fmt.Sprintf("Error saving: %s", msg.err), true)
+		return m, tea.Batch(refresh, statusCmd(fmt.Sprintf("Error saving: %s", msg.err), true))
 	}
 	m.db.Path = msg.path
 	m.filePath = msg.path
@@ -1801,13 +1858,128 @@ func (m AppModel) handleSaveResult(msg saveResultMsg) (tea.Model, tea.Cmd) {
 	if lock {
 		cmd := m.lockDatabase()
 		m.unlock.notice = "Saved and locked."
+		if msg.merged != nil {
+			m.unlock.notice = "Merged the changes on disk, saved and locked."
+		}
 		return m, cmd
 	}
 	text := fmt.Sprintf("Database saved as %s", filepath.Base(msg.path))
 	if msg.upgrade {
 		text = fmt.Sprintf("Upgraded to KDBX 4 and saved as %s", filepath.Base(msg.path))
 	}
-	return m, statusCmd(text, false)
+	if msg.merged == nil {
+		return m, statusCmd(text, false)
+	}
+	text = fmt.Sprintf("Merged the changes on disk (%s) and saved", syncSummary(*msg.merged))
+	detail := ""
+	if n := msg.merged.Kept; n > 0 {
+		detail = fmt.Sprintf("%d %s missing from the file on disk %s kept here. The file does not record "+
+			"%s as deleted (KeePass clients record what they delete for good), so it could be an older copy: "+
+			"a sync conflict, a restored backup. Delete %s again if %s should go.",
+			n, plural(n, "entry", "entries"), plural(n, "was", "were"), plural(n, "it", "them"),
+			plural(n, "it", "them"), plural(n, "it", "they"))
+		text += fmt.Sprintf("; kept %d missing there", n)
+	}
+	return m, tea.Batch(refresh, statusDetailCmd(text, false, detail))
+}
+
+// askDisk asks what to do about a database file another program changed or
+// removed since keetui read it.
+func (m AppModel) askDisk(e *keepass.DiskError, save diskSave) (tea.Model, tea.Cmd) {
+	name := filepath.Base(e.Path)
+	switch e.State {
+	case keepass.DiskChanged:
+		m.confirm = NewConfirmModel(viewBrowser,
+			fmt.Sprintf("%s was changed by another program or a sync since keetui read it. Merge those changes into yours, then save?", name),
+			func() tea.Msg { return diskMergeMsg{save} }).
+			OnNo(func() tea.Msg { return diskOverwriteAskMsg{save} })
+	case keepass.DiskMissing:
+		m.confirm = NewConfirmModel(viewBrowser,
+			fmt.Sprintf("%s is no longer on disk: another program moved or deleted it. Save it there again?", name),
+			func() tea.Msg { return diskOverwriteMsg{save} })
+	default:
+		what := "Not saved"
+		if save.lock {
+			what = "Not locked"
+		}
+		return m, statusCmd(fmt.Sprintf("%s: %s", what, e), true)
+	}
+	m.state = viewConfirm
+	m.statusText, m.statusError, m.statusDetail = "Not saved yet", false, ""
+	return m, nil
+}
+
+// saveOnDisk runs a save that answers askDisk, gated like any save.
+func (m AppModel) saveOnDisk(save diskSave, status string, run func(*keepass.DB) saveResultMsg) (tea.Model, tea.Cmd) {
+	m.state = viewBrowser
+	m.saving = true
+	m.lockAfterSave = save.lock
+	m.statusText, m.statusError, m.statusDetail = status, false, ""
+	db := m.db
+	return m, func() tea.Msg {
+		result := run(db)
+		result.path, result.upgrade = save.path, save.upgrade
+		return result
+	}
+}
+
+// mergedIn follows a merge of the changes on disk: the database differs
+// from the one the undo history and the views were of.
+func (m *AppModel) mergedIn() tea.Cmd {
+	m.dirty = true
+	m.undoStack.clear()
+	m.refreshEntryCount()
+	return func() tea.Msg { return RefreshMsg{} }
+}
+
+// saveBeforeLock saves before an auto-lock. Nobody is there to answer for
+// a file another program changed, so its changes are merged in first (a
+// merge loses nothing on either side), and a file deleted elsewhere is
+// written again; a folder that is gone still stops the lock.
+func (m AppModel) saveBeforeLock() (merged bool, err error) {
+	err = m.db.Save()
+	var diskErr *keepass.DiskError
+	if !errors.As(err, &diskErr) {
+		return false, err
+	}
+	switch diskErr.State {
+	case keepass.DiskChanged:
+		if _, err := m.db.MergeDisk(); err != nil {
+			return false, fmt.Errorf("the file changed on disk and could not be merged: %w", err)
+		}
+		return true, m.db.Save()
+	case keepass.DiskMissing:
+		return false, m.db.Overwrite()
+	}
+	return false, err
+}
+
+// plural picks the word for n of something.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// syncSummary lists what a merge took from the file on disk.
+func syncSummary(r keepass.SyncResult) string {
+	var parts []string
+	for _, p := range []struct {
+		n    int
+		what string
+	}{{r.Added, "added"}, {r.Updated, "updated"}, {r.Moved, "moved"}, {r.Deleted, "deleted"}, {r.Restored, "restored"}} {
+		if p.n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", p.n, p.what))
+		}
+	}
+	if r.Groups > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", r.Groups, plural(r.Groups, "group", "groups")))
+	}
+	if len(parts) == 0 {
+		return "nothing new"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // Input stays gated until encryption finishes. Set feedback synchronously so
