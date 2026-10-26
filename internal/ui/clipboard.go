@@ -129,6 +129,9 @@ type systemClipboard struct {
 	terminal terminalRoutes       // OSC 52
 	detect   func() remoteSession // nil: the user is local
 	held     *heldCopy
+	// A route change can leave an older native copy behind if its clear
+	// fails. Keep its ownership check independently of the new terminal copy.
+	previousNative *heldCopy
 }
 
 type heldCopy struct {
@@ -205,6 +208,11 @@ func (c *systemClipboard) copy(value string, opts copyOptions) (copyResult, erro
 	}
 	prev := c.held
 	c.held = newHeldCopy([]byte(value), res, terminal)
+	if res.native {
+		// The new native write replaced the earlier value; retrying its
+		// clear would now risk erasing the new copy.
+		c.previousNative = nil
+	}
 	c.clearSuperseded(prev, res)
 	return res, nil
 }
@@ -214,11 +222,12 @@ func (c *systemClipboard) copy(value string, opts copyOptions) (copyResult, erro
 // new one went only to the terminal (the session turned remote), and the
 // terminal copy, once, when the new one went only to the local clipboard.
 func (c *systemClipboard) clearSuperseded(prev *heldCopy, next copyResult) {
+	if prev != nil && prev.result.native && !next.native {
+		c.previousNative = prev
+	}
+	_, _ = c.clearPreviousNative()
 	if prev == nil {
 		return
-	}
-	if prev.result.native && !next.native && c.native.holds(prev.matches, prev.result.terminal) {
-		_ = c.native.clear()
 	}
 	switch {
 	case !prev.result.terminal || next.terminal:
@@ -229,9 +238,45 @@ func (c *systemClipboard) clearSuperseded(prev *heldCopy, next copyResult) {
 	}
 }
 
+// clearPreviousNative rechecks ownership on every retry: a failed clear
+// must not grant permission to erase something copied by another app later.
+func (c *systemClipboard) clearPreviousNative() (clearOutcome, error) {
+	h := c.previousNative
+	if h == nil {
+		return clearNothing, nil
+	}
+	if !c.native.holds(h.matches, h.result.terminal) {
+		c.previousNative = nil
+		return clearChanged, nil
+	}
+	if err := c.native.clear(); err != nil {
+		return clearNothing, fmt.Errorf("clear previous clipboard copy: %w", err)
+	}
+	c.previousNative = nil
+	return clearDone, nil
+}
+
 func (c *systemClipboard) release() (clearResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	previousOutcome, previousErr := c.clearPreviousNative()
+	result, err := c.releaseHeld()
+	if result.outcome == clearNothing {
+		result.outcome = previousOutcome
+	}
+	if result.pending() && err == nil {
+		// A pending terminal clear needs a successful result to keep its
+		// existing display-tick retry armed. Defer the older native error
+		// until that clear completes or fails; its ownership stays tracked
+		// and is retried alongside each pending terminal release.
+		return result, nil
+	}
+	return result, errors.Join(previousErr, err)
+}
+
+// releaseHeld clears the latest copy even when an older native clear failed.
+// The caller holds c.mu.
+func (c *systemClipboard) releaseHeld() (clearResult, error) {
 	h := c.held
 	if h == nil {
 		return clearResult{}, nil
