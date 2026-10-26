@@ -165,7 +165,8 @@ Use `PageUp` / `PageDown` to read long unlock errors, and `j` / `k` or
 | `y` | Duplicate entry |
 | `f` | Toggle favorite on entry |
 | `x` | Cut entry or group (for move) |
-| `v` | Paste cut item into current group |
+| `v` | Paste the cut item into the selected group, or into the current group when an entry is selected (never into the recycle bin) |
+| `V` | Paste the cut item into the current group |
 | `d` | Delete entry/group |
 | `i` | Database stats |
 | `I` | Password audit |

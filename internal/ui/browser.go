@@ -314,6 +314,18 @@ func (m BrowserModel) currentGroup() keepass.Group {
 	return m.stack[len(m.stack)-1].group
 }
 
+// pasteTarget is where a paste goes: the selected group, unless here is
+// set, the cursor is on an entry or the selected group is the one cut;
+// otherwise the group shown.
+func (m BrowserModel) pasteTarget(here bool) keepass.Group {
+	if !here && len(m.items) > 0 {
+		if it := m.items[m.cursor]; it.isGroup && (m.cutGroup == nil || !it.group.UUID.Compare(*m.cutGroup)) {
+			return it.group
+		}
+	}
+	return m.currentGroup()
+}
+
 // inRecycleBin returns true if the current group or any ancestor is the recycle bin.
 func (m BrowserModel) inRecycleBin() bool {
 	for _, f := range m.stack {
@@ -781,24 +793,28 @@ func (m BrowserModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case m.keys.Paste:
+		case m.keys.Paste, m.keys.PasteHere:
 			if m.readOnly {
 				return m, func() tea.Msg { return StatusMsg{Text: "Read-only mode", IsError: true} }
 			}
-			// Paste cut entry or group into current group
-			if m.cutEntry != nil {
-				entryUUID := *m.cutEntry
-				cg := m.currentGroup()
+			if m.cutEntry == nil && m.cutGroup == nil {
+				break
+			}
+			target := m.pasteTarget(msg.String() == m.keys.PasteHere)
+			if m.inRecycleBin() || m.db.IsRecycleBin(target.UUID) {
 				return m, func() tea.Msg {
-					return PasteEntryMsg{EntryUUID: entryUUID, TargetGroupUUID: cg.UUID}
+					return StatusMsg{Text: fmt.Sprintf("Nothing is pasted into the recycle bin: %s moves items there", m.keys.Delete), IsError: true}
 				}
 			}
-			if m.cutGroup != nil {
-				groupUUID := *m.cutGroup
-				cg := m.currentGroup()
+			if m.cutEntry != nil {
+				entryUUID := *m.cutEntry
 				return m, func() tea.Msg {
-					return PasteGroupMsg{GroupUUID: groupUUID, TargetGroupUUID: cg.UUID}
+					return PasteEntryMsg{EntryUUID: entryUUID, TargetGroupUUID: target.UUID, TargetName: target.Name}
 				}
+			}
+			groupUUID := *m.cutGroup
+			return m, func() tea.Msg {
+				return PasteGroupMsg{GroupUUID: groupUUID, TargetGroupUUID: target.UUID, TargetName: target.Name}
 			}
 
 		case m.keys.Delete:
@@ -1159,7 +1175,11 @@ func (m BrowserModel) footerView() string {
 			k.Duplicate + ": dup", k.ShowStats + ": info", k.ShowAudit + ": audit", k.ChangePassword + ": password"}
 		if m.cutEntry != nil || m.cutGroup != nil {
 			// Something is cut: pasting it is the next step.
-			hints = slices.Insert(hints, 1, k.Paste+": paste here")
+			paste := []string{k.Paste + ": paste here"}
+			if into := m.pasteTarget(false); !into.UUID.Compare(m.currentGroup().UUID) {
+				paste = []string{k.Paste + ": paste into " + ansi.Truncate(into.Name, 20, "…"), k.PasteHere + ": paste here"}
+			}
+			hints = slices.Insert(hints, 1, paste...)
 		}
 	}
 	return renderHints(m.width, hints...)

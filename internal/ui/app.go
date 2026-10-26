@@ -78,12 +78,14 @@ type MoveEntryMsg struct {
 type PasteEntryMsg struct {
 	EntryUUID       gokeepasslib.UUID
 	TargetGroupUUID gokeepasslib.UUID
+	TargetName      string // for the status
 }
 
 // PasteGroupMsg requests pasting the cut group into the current group.
 type PasteGroupMsg struct {
 	GroupUUID       gokeepasslib.UUID
 	TargetGroupUUID gokeepasslib.UUID
+	TargetName      string // for the status
 }
 
 // RenameGroupMsg requests renaming a group.
@@ -768,7 +770,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.browser.cutEntry = nil
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
-			m.unsavedStatus("Entry moved"),
+			m.unsavedStatus("Entry moved to "+sanitizeDisplay(msg.TargetName)),
 		)
 
 	case PasteGroupMsg:
@@ -789,7 +791,7 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.browser.cutGroup = nil
 		return m, tea.Batch(
 			func() tea.Msg { return RefreshMsg{} },
-			m.unsavedStatus("Group moved"),
+			m.unsavedStatus("Group moved to "+sanitizeDisplay(msg.TargetName)),
 		)
 
 	case ChangePasswordStartMsg:

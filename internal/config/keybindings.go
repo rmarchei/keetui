@@ -25,7 +25,8 @@ type KeyBindings struct {
 	Delete         string `json:"delete,omitempty"`
 	Duplicate      string `json:"duplicate,omitempty"`
 	Cut            string `json:"cut,omitempty"`
-	Paste          string `json:"paste,omitempty"`
+	Paste          string `json:"paste,omitempty"` // into the selected group, or here on an entry
+	PasteHere      string `json:"paste_here,omitempty"`
 	Save           string `json:"save,omitempty"`
 	ShowStats      string `json:"show_stats,omitempty"`
 	ShowAudit      string `json:"show_audit,omitempty"`
@@ -72,6 +73,7 @@ func DefaultKeyBindings() KeyBindings {
 		Duplicate:      "y",
 		Cut:            "x",
 		Paste:          "v",
+		PasteHere:      "V",
 		Save:           "s",
 		ShowStats:      "i",
 		ShowAudit:      "I",
@@ -137,6 +139,9 @@ func (kb KeyBindings) Merge(defaults KeyBindings) KeyBindings {
 	}
 	if kb.Paste == "" {
 		kb.Paste = defaults.Paste
+	}
+	if kb.PasteHere == "" {
+		kb.PasteHere = defaults.PasteHere
 	}
 	if kb.Save == "" {
 		kb.Save = defaults.Save
@@ -251,6 +256,7 @@ func (kb KeyBindings) conflicts() []bindingConflict {
 	addKey(browser, kb.Duplicate, "duplicate")
 	addKey(browser, kb.Cut, "cut")
 	addKey(browser, kb.Paste, "paste")
+	addKey(browser, kb.PasteHere, "paste_here")
 	addKey(browser, kb.Save, "save")
 	addKey(browser, kb.ShowStats, "show_stats")
 	addKey(browser, kb.ShowAudit, "show_audit")
@@ -520,6 +526,7 @@ func (kb KeyBindings) String() string {
 		{"duplicate", kb.Duplicate},
 		{"cut", kb.Cut},
 		{"paste", kb.Paste},
+		{"paste_here", kb.PasteHere},
 		{"save", kb.Save},
 		{"show_stats", kb.ShowStats},
 		{"show_audit", kb.ShowAudit},
