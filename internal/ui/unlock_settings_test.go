@@ -101,3 +101,38 @@ func TestCtrlOOpensSettingsFromTheBrowser(t *testing.T) {
 		t.Errorf("state = %d, database settings open %v; want the settings with the database's", m.state, m.settings.db.open)
 	}
 }
+
+// Esc in settings opened from the unlock screen goes back to it; only a
+// second esc, on the unlock screen, quits.
+func TestEscFromUnlockSettingsReturnsBeforeQuitting(t *testing.T) {
+	esc := tea.KeyPressMsg{Code: tea.KeyEscape}
+	quits := func(cmd tea.Cmd) bool {
+		for _, msg := range quickMsgs(cmd) {
+			if _, ok := msg.(tea.QuitMsg); ok {
+				return true
+			}
+		}
+		return false
+	}
+	m := feed(t, lockedApp(t), ctrlO)
+	updated, cmd := m.Update(esc)
+	m = updated.(AppModel)
+	for _, msg := range quickMsgs(cmd) {
+		if _, ok := msg.(tea.QuitMsg); ok {
+			t.Fatal("esc in the settings quit keetui")
+		}
+		if _, ok := msg.(BackToBrowserMsg); ok {
+			updated, cmd = m.Update(msg)
+			m = updated.(AppModel)
+			if quits(cmd) {
+				t.Fatal("leaving the settings quit keetui")
+			}
+		}
+	}
+	if m.state != viewUnlock {
+		t.Fatalf("esc went to state %d, want the unlock screen", m.state)
+	}
+	if _, cmd = m.Update(esc); !quits(cmd) {
+		t.Error("esc on the unlock screen did not quit")
+	}
+}

@@ -181,3 +181,24 @@ func TestUnlockFooterShowsTheVersion(t *testing.T) {
 		}
 	}
 }
+
+// Esc quits from the unlock screen, as ctrl+c does, also while the database
+// is being opened; the footer still names ctrl+c.
+func TestEscQuitsTheUnlockScreen(t *testing.T) {
+	for _, unlocking := range []bool{false, true} {
+		m := NewUnlockModel("synthetic.kdbx", "")
+		m.unlocking = unlocking
+		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		if cmd == nil {
+			t.Fatalf("unlocking %v: esc did nothing", unlocking)
+		}
+		if _, ok := cmd().(tea.QuitMsg); !ok {
+			t.Errorf("unlocking %v: esc did not quit", unlocking)
+		}
+	}
+	m := NewUnlockModel("synthetic.kdbx", "")
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if footer := ansi.Strip(updated.(UnlockModel).footer()); !strings.Contains(footer, "ctrl+c/esc quit") {
+		t.Errorf("footer %q does not name ctrl+c and esc for quitting", footer)
+	}
+}

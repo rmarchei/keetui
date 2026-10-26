@@ -146,7 +146,8 @@ bottom right (`keetui -version` prints it too). `Tab` / left / right switches he
 show shortcuts in two columns. `Esc` / `F1` returns without losing form edits. `?` also opens help in
 the browser and entry detail, but remains ordinary text inside inputs.
 Use `PageUp` / `PageDown` to read long unlock errors, and `j` / `k` or
-`PageUp` / `PageDown` to scroll database statistics.
+`PageUp` / `PageDown` to scroll database statistics. `Esc` or `Ctrl+C` quits
+from the unlock screen; in settings opened from it, `Esc` returns to it first.
 
 ### Browser
 

@@ -57,12 +57,12 @@ func (m UnlockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		// Ignore input while unlocking (except quit): a second enter
-		// would start a duplicate key-derivation run.
+		if quitsUnlock(msg) {
+			return m, tea.Quit
+		}
+		// Ignore other input while unlocking: a second enter would start a
+		// duplicate key-derivation run.
 		if m.unlocking {
-			if msg.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
 			return m, nil
 		}
 		switch msg.String() {
@@ -78,8 +78,6 @@ func (m UnlockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errorOffset = min(max(0, m.errorOffset), max(0, lipgloss.Height(m.errorContent())-step))
 			}
 			return m, nil
-		case "ctrl+c":
-			return m, tea.Quit
 		case "enter":
 			m.errorOffset = 0
 			// Keyfile-only databases have no password: allow an empty
@@ -139,7 +137,15 @@ func (m UnlockModel) footer() string {
 		// Scrolling is the only way to read a long error: keep it ahead of quit.
 		hints = append(hints, "pgup/pgdown: error")
 	}
-	return alignRight(renderHints(m.width, append(hints, "ctrl+o: settings", "ctrl+c: quit")...), Version, m.width)
+	return alignRight(renderHints(m.width, append(hints, "ctrl+o: settings", "ctrl+c/esc: quit")...), Version, m.width)
+}
+
+// quitsUnlock reports a key that quits from the unlock screen: nothing is
+// open there that leaving could lose, and settings opened from it return
+// to it on esc, so a second esc leaves keetui.
+func quitsUnlock(msg tea.KeyPressMsg) bool {
+	s := msg.String()
+	return s == "ctrl+c" || s == "esc"
 }
 
 // card lays the form out as a box centered above the footer, its border in
