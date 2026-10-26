@@ -108,7 +108,7 @@ func NewPresetPickerModel(cfg config.Config, currentPassword string) PresetPicke
 		cfg:             cfg,
 		currentPassword: currentPassword,
 		lengthInput:     li,
-		passwordVisible: true,
+		passwordVisible: !cfg.HidePasswords(),
 		toggles: [4]bool{
 			cfg.PasswordHasUppercase(),
 			cfg.PasswordHasLowercase(),
@@ -192,7 +192,7 @@ func (m PresetPickerModel) selectPreset() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.generatedPassword = pw
-	m.passwordVisible = true
+	m.passwordVisible = !m.cfg.HidePasswords()
 	m.lastPresetName = name
 	m.previewFrom = pickerModeList
 	m.mode = pickerModePreview
@@ -297,7 +297,7 @@ func (m PresetPickerModel) generateCustom() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.generatedPassword = pw
-	m.passwordVisible = true
+	m.passwordVisible = !m.cfg.HidePasswords()
 	m.lastPresetName = "Custom"
 	m.previewFrom = pickerModeCustom
 	m.mode = pickerModePreview

@@ -10,7 +10,7 @@ import (
 )
 
 func isToggleSetting(i int) bool {
-	return i >= settingPasswordStrength && i <= settingPWSymbols || i == settingConfirmQuit || i == settingBackupOnSave
+	return i >= settingPasswordStrength && i <= settingPWSymbols || i == settingPrivacyMode || i == settingConfirmQuit || i == settingBackupOnSave
 }
 
 func (m SettingsModel) moveFocus(delta int) SettingsModel {

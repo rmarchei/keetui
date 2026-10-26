@@ -374,8 +374,9 @@ func (m EditorModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.generated = false
 	}
 
-	// Briefly reveal masked fields when typing, then re-mask after 1 second
-	if !m.persistReveal {
+	// Briefly reveal masked fields when typing, then re-mask after 1 second;
+	// privacy mode reveals nothing unasked.
+	if !m.persistReveal && !m.cfg.HidePasswords() {
 		if isMaskedFixed && m.inputs[m.focused].Value() != oldVal {
 			m.inputs[m.focused].EchoMode = textinput.EchoNormal
 			return m, tea.Batch(cmd, m.scheduleAutoMask(m.focused, time.Second))
@@ -536,13 +537,17 @@ func (m EditorModel) save() (tea.Model, tea.Cmd) {
 }
 
 // SetGeneratedPassword sets the password field to the given value and
-// reveals it briefly. Returns a command to schedule re-masking.
+// reveals it briefly, unless in privacy mode. Returns a command to schedule
+// re-masking.
 func (m *EditorModel) SetGeneratedPassword(pw string) tea.Cmd {
 	m.inputs[fieldPassword].SetValue(pw)
 	m.refreshStrength()
-	m.inputs[fieldPassword].EchoMode = textinput.EchoNormal
 	m.generated = true
 	m.syncLayout()
+	if m.cfg.HidePasswords() {
+		return nil
+	}
+	m.inputs[fieldPassword].EchoMode = textinput.EchoNormal
 	return m.scheduleAutoMask(fieldPassword, 2*time.Second)
 }
 

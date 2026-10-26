@@ -301,6 +301,7 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `clipboard_clear_seconds` | 15 | Seconds before clipboard is automatically cleared (0: disable) |
 | `clipboard_osc52` | `"auto"` | Copy through the terminal (OSC 52): `auto` (only without a local clipboard, e.g. over SSH), `always`, or `never`. See [Clipboard](#clipboard) |
 | `auto_lock_minutes` | 5 | Minutes of inactivity before the database locks (0: disable) |
+| `privacy_mode` | false | Keep passwords hidden while editing: no brief reveal when typing, generated passwords masked in the editor and the generator's preview (`p` or `Ctrl+R` shows them) |
 | `password_length` | 20 | Length of generated passwords (minimum 8) |
 | `show_password_strength` | true | Show password strength indicator in detail and editor views |
 | `password_uppercase` | true | Include uppercase letters (A-Z) in generated passwords |
@@ -441,6 +442,7 @@ git config core.hooksPath .githooks
 
 - **Clipboard auto-clear**: Copied passwords and TOTP codes are automatically cleared from the clipboard (configurable, default 15s), and marked as sensitive where the platform supports it (see [Clipboard](#clipboard))
 - **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered
+- **Privacy mode**: With `privacy_mode` on, passwords stay hidden while you edit: typing in a protected field does not reveal it briefly, and generated passwords stay masked in the editor and the generator's preview until you press `p` or `Ctrl+R`
 - **Lock now**: `Ctrl+L` (keybinding `lock`) locks the database at once and clears keetui's copy from the clipboard, on the browsing screens and over their help. With unsaved changes it first asks to save them: Yes saves, then locks (a failed save leaves the database open); No keeps it open. A save already running finishes first. Forms (the editor, group names, the master password, save as) keep their input: close them first
 - **Live security status**: The status bar shows `clip:15s` until clipboard clearing and `lock:4:59` until auto-lock. The lock countdown is highlighted in its final 30 seconds; normal input resets inactivity. Copying again restarts the clipboard timer, even for the same value. `off` means a protection is disabled, or that nothing can clear the copy (some tmux setups, see [Clipboard](#clipboard)), and `clip:wait` that a clear waits for keetui's tmux pane to be visible to the terminal that got the copy (`C:`/`L:` are compact labels on very narrow terminals). Clearing over OSC 52 cannot be verified; a local clipboard that has changed since the copy is left untouched.
 - **Password generator**: Generates random passwords via `crypto/rand` with configurable character sets (uppercase, lowercase, digits, symbols)

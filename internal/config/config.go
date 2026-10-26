@@ -19,6 +19,7 @@ type Config struct {
 	ClipboardClearSeconds int          `json:"clipboard_clear_seconds"`
 	ClipboardOSC52        string       `json:"clipboard_osc52,omitempty"`
 	AutoLockMinutes       int          `json:"auto_lock_minutes"`
+	PrivacyMode           *bool        `json:"privacy_mode,omitempty"`
 	PasswordLength        int          `json:"password_length"`
 	ShowPasswordStrength  bool         `json:"show_password_strength"`
 	PasswordUppercase     *bool        `json:"password_uppercase,omitempty"`
@@ -158,6 +159,12 @@ func (c Config) PasswordCharset() string {
 // Confirmation is enabled unless explicitly disabled.
 func (c Config) ConfirmOnQuit() bool {
 	return c.ConfirmQuit == nil || *c.ConfirmQuit
+}
+
+// HidePasswords reports privacy mode: passwords stay hidden while editing,
+// with no brief reveal when typing and generated passwords masked.
+func (c Config) HidePasswords() bool {
+	return c.PrivacyMode != nil && *c.PrivacyMode
 }
 
 // BackupEnabled returns whether a .bak copy should be created before saving.

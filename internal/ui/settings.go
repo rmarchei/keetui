@@ -17,6 +17,7 @@ const (
 	settingClipboardClear = iota
 	settingClipboardOSC52
 	settingAutoLock
+	settingPrivacyMode
 	settingPasswordLength
 	settingPasswordStrength
 	settingPWUppercase
@@ -36,6 +37,7 @@ var settingLabels = [settingCount]string{
 	"Clipboard clear (sec)",
 	"Terminal clipboard",
 	"Auto-lock (min)",
+	"Privacy mode",
 	"Password length",
 	"Password strength",
 	"Uppercase (A-Z)",
@@ -62,6 +64,7 @@ var settingDescriptions = [settingCount]string{
 	"Seconds before clipboard is cleared after copying (0: disable, min: 15)",
 	"Copy via OSC 52, which cannot be marked sensitive: auto (only without a local clipboard), always, never",
 	"Minutes of inactivity before database is locked (0: disable, min: 5)",
+	"Keep passwords hidden while editing: no brief reveal when typing, generated passwords masked (p or Ctrl+R shows them)",
 	"Default length for generated passwords (min: 8)",
 	"Show password strength indicator",
 	"Include uppercase letters in generated passwords",
@@ -155,6 +158,9 @@ func NewSettingsModel(cfg config.Config) SettingsModel {
 
 	inputs[settingConfirmQuit].SetValue(boolToStr(cfg.ConfirmOnQuit()))
 	inputs[settingConfirmQuit].CharLimit = 1
+
+	inputs[settingPrivacyMode].SetValue(boolToStr(cfg.HidePasswords()))
+	inputs[settingPrivacyMode].CharLimit = 1
 
 	inputs[settingBackupOnSave].SetValue(boolToStr(cfg.BackupEnabled()))
 	inputs[settingBackupOnSave].CharLimit = 1
@@ -329,6 +335,7 @@ func (m SettingsModel) draftConfig() (config.Config, map[int]string) {
 	cfg.PasswordDigits = ptr(toggle(settingPWDigits))
 	cfg.PasswordSymbols = ptr(toggle(settingPWSymbols))
 	cfg.ConfirmQuit = ptr(toggle(settingConfirmQuit))
+	cfg.PrivacyMode = ptr(toggle(settingPrivacyMode))
 	cfg.BackupOnSave = ptr(toggle(settingBackupOnSave))
 	if !*cfg.PasswordUppercase && !*cfg.PasswordLowercase && !*cfg.PasswordDigits && !*cfg.PasswordSymbols {
 		errs[settingPWSymbols] = "At least one character set must be enabled"
