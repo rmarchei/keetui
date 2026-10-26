@@ -114,14 +114,13 @@ func TestSavingSymlinkedVaultKeepsLinkAndUpdatesTarget(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "vault.kdbx")
 	link := filepath.Join(dir, "linked.kdbx")
-	db, err := Create(target, "synthetic-master")
-	if err != nil {
+	if _, err := Create(target, "synthetic-master"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(filepath.Base(target), link); err != nil {
 		t.Fatal(err)
 	}
-	db, err = Open(link, "synthetic-master")
+	db, err := Open(link, "synthetic-master")
 	if err != nil {
 		t.Fatal(err)
 	}
