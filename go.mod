@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/boombuler/barcode v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.9
-	github.com/ebitengine/purego v0.11.2
+	github.com/ebitengine/purego v0.11.3
 	github.com/jezek/xgb v1.3.1
 	github.com/pquerna/otp v1.5.0
 	github.com/tobischo/gokeepasslib/v3 v3.7.1
