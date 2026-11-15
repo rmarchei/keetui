@@ -96,8 +96,6 @@ jobs:
 
           # Generate formula
           cat > /tmp/keetui.rb <<FORMULA
-          require_relative "lib/custom_download_strategy"
-
           class Keetui < Formula
             desc "Terminal user interface for reading and writing KeePass .kdbx files"
             homepage "https://github.com/rmarchei/keetui"
@@ -108,24 +106,20 @@ jobs:
               depends_on macos: :ventura
 
               if Hardware::CPU.arm?
-                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-darwin-arm64",
-                    using: GitHubPrivateRepositoryReleaseDownloadStrategy
+                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-darwin-arm64"
                 sha256 "${SHA_DARWIN_ARM64}"
               else
-                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-darwin-amd64",
-                    using: GitHubPrivateRepositoryReleaseDownloadStrategy
+                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-darwin-amd64"
                 sha256 "${SHA_DARWIN_AMD64}"
               end
             end
 
             on_linux do
               if Hardware::CPU.arm?
-                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-linux-arm64",
-                    using: GitHubPrivateRepositoryReleaseDownloadStrategy
+                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-linux-arm64"
                 sha256 "${SHA_LINUX_ARM64}"
               else
-                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-linux-amd64",
-                    using: GitHubPrivateRepositoryReleaseDownloadStrategy
+                url "https://github.com/rmarchei/keetui/releases/download/v#{version}/keetui-linux-amd64"
                 sha256 "${SHA_LINUX_AMD64}"
               end
             end
@@ -141,12 +135,16 @@ jobs:
           end
           FORMULA
 
-          # Get current file SHA (required by GitHub contents API for updates)
-          FILE_SHA=$(gh api repos/rmarchei/homebrew-tap/contents/Formula/keetui.rb --jq '.sha')
+          # The contents API needs the current file's SHA to update it; the
+          # file does not exist yet on the first release into a new tap.
+          if ! FILE_SHA=$(gh api repos/rmarchei/homebrew-tap/contents/Formula/keetui.rb --jq '.sha' 2>/dev/null); then
+            FILE_SHA=""
+          fi
 
-          # Push updated formula
+          # Push the formula. --silent: the response carries the committer's
+          # email and must not land in the public run log.
           gh api repos/rmarchei/homebrew-tap/contents/Formula/keetui.rb \
-            --method PUT \
+            --method PUT --silent \
             --field message="Update keetui to ${VERSION}" \
             --field content="$(base64 -w0 /tmp/keetui.rb)" \
-            --field sha="$FILE_SHA"
+            ${FILE_SHA:+--field sha="$FILE_SHA"}
