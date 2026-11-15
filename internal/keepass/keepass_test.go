@@ -2336,6 +2336,39 @@ func TestSaveCreatesBackup(t *testing.T) {
 	}
 }
 
+// A backup left readable by others (by an older keetui, a copy, a sync) is
+// made private when a save overwrites it, before the copy goes in.
+func TestSaveBackupIsPrivate(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.kdbx")
+	createTestDB(t, dbPath, "testmaster")
+	bakPath := dbPath + ".bak"
+	if err := os.WriteFile(bakPath, []byte("synthetic old backup"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(bakPath, 0644); err != nil { // whatever the umask
+		t.Fatal(err)
+	}
+	db, err := Open(dbPath, "testmaster")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	db.BackupOnSave = true
+	if err := db.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	fi, err := os.Stat(bakPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode := fi.Mode().Perm(); mode != 0600 {
+		t.Fatalf("backup mode %v, want 0600", mode)
+	}
+	if _, err := Open(bakPath, "testmaster"); err != nil {
+		t.Fatalf("the backup does not open: %v", err)
+	}
+}
+
 func TestSaveNoBackupWhenDisabled(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.kdbx")

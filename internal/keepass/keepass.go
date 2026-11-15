@@ -573,6 +573,11 @@ func createBackup(path string) error {
 		return fmt.Errorf("create backup file: %w", err)
 	}
 	defer func() { _ = dst.Close() }()
+	// The mode above applies only to a new file: an existing backup, perhaps
+	// readable by others, keeps its own unless changed.
+	if err := dst.Chmod(0600); err != nil {
+		return fmt.Errorf("set backup file permissions: %w", err)
+	}
 
 	if _, err := io.Copy(dst, src); err != nil {
 		return fmt.Errorf("copy to backup: %w", err)
