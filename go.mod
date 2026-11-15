@@ -13,8 +13,8 @@ require (
 	github.com/pquerna/otp v1.5.0
 	github.com/tobischo/gokeepasslib/v3 v3.7.1
 	github.com/trustelem/zxcvbn v1.0.2-0.20211210161922-475ca3b81504
-	golang.org/x/sys v0.49.0
-	golang.org/x/term v0.47.0
+	golang.org/x/sys v0.50.0
+	golang.org/x/term v0.48.0
 )
 
 require (
