@@ -74,6 +74,7 @@ keetui/
 ├── go.sum
 ├── Makefile
 ├── README.md
+├── SECURITY.md               # How to report a vulnerability
 └── CLAUDE.md
 ```
 

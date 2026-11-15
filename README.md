@@ -452,6 +452,8 @@ git config core.hooksPath .githooks
 
 ## Security
 
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
 - **Clipboard auto-clear**: Copied passwords and TOTP codes are automatically cleared from the clipboard (configurable, default 15s), and marked as sensitive where the platform supports it (see [Clipboard](#clipboard))
 - **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered
 - **History**: `H` in an entry lists its earlier versions; `Enter` shows one with what differs from the current entry (protected values masked until `p`), and `R` restores it after asking. The current state goes to the history first, the version brings back its fields, tags, attachments and expiry, and `Ctrl+Z` undoes the restore
