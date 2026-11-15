@@ -26,13 +26,24 @@ go.work.sum
 
 # env file
 .env
+.env.*
 
 # Build output
 dist/
+/keetui
 
-# Editor/IDE
-# .idea/
-# .vscode/
+# Editor/IDE and OS files
+.idea/
+.vscode/
+.DS_Store
 
 # Claude Code
 .claude/settings.local.json
+
+# KeePass databases, backups and key files: never commit a real one.
+# The synthetic fixtures under testdata are the exception.
+*.kdbx
+*.kdbx.bak
+*.key
+*.keyx
+!internal/keepass/testdata/**/*.kdbx
