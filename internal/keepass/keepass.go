@@ -417,11 +417,12 @@ func (d *DB) Save() error {
 // SaveAs writes the database to the given path, which becomes its path. On
 // its own file it first checks that the file still holds what keetui last
 // read or wrote there, and returns a *DiskError instead of overwriting
-// another program's changes or recreating a file that is gone.
+// another program's changes (or a file it cannot read to tell) or
+// recreating a file that is gone.
 func (d *DB) SaveAs(path string) error {
 	if d.ownsPath(path) {
-		if state := d.CheckDisk(); state != DiskUnchanged {
-			return &DiskError{State: state, Path: d.Path}
+		if state, err := d.checkDisk(); state != DiskUnchanged {
+			return &DiskError{State: state, Path: d.Path, Err: err}
 		}
 	}
 	return d.write(path)

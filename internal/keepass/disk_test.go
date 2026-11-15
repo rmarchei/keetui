@@ -3,6 +3,7 @@ package keepass
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -316,6 +317,48 @@ func TestCheckDiskStates(t *testing.T) {
 	}
 	if err := ours.Save(); !errors.As(err, &diskErr) || diskErr.State != DiskNoFolder {
 		t.Fatalf("save with the folder gone: %v, want DiskNoFolder", err)
+	}
+}
+
+// A file keetui cannot read (permissions, an I/O error, a cloud placeholder)
+// may have changed: a save stops instead of overwriting it, and Overwrite
+// still saves when asked.
+func TestSaveStopsAtAnUnreadableFile(t *testing.T) {
+	path, ours, theirs, _ := syncFixture(t, false)
+	if _, err := theirs.AddEntry(theirs.RootGroup().UUID, Entry{Title: "Added there"}); err != nil {
+		t.Fatal(err)
+	}
+	mustSave(t, theirs)
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("the file stays readable without permissions (running as root?)")
+	}
+	if state := ours.CheckDisk(); state != DiskUnreadable {
+		t.Fatalf("unreadable file: %v, want DiskUnreadable", state)
+	}
+	var diskErr *DiskError
+	if err := ours.Save(); !errors.As(err, &diskErr) || diskErr.State != DiskUnreadable || !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("save over an unreadable file: %v, want DiskUnreadable for lack of permission", err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if saved, err := Open(path, "synthetic-master"); err != nil {
+		t.Fatal(err)
+	} else if _, ok := entryByTitle(t, saved, "Added there"); !ok {
+		t.Fatal("the save overwrote the file it could not read")
+	}
+
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := ours.Overwrite(); err != nil {
+		t.Fatalf("overwrite when asked: %v", err)
+	}
+	if state := ours.CheckDisk(); state != DiskUnchanged {
+		t.Fatalf("after overwriting: %v", state)
 	}
 }
 

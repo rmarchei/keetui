@@ -199,6 +199,49 @@ func TestSaveStopsWhenTheFolderIsGone(t *testing.T) {
 	}
 }
 
+// A file keetui cannot read may have changed: the save asks before
+// overwriting it, without offering a merge it could not do, and No cancels.
+func TestSaveOverAnUnreadableFileAsks(t *testing.T) {
+	for _, overwrite := range []bool{false, true} {
+		m := changedApp(t)
+		if err := os.Chmod(m.filePath, 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.ReadFile(m.filePath); err == nil {
+			t.Skip("the file stays readable without permissions (running as root?)")
+		}
+		m = saveNow(t, m)
+		if m.state != viewConfirm || !m.confirm.destructive || !strings.Contains(m.confirm.message, "cannot read") ||
+			strings.Contains(m.confirm.message, "Merge") {
+			t.Fatalf("state %d, question %q: want the overwrite question", m.state, m.confirm.message)
+		}
+		key := keyN
+		if overwrite {
+			key = keyY
+		}
+		m, save := answer(t, m, key)
+		if !overwrite {
+			if m.state != viewBrowser || !m.dirty || m.saving {
+				t.Fatalf("No: state %d, dirty %v, saving %v", m.state, m.dirty, m.saving)
+			}
+			if err := os.Chmod(m.filePath, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if on := titlesOnDisk(t, m.filePath); strings.Contains(on, ",Ours,") || !strings.Contains(on, ",Theirs,") {
+				t.Fatalf("No wrote the file: %s", on)
+			}
+			continue
+		}
+		m = finishSave(t, m, save)
+		if m.dirty || m.statusError {
+			t.Fatalf("Yes: dirty %v, status %q", m.dirty, m.statusText)
+		}
+		if on := titlesOnDisk(t, m.filePath); !strings.Contains(on, ",Ours,") || strings.Contains(on, ",Theirs,") {
+			t.Fatalf("overwritten file: %s", on)
+		}
+	}
+}
+
 // Ctrl+L with unsaved changes over a changed file merges when asked, then
 // locks.
 func TestLockMergesTheChangedFileWhenAsked(t *testing.T) {

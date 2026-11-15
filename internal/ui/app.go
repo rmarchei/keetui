@@ -1884,7 +1884,7 @@ func (m AppModel) handleSaveResult(msg saveResultMsg) (tea.Model, tea.Cmd) {
 }
 
 // askDisk asks what to do about a database file another program changed or
-// removed since keetui read it.
+// removed since keetui read it, or that keetui cannot read to tell.
 func (m AppModel) askDisk(e *keepass.DiskError, save diskSave) (tea.Model, tea.Cmd) {
 	name := filepath.Base(e.Path)
 	switch e.State {
@@ -1893,6 +1893,10 @@ func (m AppModel) askDisk(e *keepass.DiskError, save diskSave) (tea.Model, tea.C
 			fmt.Sprintf("%s was changed by another program or a sync since keetui read it. Merge those changes into yours, then save?", name),
 			func() tea.Msg { return diskMergeMsg{save} }).
 			OnNo(func() tea.Msg { return diskOverwriteAskMsg{save} })
+	case keepass.DiskUnreadable:
+		m.confirm = NewConfirmModel(viewBrowser,
+			fmt.Sprintf("keetui cannot read %s to check whether another program changed it (%v). Overwrite it with your version? Changes made to it elsewhere would be lost.", name, e.Err),
+			func() tea.Msg { return diskOverwriteMsg{save} }).Destructive()
 	case keepass.DiskMissing:
 		m.confirm = NewConfirmModel(viewBrowser,
 			fmt.Sprintf("%s is no longer on disk: another program moved or deleted it. Save it there again?", name),
