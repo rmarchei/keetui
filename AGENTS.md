@@ -220,6 +220,12 @@ Settings are stored in `~/.config/keetui/config.json` (or `$XDG_CONFIG_HOME/keet
 - Keep commits focused on a single logical change
 - Pre-commit hook runs `gofmt` check automatically (requires `git config core.hooksPath .githooks`)
 
+## Git Commits & PR Descriptions
+- **Less is more:** Keep commit messages and PR descriptions concise, scannable, and high-signal.
+- **Subject line:** Use a single short imperative sentence (under 50–72 chars) stating *what* changed.
+- **Body (only when needed):** Include brief bullet points explaining *why* the change was made, not *how* the code works. Let the diff speak for itself.
+- **No fluff:** Skip filler intros, obvious summaries of every modified file, or boilerplate prose.
+
 ## Release Process
 
 1. Tag the commit: `git tag v0.X.Y && git push origin v0.X.Y`
