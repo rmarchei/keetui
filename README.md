@@ -777,4 +777,9 @@ restore it (see X11 details).
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+keetui is released under the MIT License; see [LICENSE](LICENSE).
+
+The passphrase word list (`internal/keepass/diceware.go`) draws in part on
+the [EFF Short Wordlist #1](https://www.eff.org/dice) by the Electronic
+Frontier Foundation, used under
+[CC BY 3.0 US](https://creativecommons.org/licenses/by/3.0/us/).

@@ -9,8 +9,10 @@ import (
 
 // dicewareWordList is a curated list of 1050 four-letter words for
 // generating passphrases (~10.0 bits of entropy per word, so keetui's
-// default 8-word passphrase carries ~80 bits). It is inspired by, but not
-// identical to, the EFF short word list.
+// default 8-word passphrase carries ~80 bits). About a third of the words
+// come from the EFF Short Wordlist #1 (https://www.eff.org/dice), which the
+// Electronic Frontier Foundation publishes under CC BY 3.0 US; the rest are
+// keetui's own.
 var dicewareWordList = []string{
 	"acid", "acme", "acre", "aged", "also", "arch", "area", "army",
 	"atom", "aunt", "away", "axis", "back", "bail", "bake", "ball",
