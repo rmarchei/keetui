@@ -1,4 +1,4 @@
-# CLAUDE.md - AI Assistant Guide for keetui
+# AGENTS.md - AI Assistant Guide for keetui
 
 ## Project Overview
 
@@ -75,7 +75,7 @@ keetui/
 ├── Makefile
 ├── README.md
 ├── SECURITY.md               # How to report a vulnerability
-└── CLAUDE.md
+└── AGENTS.md
 ```
 
 ## Key Dependencies
