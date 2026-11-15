@@ -479,14 +479,36 @@ func (d *DB) recordDeletedEntry(id gokeepasslib.UUID) {
 }
 
 // forgetDeleted drops the deletion records of an entry or group put back
-// (an undo), with everything in the group.
-func (d *DB) forgetDeleted(ids ...gokeepasslib.UUID) {
+// (an undo), with everything in the group, and returns the latest time among
+// them (zero without one).
+func (d *DB) forgetDeleted(ids ...gokeepasslib.UUID) time.Time {
 	back := make(map[gokeepasslib.UUID]bool, len(ids))
 	for _, id := range ids {
 		back[id] = true
 	}
+	var latest time.Time
 	objects := &d.Database.Content.Root.DeletedObjects
-	*objects = slices.DeleteFunc(*objects, func(o gokeepasslib.DeletedObjectData) bool { return back[o.UUID] })
+	*objects = slices.DeleteFunc(*objects, func(o gokeepasslib.DeletedObjectData) bool {
+		if back[o.UUID] && timeOf(o.DeletionTime).After(latest) {
+			latest = timeOf(o.DeletionTime)
+		}
+		return back[o.UUID]
+	})
+	return latest
+}
+
+// restoredAt is when something put back after its deletion counts as
+// changed: now, and in a later second than the deletion, as KDBX keeps whole
+// seconds. Dropping the record here does not reach a copy of it that the
+// file or another client keeps; this way the item outlives that copy, at the
+// next sync here (applyDeletions) and in KeePass clients, which keep an item
+// changed after its deletion.
+func restoredAt(deleted time.Time) w.TimeWrapper {
+	at := w.Now()
+	if floor := deleted.Truncate(time.Second).Add(time.Second); at.Time.Before(floor) {
+		at.Time = floor
+	}
+	return at
 }
 
 // groupIDs lists the UUIDs of g, its entries and everything below.

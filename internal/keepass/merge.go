@@ -36,7 +36,9 @@ type MergeResult struct {
 // New groups are created as needed. Entries are matched by UUID; entries
 // not present in the target are added as full copies (preserving UUID,
 // timestamps, history, and attachments), and entries present in both are
-// overwritten if the source has a newer modification time.
+// overwritten if the source has a newer modification time. An entry added
+// back that this database records as deleted loses the record and counts as
+// changed now, so that a sync does not delete it again.
 func (d *DB) Merge(other *DB) (MergeResult, error) {
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return MergeResult{}, fmt.Errorf("target database has no root group")
@@ -67,6 +69,12 @@ func (d *DB) mergeGroup(src *Group, srcDB *DB, targetParentUUID [16]byte, result
 			d.importEntryBinaries(&clone, srcDB)
 			if err := d.InsertRawEntry(targetParentUUID, clone); err == nil {
 				result.EntriesAdded++
+				// Merging back an entry this database records as deleted
+				// undoes the deletion, as undo does (markRestoredEntry).
+				if deleted := d.forgetDeleted(clone.UUID); !deleted.IsZero() {
+					at := restoredAt(deleted)
+					findEntry(&d.Database.Content.Root.Groups[0], clone.UUID).Times.LastModificationTime = &at
+				}
 			}
 		} else {
 			var existingMod time.Time

@@ -467,6 +467,264 @@ func TestPermanentDeletionsAreRecorded(t *testing.T) {
 	}
 }
 
+// deletedAt returns when db records the item as deleted, or zero.
+func deletedAt(db *DB, id gokeepasslib.UUID) time.Time {
+	for _, o := range db.Database.Content.Root.DeletedObjects {
+		if o.UUID.Compare(id) {
+			return timeOf(o.DeletionTime)
+		}
+	}
+	return time.Time{}
+}
+
+// outlivesRecord fails unless the item db holds changed in a later second
+// than any deletion record db keeps for it, which KeePass clients require
+// to keep it when they sync.
+func outlivesRecord(t *testing.T, db *DB, id gokeepasslib.UUID) {
+	t.Helper()
+	root := &db.Database.Content.Root.Groups[0]
+	var times gokeepasslib.TimeData
+	if e := findEntry(root, id); e != nil {
+		times = e.Times
+	} else if g := findGroup(root, id); g != nil {
+		times = g.Times
+	} else {
+		t.Fatalf("%x is gone", id)
+	}
+	mod := timeOf(times.LastModificationTime).Truncate(time.Second)
+	if at := deletedAt(db, id); !at.IsZero() && !mod.After(at.Truncate(time.Second)) {
+		t.Fatalf("%x changed at %v, not after its deletion record (%v)", id, mod, at)
+	}
+}
+
+// writeCopy copies the file at from to to, as a sync or a backup does.
+func writeCopy(t *testing.T, from, to string) {
+	t.Helper()
+	data, err := os.ReadFile(from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(to, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// saveOverChange saves db after another program changed its file: the save
+// stops, and the merge must not count anything as deleted there.
+func saveOverChange(t *testing.T, db *DB) {
+	t.Helper()
+	var diskErr *DiskError
+	if err := db.Save(); !errors.As(err, &diskErr) || diskErr.State != DiskChanged {
+		t.Fatalf("save over another program's change: %v, want DiskChanged", err)
+	}
+	r, err := db.MergeDisk()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Deleted != 0 {
+		t.Fatalf("the merge deleted %d entries", r.Deleted)
+	}
+	mustSave(t, db)
+}
+
+// An undo puts back what a saved permanent deletion took. The file, and
+// KeePass clients that read it, keep the deletion record; the next sync
+// must not delete the entry or group again. Before a save, the file still
+// holds what is put back, which keeps its times: a change made there since
+// still wins.
+func TestUndoneDeletionsOutliveTheirRecords(t *testing.T) {
+	forEachFormat(t, func(t *testing.T, kdbx4 bool) {
+		path, ours, _, ids := syncFixture(t, kdbx4)
+		root := ours.RootGroup().UUID
+		work, err := ours.AddGroup(root, "Work")
+		if err != nil {
+			t.Fatal(err)
+		}
+		archive, err := ours.AddGroup(work, "Archive") // empty: nothing in it keeps it
+		if err != nil {
+			t.Fatal(err)
+		}
+		workEntry, err := ours.AddEntry(work, Entry{Title: "Work entry", Password: "synthetic"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		setModified(t, ours, workEntry, syncBase)
+		setMoved(t, ours, workEntry, syncBase)
+		for _, id := range []gokeepasslib.UUID{work, archive} {
+			times := &findGroup(&ours.Database.Content.Root.Groups[0], id).Times
+			times.LastModificationTime, times.LocationChanged = &w.TimeWrapper{Time: syncBase}, &w.TimeWrapper{Time: syncBase}
+		}
+		mustSave(t, ours)
+
+		gone := ids["Missing there"]
+		entry, err := ours.SnapshotEntry(gone)
+		if err != nil {
+			t.Fatal(err)
+		}
+		group, err := ours.SnapshotGroup(work)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ours.PermanentlyDeleteEntry(gone); err != nil {
+			t.Fatal(err)
+		}
+		if err := ours.PermanentlyDeleteGroup(work); err != nil {
+			t.Fatal(err)
+		}
+		mustSave(t, ours) // the file records the deletions
+		if err := ours.InsertEntrySnapshot(ids["Mail"], entry); err != nil {
+			t.Fatal(err)
+		}
+		if err := ours.InsertGroupSnapshot(root, group); err != nil {
+			t.Fatal(err)
+		}
+
+		// Unsaved, deleted and put back: the file still holds it.
+		edited := ids["Edited there"]
+		again, err := ours.SnapshotEntry(edited)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ours.PermanentlyDeleteEntry(edited); err != nil {
+			t.Fatal(err)
+		}
+		if err := ours.InsertEntrySnapshot(ids["Mail"], again); err != nil {
+			t.Fatal(err)
+		}
+
+		// Another program changes the file and keeps its deletion records.
+		theirs, err := Open(path, "synthetic-master")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if deletedAt(theirs, gone).IsZero() || deletedAt(theirs, archive).IsZero() {
+			t.Fatal("the saved file does not record the deletions")
+		}
+		setPassword(t, theirs, edited, "there-new", syncBase.Add(time.Hour))
+		mustSave(t, theirs)
+
+		saveOverChange(t, ours)
+		saved, err := Open(path, "synthetic-master")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []gokeepasslib.UUID{gone, work, archive, workEntry} {
+			outlivesRecord(t, saved, id)
+		}
+		if e, err := saved.GetEntry(edited); err != nil || e.Password != "there-new" {
+			t.Fatalf("entry put back before a save: %q, %v; want the change made there since", e.Password, err)
+		}
+	})
+}
+
+// Undoing a history restore that was saved puts back the version before
+// it, which the next sync must not replace with the restored one from the
+// file. Before a save, the file holds the version put back, which keeps its
+// time.
+func TestUndoneHistoryRestoreOutlivesTheSavedOne(t *testing.T) {
+	path, ours, _, ids := syncFixture(t, true)
+	id := ids["Edited here"]
+	setPassword(t, ours, id, "here-new", syncBase.Add(time.Hour))
+	mustSave(t, ours)
+	restore := func() *EntrySnapshot {
+		t.Helper()
+		s, err := ours.SnapshotEntry(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ours.RestoreHistory(id, 0); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	s := restore()
+	mustSave(t, ours)
+	if err := ours.ReplaceEntrySnapshot(s); err != nil { // undo
+		t.Fatal(err)
+	}
+	theirs, err := Open(path, "synthetic-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := theirs.AddEntry(theirs.RootGroup().UUID, Entry{Title: "Added there"}); err != nil {
+		t.Fatal(err)
+	}
+	mustSave(t, theirs)
+	saveOverChange(t, ours)
+	saved, err := Open(path, "synthetic-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, err := saved.GetEntry(id); err != nil || e.Password != "here-new" {
+		t.Fatalf("after the sync: %q, %v; want the version the undo put back", e.Password, err)
+	}
+
+	s = restore()
+	if err := ours.ReplaceEntrySnapshot(s); err != nil {
+		t.Fatal(err)
+	}
+	want := s.entry.Times.LastModificationTime
+	if got := findEntry(&ours.Database.Content.Root.Groups[0], id).Times.LastModificationTime; !timeOf(got).Equal(timeOf(want)) {
+		t.Fatalf("undone before a save: changed at %v, want %v", timeOf(got), timeOf(want))
+	}
+}
+
+// Merging an entry back from an old copy (keetui -merge) undoes its
+// recorded deletion: a client that synced the deletion and keeps the
+// record must not delete it again.
+func TestMergeBackOutlivesTheDeletionRecord(t *testing.T) {
+	path, db, _, ids := syncFixture(t, true)
+	dir := filepath.Dir(path)
+	backup, client := filepath.Join(dir, "backup.kdbx"), filepath.Join(dir, "client.kdbx")
+	writeCopy(t, path, backup)
+	id := ids["Missing there"]
+	if err := db.PermanentlyDeleteEntry(id); err != nil {
+		t.Fatal(err)
+	}
+	mustSave(t, db)
+	writeCopy(t, path, client) // the client synced the deletion
+
+	merged, err := Open(path, "synthetic-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := Open(backup, "synthetic-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err := merged.Merge(old); err != nil || r.EntriesAdded != 1 {
+		t.Fatalf("merge: %+v, %v; want the deleted entry added", r, err)
+	}
+	if !deletedAt(merged, id).IsZero() {
+		t.Fatal("the merge kept the deletion record of the entry it added back")
+	}
+	mustSave(t, merged)
+
+	ours, err := Open(path, "synthetic-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ours.AddEntry(ours.RootGroup().UUID, Entry{Title: "Added here"}); err != nil {
+		t.Fatal(err)
+	}
+	theirs, err := Open(client, "synthetic-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := theirs.AddEntry(theirs.RootGroup().UUID, Entry{Title: "Added there"}); err != nil {
+		t.Fatal(err)
+	}
+	mustSave(t, theirs)
+	writeCopy(t, client, path) // the client's save reaches the file
+	saveOverChange(t, ours)
+	saved, err := Open(path, "synthetic-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outlivesRecord(t, saved, id)
+}
+
 // KeePassXC upgrades a KDBX 3.1 file when it saves it, and its KDBX 4.1
 // fields cannot go back into 3.1: the merge moves the database to the
 // file's format, attachments included.

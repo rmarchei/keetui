@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 
 	"github.com/tobischo/gokeepasslib/v3"
+	w "github.com/tobischo/gokeepasslib/v3/wrappers"
 )
 
 // EntrySnapshot is a self-contained copy of an entry, including the
@@ -64,6 +66,8 @@ func (d *DB) SnapshotGroup(groupUUID gokeepasslib.UUID) (*GroupSnapshot, error) 
 
 // InsertEntrySnapshot inserts a copy of the snapshot's entry (preserving its
 // UUID) into the given group, putting its attachments back in the pool.
+// Unless the file still holds the entry, it counts as changed now (see
+// markRestoredEntry).
 func (d *DB) InsertEntrySnapshot(groupUUID gokeepasslib.UUID, s *EntrySnapshot) error {
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return fmt.Errorf("database has no root group")
@@ -74,14 +78,17 @@ func (d *DB) InsertEntrySnapshot(groupUUID gokeepasslib.UUID, s *EntrySnapshot) 
 	}
 	entry := cloneEntry(s.entry)
 	rebindEntryBinaries(&entry, d.repoolBinaries(s.binaries))
+	d.markRestoredEntry(&entry, restoredAt(d.forgetDeleted(entry.UUID)))
 	g.Entries = append(g.Entries, entry)
-	d.forgetDeleted(entry.UUID)
 	return nil
 }
 
 // ReplaceEntrySnapshot puts a copy of the snapshot's entry back in place of
 // the entry with its UUID, wherever that is now, attachments and history
-// included: the undo of a change that replaced the whole entry.
+// included: the undo of a change that replaced the whole entry. Unless the
+// file holds that very version, it counts as changed now: the version a
+// save wrote there in between would otherwise win the next sync, as the
+// more recently changed one.
 func (d *DB) ReplaceEntrySnapshot(s *EntrySnapshot) error {
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return fmt.Errorf("database has no root group")
@@ -92,13 +99,19 @@ func (d *DB) ReplaceEntrySnapshot(s *EntrySnapshot) error {
 	}
 	restored := cloneEntry(s.entry)
 	rebindEntryBinaries(&restored, d.repoolBinaries(s.binaries))
+	mod, held := d.onDisk().entries[restored.UUID]
+	if !held || !mod.Equal(timeOf(restored.Times.LastModificationTime)) {
+		now := w.Now()
+		restored.Times.LastModificationTime = &now
+	}
 	*entry = restored
 	return nil
 }
 
 // InsertGroupSnapshot inserts a copy of the snapshot's group (preserving its
 // UUID and subtree) into the given parent group, putting its attachments
-// back in the pool.
+// back in the pool. What in it the file does not hold counts as changed now
+// (see markRestoredEntry).
 func (d *DB) InsertGroupSnapshot(parentUUID gokeepasslib.UUID, s *GroupSnapshot) error {
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return fmt.Errorf("database has no root group")
@@ -109,9 +122,46 @@ func (d *DB) InsertGroupSnapshot(parentUUID gokeepasslib.UUID, s *GroupSnapshot)
 	}
 	group := cloneGroup(s.group)
 	rebindGroupBinaries(&group, d.repoolBinaries(s.binaries))
+	d.markRestoredGroup(&group, restoredAt(d.forgetDeleted(groupIDs(&group)...)))
 	parent.Groups = append(parent.Groups, group)
-	d.forgetDeleted(groupIDs(&group)...)
 	return nil
+}
+
+// onDisk returns what keetui last read from or wrote to the database's
+// file, or nothing when it does not know.
+func (d *DB) onDisk() diskStamp {
+	if !d.disk.known || d.disk.path != filepath.Clean(d.Path) {
+		return diskStamp{}
+	}
+	return d.disk
+}
+
+// markRestoredEntry marks an entry an undo put back as changed at, unless
+// the file, as keetui last read or wrote it, holds it. Otherwise its
+// deletion may have been saved, and KeePass clients keep the record
+// (DeletedObjects), which forgetDeleted cannot take back from them: the
+// next sync would delete the entry again, as last changed before it, here
+// (applyDeletions) and in those clients. One the file holds was never
+// deleted there, and keeps its times, so that a newer change made there
+// still wins.
+func (d *DB) markRestoredEntry(e *gokeepasslib.Entry, at w.TimeWrapper) {
+	if _, held := d.onDisk().entries[e.UUID]; !held {
+		e.Times.LastModificationTime = &at
+	}
+}
+
+// markRestoredGroup marks a group an undo put back, and everything in it,
+// as markRestoredEntry does.
+func (d *DB) markRestoredGroup(g *gokeepasslib.Group, at w.TimeWrapper) {
+	if !d.onDisk().groups[g.UUID] {
+		g.Times.LastModificationTime = &at
+	}
+	for i := range g.Entries {
+		d.markRestoredEntry(&g.Entries[i], at)
+	}
+	for i := range g.Groups {
+		d.markRestoredGroup(&g.Groups[i], at)
+	}
 }
 
 func (d *DB) newSnapshotBinaries() snapshotBinaries {
