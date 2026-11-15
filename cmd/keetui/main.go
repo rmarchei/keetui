@@ -301,7 +301,7 @@ func main() {
 
 	ui.Version = version
 	app := ui.NewApp(dbPath, *keyFile, cfg, *readOnly)
-	p := tea.NewProgram(app)
+	p := newProgram(app)
 	// Bubble Tea does not handle SIGHUP (terminal closed, SSH dropped), which
 	// would otherwise kill the process with a password on the clipboard.
 	hup := make(chan os.Signal, 1)
@@ -321,6 +321,24 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// traceEnv names the variables that make Bubble Tea and its renderer write
+// to a file what passes through the terminal: TEA_TRACE logs every input
+// byte, the master password typed on the unlock screen included, and every
+// frame; TEA_DEBUG writes a log of a panic to the working folder; UV_DEBUG
+// logs the renderer's output (ultraviolet's TerminalScreen, which Bubble Tea
+// does not use today).
+var traceEnv = []string{"TEA_TRACE", "TEA_DEBUG", "UV_DEBUG"}
+
+// newProgram creates the TUI program with the trace variables unset first:
+// Bubble Tea reads TEA_TRACE when the program is created, and TEA_DEBUG when
+// it recovers from a panic.
+func newProgram(model tea.Model) *tea.Program {
+	for _, name := range traceEnv {
+		_ = os.Unsetenv(name)
+	}
+	return tea.NewProgram(model)
 }
 
 // openDBForBatch opens the database for batch operations, prompting for password.

@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
@@ -115,5 +119,39 @@ func TestMergePreviewSanitizesNames(t *testing.T) {
 	})
 	if got := out.String(); strings.ContainsAny(got, "\x1b\x07\r") || !strings.Contains(got, "+ ADD     Mail") {
 		t.Errorf("preview = %q", got)
+	}
+}
+
+type nopModel struct{}
+
+func (nopModel) Init() tea.Cmd                       { return nil }
+func (nopModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return nopModel{}, nil }
+func (nopModel) View() tea.View                      { return tea.NewView("") }
+
+// TEA_TRACE makes Bubble Tea log every input byte, the master password
+// typed on the unlock screen included: the program keetui runs must not
+// see it, nor the other trace variables.
+func TestNewProgramUnsetsTraceVariables(t *testing.T) {
+	dir := t.TempDir()
+	control := filepath.Join(dir, "control.log")
+	t.Setenv("TEA_TRACE", control)
+	_ = tea.NewProgram(nopModel{})
+	if _, err := os.Stat(control); err != nil {
+		t.Fatalf("Bubble Tea no longer opens TEA_TRACE when the program is created (%v): check where it reads it now", err)
+	}
+
+	trace := filepath.Join(dir, "trace.log")
+	for _, name := range traceEnv {
+		t.Setenv(name, trace)
+	}
+	t.Setenv("TEA_DEBUG", "1")
+	_ = newProgram(nopModel{})
+	for _, name := range traceEnv {
+		if value, set := os.LookupEnv(name); set {
+			t.Errorf("%s=%q is still set", name, value)
+		}
+	}
+	if _, err := os.Stat(trace); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the trace file was created (%v)", err)
 	}
 }
