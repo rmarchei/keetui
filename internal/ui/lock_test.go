@@ -1,12 +1,15 @@
 package ui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/rmarchei/keetui/internal/config"
 	"github.com/rmarchei/keetui/internal/keepass"
@@ -134,6 +137,29 @@ func TestManualLockOffersToHoldTheChangesWhenTheFolderIsGone(t *testing.T) {
 	m = failLockSave(t, m)
 	if m.state != viewConfirm || !strings.Contains(m.confirm.message, "the folder of") || !strings.Contains(m.confirm.message, "Lock anyway?") {
 		t.Fatalf("state %d, question %q", m.state, m.confirm.message)
+	}
+}
+
+// Locking forgets the last message, which may name what was open: neither
+// the settings nor their help, opened from the unlock screen, show it.
+func TestLockForgetsTheLastStatus(t *testing.T) {
+	for _, soft := range []bool{false, true} {
+		m := createTestApp(t)
+		m.lastActivity = time.Now().Add(-time.Hour)
+		m, _ = lockStep(t, m, StatusMsg{Text: "Copied the password of Synthetic Bank", IsError: true, Detail: "Synthetic detail"})
+		if soft {
+			m, _ = lockStep(t, m, softLockMsg{err: errors.New("synthetic failure")})
+		} else {
+			m, _ = lockStep(t, m, autoLockMsg{gen: m.autoLockGen})
+		}
+		if m.state != viewUnlock || m.statusText != "" || m.statusError || m.statusDetail != "" {
+			t.Fatalf("soft %v: state %d, status %q (error %v), detail %q", soft, m.state, m.statusText, m.statusError, m.statusDetail)
+		}
+		m = feed(t, m, ctrlO)
+		m, _ = lockStep(t, m, tea.KeyPressMsg{Code: tea.KeyF1})
+		if m.state != viewHelp || m.help.message != "" || strings.Contains(ansi.Strip(m.View().Content), "Synthetic") {
+			t.Errorf("soft %v: state %d, help message %q", soft, m.state, m.help.message)
+		}
 	}
 }
 

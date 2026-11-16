@@ -1400,6 +1400,9 @@ func (m *AppModel) lockDatabase() tea.Cmd {
 	m.unlock = NewUnlockModel(m.filePath, m.keyFilePath)
 	m.state = viewUnlock
 	m.quitReturn = nil
+	// The last message may name what was open (an entry's title): the
+	// settings and help opened from the unlock screen would show it.
+	m.statusText, m.statusError, m.statusDetail = "", false, ""
 	return tea.Batch(m.unlock.Init(), m.watchUnlockFiles(), m.ensureSecurityTick(), repaintAfter(result))
 }
 
