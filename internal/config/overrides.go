@@ -34,8 +34,9 @@ type Overrides struct {
 
 // ParseOverrides reads the overrides stored in a database. Keys it does not
 // know are ignored, and values are repaired as Sanitize repairs the config
-// file: too small a delay becomes the minimum, and a value with no valid
-// reading inherits. Invalid JSON is an error and overrides nothing.
+// file: too small or too large a delay becomes the minimum or the maximum,
+// and a value with no valid reading inherits. Invalid JSON is an error and
+// overrides nothing.
 func ParseOverrides(data string) (Overrides, error) {
 	var o Overrides
 	if data == "" {
@@ -49,7 +50,7 @@ func ParseOverrides(data string) (Overrides, error) {
 }
 
 func (o *Overrides) sanitize() {
-	delay := func(p **int, minimum int) {
+	delay := func(p **int, minimum, maximum int) {
 		switch {
 		case *p == nil:
 		case **p < 0:
@@ -57,10 +58,13 @@ func (o *Overrides) sanitize() {
 		case **p > 0 && **p < minimum:
 			v := minimum
 			*p = &v
+		case **p > maximum:
+			v := maximum
+			*p = &v
 		}
 	}
-	delay(&o.ClipboardClearSeconds, 15)
-	delay(&o.AutoLockMinutes, 5)
+	delay(&o.ClipboardClearSeconds, 15, MaxClipboardClearSeconds)
+	delay(&o.AutoLockMinutes, 5, MaxAutoLockMinutes)
 	if o.PasswordLength != nil && *o.PasswordLength < 8 {
 		o.PasswordLength = nil
 	}

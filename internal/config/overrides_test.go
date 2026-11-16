@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseOverridesRepairsLikeTheConfigFile(t *testing.T) {
@@ -46,6 +47,26 @@ func TestParseOverridesRepairsLikeTheConfigFile(t *testing.T) {
 	}
 	if o, err := ParseOverrides(""); err != nil || !o.IsZero() {
 		t.Errorf("no item = no overrides, got %+v, %v", o, err)
+	}
+}
+
+// A delay too large for a time.Duration would turn negative: the lock and
+// the clear would never come while the status bar counts down.
+func TestParseOverridesCapsHugeDelays(t *testing.T) {
+	o, err := ParseOverrides(`{"auto_lock_minutes": 9223372036854775807, "clipboard_clear_seconds": 9223372036854775807}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.AutoLockMinutes == nil || *o.AutoLockMinutes != MaxAutoLockMinutes ||
+		o.ClipboardClearSeconds == nil || *o.ClipboardClearSeconds != MaxClipboardClearSeconds {
+		t.Fatalf("auto-lock %v, clear %v: want the maxima", o.AutoLockMinutes, o.ClipboardClearSeconds)
+	}
+	cfg := Default().Apply(o)
+	if d := cfg.AutoLockDuration(); d != MaxAutoLockMinutes*time.Minute {
+		t.Errorf("auto-lock after %v", d)
+	}
+	if d := cfg.ClipboardClearDuration(); d != MaxClipboardClearSeconds*time.Second {
+		t.Errorf("clear after %v", d)
 	}
 }
 

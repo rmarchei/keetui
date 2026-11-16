@@ -81,6 +81,18 @@ func TestDatabaseSettingsApplyWhileItIsOpen(t *testing.T) {
 	}
 }
 
+// A delay too large for a time.Duration is capped: the auto-lock arms
+// instead of never coming.
+func TestHugeDatabaseAutoLockStillArms(t *testing.T) {
+	m, _ := openWithSettings(t, `{"auto_lock_minutes":9223372036854775807,"clipboard_clear_seconds":9223372036854775807}`)
+	if m.cfg.AutoLockMinutes != config.MaxAutoLockMinutes || m.cfg.ClipboardClearSeconds != config.MaxClipboardClearSeconds {
+		t.Fatalf("settings in effect: %+v", m.cfg)
+	}
+	if !m.autoLockCheckAt.After(time.Now()) {
+		t.Errorf("the auto-lock is not armed: %v", m.autoLockCheckAt)
+	}
+}
+
 func TestUnreadableDatabaseSettingsFallBackToGlobal(t *testing.T) {
 	m, cmd := openWithSettings(t, `{"auto_lock_minutes":`)
 	if m.cfg.AutoLockMinutes != 5 || !m.dbOverrides.IsZero() {

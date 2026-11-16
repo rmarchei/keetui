@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -33,6 +34,7 @@ func TestClipboardClearDuration(t *testing.T) {
 		{"custom", 30, 30 * time.Second},
 		{"zero disables", 0, 0},
 		{"negative falls back", -1, 15 * time.Second},
+		{"huge capped, never negative", math.MaxInt, MaxClipboardClearSeconds * time.Second},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -54,6 +56,7 @@ func TestAutoLockDuration(t *testing.T) {
 		{"custom", 10, 10 * time.Minute},
 		{"zero disables", 0, 0},
 		{"negative falls back", -1, 5 * time.Minute},
+		{"huge capped, never negative", math.MaxInt, MaxAutoLockMinutes * time.Minute},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -239,6 +242,9 @@ func TestSanitizeClamps(t *testing.T) {
 		{"zero auto-lock ok", Config{ClipboardClearSeconds: 15, AutoLockMinutes: 0, PasswordLength: 20}, 15, 0, 20},
 		{"short password", Config{ClipboardClearSeconds: 15, AutoLockMinutes: 5, PasswordLength: 4}, 15, 5, 20},
 		{"valid values unchanged", Config{ClipboardClearSeconds: 30, AutoLockMinutes: 10, PasswordLength: 32}, 30, 10, 32},
+		{"maxima unchanged", Config{ClipboardClearSeconds: 99999, AutoLockMinutes: 99999, PasswordLength: 20}, 99999, 99999, 20},
+		{"huge delays capped", Config{ClipboardClearSeconds: math.MaxInt, AutoLockMinutes: math.MaxInt, PasswordLength: 20},
+			MaxClipboardClearSeconds, MaxAutoLockMinutes, 20},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

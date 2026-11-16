@@ -56,6 +56,14 @@ func Path() string {
 	return configPath()
 }
 
+// The longest delays, as many as the settings screen's five digits take.
+// More would overflow a time.Duration far enough up: a negative delay
+// never runs out, so the clear or the lock would never come.
+const (
+	MaxClipboardClearSeconds = 99999
+	MaxAutoLockMinutes       = 99999
+)
+
 // ClipboardClearDuration returns the clipboard clear delay as a duration.
 // Returns 0 when the feature is disabled (value is 0).
 func (c Config) ClipboardClearDuration() time.Duration {
@@ -65,7 +73,7 @@ func (c Config) ClipboardClearDuration() time.Duration {
 	if c.ClipboardClearSeconds < 0 {
 		return 15 * time.Second
 	}
-	return time.Duration(c.ClipboardClearSeconds) * time.Second
+	return time.Duration(min(c.ClipboardClearSeconds, MaxClipboardClearSeconds)) * time.Second
 }
 
 // Terminal clipboard (OSC 52) policies.
@@ -111,7 +119,7 @@ func (c Config) AutoLockDuration() time.Duration {
 	if c.AutoLockMinutes < 0 {
 		return 5 * time.Minute
 	}
-	return time.Duration(c.AutoLockMinutes) * time.Minute
+	return time.Duration(min(c.AutoLockMinutes, MaxAutoLockMinutes)) * time.Minute
 }
 
 // PasswordLen returns the configured password length with a sane minimum.
@@ -354,6 +362,7 @@ func (c *Config) Sanitize() {
 	if c.ClipboardClearSeconds > 0 && c.ClipboardClearSeconds < 15 {
 		c.ClipboardClearSeconds = 15
 	}
+	c.ClipboardClearSeconds = min(c.ClipboardClearSeconds, MaxClipboardClearSeconds)
 	if c.ClipboardOSC52 != "" && c.OSC52Mode() != c.ClipboardOSC52 {
 		c.ClipboardOSC52 = ""
 	}
@@ -363,6 +372,7 @@ func (c *Config) Sanitize() {
 	if c.AutoLockMinutes > 0 && c.AutoLockMinutes < 5 {
 		c.AutoLockMinutes = 5
 	}
+	c.AutoLockMinutes = min(c.AutoLockMinutes, MaxAutoLockMinutes)
 	if c.PasswordLength < 8 {
 		c.PasswordLength = 20
 	}
