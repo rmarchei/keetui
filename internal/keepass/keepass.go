@@ -296,7 +296,9 @@ func create(path, password, keyFilePath string, db *gokeepasslib.Database) (*DB,
 	}, nil
 }
 
-// Open reads and decodes a .kdbx file with the given password.
+// Open reads and decodes a .kdbx file with the given password. A header
+// asking for a key derivation beyond keetui's limits (see checkFileKDF) is
+// refused before any key is derived.
 func Open(path, password string) (*DB, error) {
 	if err := checkFileExtension(path); err != nil {
 		return nil, err
@@ -305,6 +307,9 @@ func Open(path, password string) (*DB, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
+	}
+	if err := checkFileKDF(data); err != nil {
+		return nil, fmt.Errorf("decode database: %w", err)
 	}
 
 	db := gokeepasslib.NewDatabase()
@@ -329,7 +334,8 @@ func Open(path, password string) (*DB, error) {
 	}, nil
 }
 
-// OpenWithKeyFile reads and decodes a .kdbx file with password and key file.
+// OpenWithKeyFile reads and decodes a .kdbx file with password and key file,
+// refusing a header beyond keetui's key derivation limits as Open does.
 func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 	if err := checkFileExtension(path); err != nil {
 		return nil, err
@@ -337,6 +343,9 @@ func OpenWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
+	}
+	if err := checkFileKDF(data); err != nil {
+		return nil, fmt.Errorf("decode database: %w", err)
 	}
 
 	creds, err := buildCredentials(password, keyFilePath)

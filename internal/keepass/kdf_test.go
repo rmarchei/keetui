@@ -1,8 +1,13 @@
 package keepass
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -258,12 +263,188 @@ func TestKDFDescription(t *testing.T) {
 		{kdbx4(&gokeepasslib.KdfParameters{UUID: gokeepasslib.KdfArgon2, Memory: 1000, Iterations: 1, Parallelism: 1}),
 			KDF{Name: "Argon2d", Memory: 1000, Iterations: 1, Parallelism: 1}, "Argon2d, 1000 bytes, 1 iterations, parallelism 1"},
 		{kdbx4(&gokeepasslib.KdfParameters{UUID: []byte{1, 2, 3}}),
-			KDF{Name: "unknown key derivation 010203"}, "unknown key derivation 010203"},
+			KDF{Name: "unknown (UUID 010203)"}, "unknown (UUID 010203)"},
 		{kdbx4(nil), KDF{}, "no key derivation parameters"},
 	} {
 		got := kdfOf(tc.header)
 		if got != tc.want || got.String() != tc.text {
 			t.Errorf("got %+v (%q), want %+v (%q)", got, got, tc.want, tc.text)
 		}
+	}
+}
+
+func TestKDFLimits(t *testing.T) {
+	argon2d := func(memory, iterations uint64, parallelism uint32) KDF {
+		return KDF{Name: kdfArgon2d, Memory: memory, Iterations: iterations, Parallelism: parallelism}
+	}
+	for _, tc := range []struct {
+		kdf KDF
+		ok  bool
+	}{
+		// KeePass clients' defaults, and their benchmarks of a few seconds.
+		{KDF{Name: kdfAES, Rounds: 6000}, true},
+		{KDF{Name: kdfAES, Rounds: 300_000_000}, true},
+		{productionKDF, true},
+		{argon2d(64<<20, 1000, 8), true},
+		{argon2d(1<<30, 100, 4), true},
+		// The limits.
+		{KDF{Name: kdfAES, Rounds: 1 << 32}, true},
+		{argon2d(2<<30, 64, 1), true},
+		{argon2d(64<<20, 2048, 255), true},
+		// gokeepasslib refuses these itself, before any work.
+		{argon2d(64<<20, 0, 2), true},
+		{argon2d(64<<20, 2, 0), true},
+		{KDF{}, true},
+		// Beyond the limits.
+		{KDF{Name: kdfAES, Rounds: 1<<32 + 1}, false},
+		{KDF{Name: kdfAES, Rounds: 1 << 62}, false},
+		{argon2d(2<<30+1<<10, 1, 1), false},
+		{argon2d(4<<30-1<<10, 1, 1), false},
+		{argon2d(1<<62, 1, 1), false},
+		{argon2d(64<<20, 2049, 2), false},
+		{argon2d(2<<30, 65, 2), false},
+		{argon2d(0, 1<<32-1, 1), false}, // Argon2 takes 8 KiB per lane at least
+		{argon2d(64<<20, 1<<40, 2), false},
+		{argon2d(64<<20, 2, 256), false},
+		{argon2d(64<<20, 2, 1<<24), false},
+	} {
+		err := tc.kdf.checkLimits()
+		if (err == nil) != tc.ok || err != nil && !errors.Is(err, errKDFLimit) {
+			t.Errorf("%s: %v", tc.kdf, err)
+		}
+	}
+	// gokeepasslib computes neither: it would derive a wrong key.
+	for _, k := range []KDF{{Name: kdfArgon2id, Memory: 64 << 20, Iterations: 2, Parallelism: 2}, {Name: "unknown (UUID 010203)"}} {
+		err := k.checkLimits()
+		if err == nil || errors.Is(err, errKDFLimit) || !strings.Contains(err.Error(), "unsupported key derivation: "+k.Name) {
+			t.Errorf("%s: %v", k, err)
+		}
+	}
+}
+
+// patchRounds rewrites the AES-KDF rounds in a KDBX 3.1 file's header, as
+// whoever can write the file but does not know its key can: nothing
+// authenticates the header before the key is derived with it.
+func patchRounds(t *testing.T, data []byte, rounds uint64) []byte {
+	t.Helper()
+	out := bytes.Clone(data)
+	for off := 12; off+3 <= len(out) && out[off] != 0; {
+		size := int(binary.LittleEndian.Uint16(out[off+1:]))
+		if out[off] == 6 { // TransformRounds
+			binary.LittleEndian.PutUint64(out[off+3:], rounds)
+			return out
+		}
+		off += 3 + size
+	}
+	t.Fatal("no TransformRounds header field")
+	return nil
+}
+
+// patchKDFParameter rewrites a KDF parameter ($UUID, M, I or P) in a KDBX 4
+// file's header with a value of the same length, and the header's SHA-256
+// after it, which is not keyed. The HMAC after that is keyed, but checked
+// only after the key is derived.
+func patchKDFParameter(t *testing.T, data []byte, name string, value []byte) []byte {
+	t.Helper()
+	out := bytes.Clone(data)
+	patched := false
+	off := 12
+	for {
+		id, size := out[off], int(binary.LittleEndian.Uint32(out[off+1:]))
+		if id == 11 { // KdfParameters: a variant dictionary
+			dict := out[off+5 : off+5+size]
+			for item := 2; dict[item] != 0; {
+				nameEnd := item + 5 + int(binary.LittleEndian.Uint32(dict[item+1:]))
+				valueSize := int(binary.LittleEndian.Uint32(dict[nameEnd:]))
+				if string(dict[item+5:nameEnd]) == name && valueSize == len(value) {
+					copy(dict[nameEnd+4:], value)
+					patched = true
+				}
+				item = nameEnd + 4 + valueSize
+			}
+		}
+		off += 5 + size
+		if id == 0 {
+			break
+		}
+	}
+	if !patched {
+		t.Fatalf("no %d-byte KDF parameter %q", len(value), name)
+	}
+	sum := sha256.Sum256(out[:off])
+	copy(out[off:], sum[:])
+	return out
+}
+
+// promptly returns fn's error, failing the test if fn still runs after a
+// few seconds: it would be deriving a key that takes years.
+func promptly(t *testing.T, fn func() error) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(10 * time.Second):
+		t.Fatal("still deriving a key after 10 s")
+		return nil
+	}
+}
+
+// A file whose header asks for an absurd key derivation is refused before
+// any key is derived, whatever the credentials: on opening it, and on
+// merging it as the file under an open database.
+func TestHostileKDFRefusedBeforeDerivingAKey(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "vault.key")
+	if err := os.WriteFile(keyPath, []byte("synthetic key file"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	read := func(path string) []byte {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	v31 := read(createKDBX31(t, filepath.Join(dir, "v31.kdbx"), "synthetic", keyPath).Path)
+	db4, err := CreateWithKeyFile(filepath.Join(dir, "v4.kdbx"), "synthetic", keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v4 := read(db4.Path)
+	uint64LE := func(v uint64) []byte { return binary.LittleEndian.AppendUint64(nil, v) }
+	for _, tc := range []struct {
+		name string
+		data []byte
+		want string // in the error
+	}{
+		{"2^62 AES-KDF rounds", patchRounds(t, v31, 1<<62), "4611686018427387904 AES-KDF rounds"},
+		{"4 GiB of Argon2 memory", patchKDFParameter(t, v4, "M", uint64LE(4<<30-1<<10)), "4194303 KiB of Argon2 memory"},
+		{"2^31 Argon2 passes", patchKDFParameter(t, v4, "I", uint64LE(1<<31)), "2147483648 Argon2 passes"},
+		// gokeepasslib would compute one lane: a wrong key.
+		{"257 Argon2 lanes", patchKDFParameter(t, v4, "P", binary.LittleEndian.AppendUint32(nil, 257)), "257 Argon2 lanes"},
+		{"Argon2id", patchKDFParameter(t, v4, "$UUID", argon2idUUID), "unsupported key derivation: Argon2id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vault.kdbx")
+			db, err := CreateWithKeyFile(path, "synthetic", keyPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Whoever can write the file replaces it under the open database.
+			if err := os.WriteFile(path, tc.data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			for name, fn := range map[string]func() error{
+				"Open":            func() error { _, err := Open(path, "wrong password"); return err },
+				"OpenWithKeyFile": func() error { _, err := OpenWithKeyFile(path, "synthetic", keyPath); return err },
+				"MergeDisk":       func() error { _, err := db.MergeDisk(); return err },
+			} {
+				if err := promptly(t, fn); err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("%s: %v, want an error naming %q", name, err, tc.want)
+				}
+			}
+		})
 	}
 }

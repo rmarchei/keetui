@@ -46,10 +46,15 @@ type SyncResult struct {
 //     (applications' per-database settings) is merged item by item.
 //
 // Afterwards a save no longer counts the file as changed (see CheckDisk).
+// A file whose header asks for a key derivation beyond keetui's limits (see
+// checkFileKDF) is refused before any key is derived.
 func (d *DB) MergeDisk() (SyncResult, error) {
 	data, err := os.ReadFile(d.Path)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("read file: %w", err)
+	}
+	if err := checkFileKDF(data); err != nil {
+		return SyncResult{}, fmt.Errorf("the file on disk: %w", err)
 	}
 	creds := d.disk.creds
 	if creds == nil {

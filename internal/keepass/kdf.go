@@ -3,6 +3,7 @@ package keepass
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"fmt"
 
 	"github.com/tobischo/gokeepasslib/v3"
@@ -29,7 +30,7 @@ var argon2idUUID = []byte{
 // KDF describes how a database derives its key from its credentials, which
 // happens on every unlock and on every save.
 type KDF struct {
-	Name        string // "AES-KDF", "Argon2d", "Argon2id", another one by its UUID, or "" if the header has none
+	Name        string // "AES-KDF", "Argon2d", "Argon2id", "unknown (UUID …)", or "" if the header has none
 	Rounds      uint64 // AES-KDF: rounds of AES encryption
 	Memory      uint64 // Argon2: memory, in bytes
 	Iterations  uint64 // Argon2: passes over the memory
@@ -89,7 +90,80 @@ func kdfOf(h *gokeepasslib.DBHeader) KDF {
 		// calls KdfAES3; KeePassXC also reads the other one.
 		return KDF{Name: kdfAES, Rounds: p.Rounds}
 	}
-	return KDF{Name: fmt.Sprintf("unknown key derivation %x", p.UUID)}
+	return KDF{Name: fmt.Sprintf("unknown (UUID %x)", p.UUID)}
+}
+
+// Limits on the key derivation a file's header may ask for. The header is
+// not authenticated before the key is derived with it (KDBX 3.1 not at all,
+// KDBX 4 by an HMAC keyed with that key), so whoever can write the file
+// could otherwise make keetui compute for centuries (2^62 AES rounds) or
+// take gigabytes of memory before any password is checked, when unlocking
+// and when merging the file on disk. The limits are far above what KeePass
+// clients write on their own (about a second of work), so that no real
+// database is refused: at the limits, deriving a key takes one to three
+// minutes on an Apple M4.
+const (
+	// maxAESRounds is above what KeePassXC reads (2^31-1); 90 s here.
+	maxAESRounds = 1 << 32
+	// maxArgon2Memory is 32 times KeePassXC's default (64 MiB), and below
+	// the 4 GiB gokeepasslib reads (it takes the memory as 32 bits).
+	maxArgon2Memory = 2 << 30
+	// maxArgon2Work bounds memory times passes: 2048 passes over 64 MiB,
+	// or 64 over 2 GiB; 1 to 3 minutes here, by the number of lanes.
+	maxArgon2Work = 128 << 30
+	// maxArgon2Parallelism is the most lanes gokeepasslib computes: it
+	// takes the count as a byte.
+	maxArgon2Parallelism = 255
+)
+
+// errKDFLimit is wrapped by the error for a header asking for a key
+// derivation beyond the limits.
+var errKDFLimit = errors.New("key derivation parameters beyond keetui's limits (damaged or tampered file?)")
+
+// checkLimits refuses a key derivation beyond the limits, and one keetui
+// cannot compute: gokeepasslib would derive a wrong key from it. Missing or
+// zero parameters pass, as deriving the key then fails before any work.
+func (k KDF) checkLimits() error {
+	switch k.Name {
+	case "":
+		return nil
+	case kdfAES:
+		if k.Rounds > maxAESRounds {
+			return fmt.Errorf("%w: %d AES-KDF rounds, at most %d", errKDFLimit, k.Rounds, uint64(maxAESRounds))
+		}
+		return nil
+	case kdfArgon2d:
+		if k.Parallelism > maxArgon2Parallelism {
+			return fmt.Errorf("%w: %d Argon2 lanes, at most %d", errKDFLimit, k.Parallelism, maxArgon2Parallelism)
+		}
+		if k.Memory > maxArgon2Memory {
+			return fmt.Errorf("%w: %s of Argon2 memory, at most %s", errKDFLimit, formatMemory(k.Memory), formatMemory(maxArgon2Memory))
+		}
+		// Argon2 counts memory in KiB and uses at least 8 KiB per lane.
+		memory := max(k.Memory/1024, 8*uint64(max(k.Parallelism, 1))) * 1024
+		if k.Iterations > maxArgon2Work/memory {
+			return fmt.Errorf("%w: %d Argon2 passes over %s, at most %d", errKDFLimit, k.Iterations, formatMemory(memory), maxArgon2Work/memory)
+		}
+		return nil
+	}
+	return fmt.Errorf("unsupported key derivation: %s; keetui supports Argon2d and AES-KDF", k.Name)
+}
+
+// checkFileKDF refuses a KDBX file whose header asks for a key derivation
+// beyond the limits or one keetui cannot compute, without deriving a key.
+// A header that cannot be read passes: decoding the file fails the same way,
+// before deriving a key.
+func checkFileKDF(data []byte) error {
+	probe := gokeepasslib.NewDatabase()
+	// Without credentials, decoding stops where the key would be derived:
+	// after reading the header and, for KDBX 4, checking its hash.
+	probe.Credentials = nil
+	err := gokeepasslib.NewDecoder(bytes.NewReader(data)).Decode(probe)
+	var missing gokeepasslib.ErrRequiredAttributeMissing
+	if !errors.As(err, &missing) || missing != "Credentials" {
+		return nil
+	}
+	return kdfOf(probe.Header).checkLimits()
 }
 
 // productionKDF is the key derivation keetui gives new databases: Argon2d
