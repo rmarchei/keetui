@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,11 @@ type linuxClipboard struct {
 	runX   func(env []string, input []byte, name string, args ...string) error
 	output func(env []string, name string, args ...string) ([]byte, error)
 	newX11 func(display, authority string) x11Owner
+	// listeners returns the owners of the TCP sockets listening on a port
+	// at a loopback or unspecified address (listenerUIDs); tests replace
+	// it, so they need no sockets.
+	listeners func(port int) ([]uint32, error)
+	uid       uint32 // keetui's effective uid
 
 	tool      string   // backend of the last write: wl-copy, x11, xclip or xsel
 	env       []string // the route's env for the last write, for the tools that check and clear it
@@ -104,6 +110,8 @@ func newNativeClipboard() nativeClipboard {
 		newX11: func(display, authority string) x11Owner {
 			return &x11clip.Owner{Name: x11Name, Display: display, Authority: authority}
 		},
+		listeners: listenerUIDs,
+		uid:       uint32(os.Geteuid()),
 	}
 }
 
@@ -137,22 +145,18 @@ func x11Fallback(has func(string) bool) string {
 // but on an XQuartz server or through an untrusted ssh -X connection its
 // copies cannot be pasted, so auto also sends the copy to the terminal.
 // Inside tmux, panes keep the DISPLAY they started with, so the session's
-// DISPLAY, which tmux refreshes on attach, takes precedence, and so does its
-// XAUTHORITY: a tmux started on a desktop keeps the display manager's in its
-// panes, while sshd writes the forwarded display's cookie to ~/.Xauthority.
+// DISPLAY, which tmux refreshes on attach, takes precedence, local or
+// remote, and so does its XAUTHORITY: a tmux started on a desktop keeps the
+// display manager's in its panes, while sshd writes the forwarded display's
+// cookie to ~/.Xauthority. A display on this machine's loopback, as sshd
+// forwards it, must be served by keetui's user (see displayRefusal).
 func (l *linuxClipboard) route(s remoteSession) nativeRoute {
 	if !s.remote {
-		return l.localRoute(s.desktop)
+		return l.localRoute(s)
 	}
 	display, from, authority := l.getenv("DISPLAY"), "DISPLAY", ""
-	if v, known := s.tmux.lookup("DISPLAY"); known {
-		display, from = v, "the tmux session's DISPLAY"
-		if a, known := s.tmux.lookup("XAUTHORITY"); known {
-			authority = a
-			if a == "" && l.getenv("HOME") != "" {
-				authority = filepath.Join(l.getenv("HOME"), ".Xauthority") // what the client attaching used
-			}
-		}
+	if v, a, known := l.sessionDisplay(s.tmux); known {
+		display, from, authority = v, "the tmux session's DISPLAY", a
 	}
 	wayland := ""
 	if l.getenv("WAYLAND_DISPLAY") != "" {
@@ -166,25 +170,61 @@ func (l *linuxClipboard) route(s remoteSession) nativeRoute {
 			"Not copied to X display %s (%s): sshd did not forward it, so it belongs to this host, not to you.%s",
 			display, from, wayland)}
 	}
+	if why := l.displayRefusal(display); why != "" {
+		return nativeRoute{dest: "X display " + display, why: fmt.Sprintf("Not copied to X display %s (%s): %s", display, from, why)}
+	}
 	return nativeRoute{ok: true, alsoTerminal: true, display: display, authority: authority, forwarded: true,
 		dest: "the X display your SSH session forwards (" + display + ")"}
 }
 
-// localRoute picks this machine's clipboard. In a herdr pane, that is the
-// one on the display of the herdr client the user typed on (see
-// herdrDesktop), when it differs from keetui's: without a display of its
-// own, keetui would leave the copy to herdr, whose client writes it
-// unmarked, and an old one may be gone.
-func (l *linuxClipboard) localRoute(c herdrDesktop) nativeRoute {
+// sessionDisplay returns the tmux session's DISPLAY, which tmux refreshes
+// on every attach, and the X authority file that goes with it: the
+// session's XAUTHORITY, ~/.Xauthority when the client attaching had none
+// (what its X clients read), or "" (keetui's own) when tmux does not track
+// it. known is false when tmux does not track DISPLAY, or did not answer.
+func (l *linuxClipboard) sessionDisplay(e tmuxEnv) (display, authority string, known bool) {
+	if display, known = e.lookup("DISPLAY"); !known {
+		return "", "", false
+	}
+	if a, tracked := e.lookup("XAUTHORITY"); tracked {
+		authority = a
+		if a == "" && l.getenv("HOME") != "" {
+			authority = filepath.Join(l.getenv("HOME"), ".Xauthority")
+		}
+	}
+	return display, authority, true
+}
+
+// localRoute picks this machine's clipboard. Inside tmux, the X display is
+// the session's (see route): a pane keeps the DISPLAY of the attach it
+// started in, which may be an SSH session's forwarded display, long gone.
+// In a herdr pane, the clipboard is the one on the display of the herdr
+// client the user typed on (see herdrDesktop), when it differs from
+// keetui's: without a display of its own, keetui would leave the copy to
+// herdr, whose client writes it unmarked, and an old one may be gone.
+func (l *linuxClipboard) localRoute(s remoteSession) nativeRoute {
+	c := s.desktop
+	// keetui's own environment, with the tmux session's display.
+	own, from := l.getenv, "DISPLAY"
+	tmuxDisplay, tmuxAuthority, fromTmux := l.sessionDisplay(s.tmux)
+	if fromTmux {
+		own, from = func(name string) string {
+			if name == "DISPLAY" {
+				return tmuxDisplay
+			}
+			return l.getenv(name)
+		}, "the tmux session's DISPLAY"
+	}
 	clientEnv := func(name string) string {
 		if v := envValue(c.env, name); v != "" || name != "XDG_RUNTIME_DIR" {
 			return v
 		}
 		return l.getenv(name) // the same user's
 	}
-	tool, getenv, client := linuxTool(l.getenv, l.has), l.getenv, 0
-	if t := linuxTool(clientEnv, l.has); t != "" && (t != tool || clientEnv(displayVar[t]) != l.getenv(displayVar[t])) {
+	tool, getenv, client := linuxTool(own, l.has), own, 0
+	if t := linuxTool(clientEnv, l.has); t != "" && (t != tool || clientEnv(displayVar[t]) != own(displayVar[t])) {
 		tool, getenv, client = t, clientEnv, c.pid
+		from = fmt.Sprintf("herdr client pid %d's DISPLAY", c.pid)
 	}
 	switch tool {
 	case "wl-copy":
@@ -199,21 +239,104 @@ func (l *linuxClipboard) localRoute(c herdrDesktop) nativeRoute {
 		return r
 	case "x11":
 		display := getenv("DISPLAY")
+		if why := l.displayRefusal(display); why != "" {
+			return nativeRoute{dest: "X display " + display, why: fmt.Sprintf("Not copied to X display %s (%s): %s", display, from, why)}
+		}
 		r := nativeRoute{ok: true, client: client, display: display, dest: "X display " + display}
-		if client != 0 {
+		switch {
+		case client != 0:
 			// The client's X clients read ~/.Xauthority without XAUTHORITY.
 			r.authority = getenv("XAUTHORITY")
 			if r.authority == "" && l.getenv("HOME") != "" {
 				r.authority = filepath.Join(l.getenv("HOME"), ".Xauthority")
 			}
-			r.env = []string{"DISPLAY=" + display}
-			if r.authority != "" {
-				r.env = append(r.env, "XAUTHORITY="+r.authority)
+		case fromTmux:
+			r.authority = tmuxAuthority
+			if display != l.getenv("DISPLAY") {
+				r.dest += " (the tmux session's DISPLAY; this pane's is " + l.getenv("DISPLAY") + ")"
 			}
+		default:
+			return r
+		}
+		// xclip and xsel would reach keetui's own display.
+		r.env = []string{"DISPLAY=" + display}
+		if r.authority != "" {
+			r.env = append(r.env, "XAUTHORITY="+r.authority)
 		}
 		return r
 	}
+	if fromTmux && tmuxDisplay == "" && l.getenv("DISPLAY") != "" {
+		return nativeRoute{why: fmt.Sprintf("No local clipboard: WAYLAND_DISPLAY is not set, and the tmux session has no DISPLAY "+
+			"(the client that attached last had none); this pane's, %s, is left from an earlier attach.", l.getenv("DISPLAY"))}
+	}
 	return nativeRoute{why: "No local clipboard: neither WAYLAND_DISPLAY nor DISPLAY is set."}
+}
+
+// displayRefusal says why keetui must not copy to an X display that it
+// reaches over TCP on this machine's loopback; "" when it may, or when the
+// display is elsewhere. That is the display sshd forwards (localhost:10.0),
+// whose port sshd frees when the SSH session ends: a DISPLAY left from that
+// session (in a tmux pane, or in the tmux session's environment until a
+// client attaches again) then names a port that any user of this machine
+// may listen on, who would receive keetui's copies. The listener must be
+// keetui's user's, as sshd's forwarding is, or root's.
+func (l *linuxClipboard) displayRefusal(display string) string {
+	port, ok := loopbackDisplay(display)
+	if !ok {
+		return ""
+	}
+	ended := ""
+	if forwardedDisplay(display) {
+		ended = " The SSH session that forwarded it has probably ended: in tmux, attach again from your current session " +
+			"(tmux then updates DISPLAY), or restart keetui."
+	}
+	uids, err := l.listeners(port)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("keetui could not tell whether its TCP port %d is yours (%v): another user could be listening there.", port, err)
+	case len(uids) == 0:
+		return fmt.Sprintf("nothing listens on its TCP port %d, which any user of this machine could take.%s", port, ended)
+	}
+	for _, uid := range uids {
+		if uid != l.uid && uid != 0 {
+			return fmt.Sprintf("its TCP port %d belongs to another user (uid %d), who would receive the copy.%s", port, uid, ended)
+		}
+	}
+	return ""
+}
+
+// x11TCPBase is the TCP port of X display 0.
+const x11TCPBase = 6000
+
+// loopbackDisplay reports an X display that is reached over TCP on this
+// machine's loopback, as x11clip and xclip parse it, and its port.
+func loopbackDisplay(display string) (port int, ok bool) {
+	i := strings.LastIndexByte(display, ':')
+	if i <= 0 || display[0] == '/' {
+		return 0, false // a local socket, or a launchd one
+	}
+	host := display[:i]
+	if j := strings.LastIndexByte(host, '/'); j >= 0 {
+		host = host[j+1:] // protocol/host
+	}
+	number, _, _ := strings.Cut(display[i+1:], ".")
+	n, err := strconv.Atoi(number)
+	if err != nil || n < 0 || !loopbackHost(host) {
+		return 0, false
+	}
+	return x11TCPBase + n, true
+}
+
+// loopbackHost reports a display's host part that names this machine's
+// loopback: localhost, as sshd's forwarded displays do, or a loopback
+// address.
+func loopbackHost(host string) bool {
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	a, err := netip.ParseAddr(host)
+	return err == nil && a.Unmap().IsLoopback()
 }
 
 // displayVar names the variable that names the display of each of
@@ -292,8 +415,8 @@ func (l *linuxClipboard) writeX11(value []byte, r nativeRoute) (tool string, mar
 	if r.forwarded || errors.Is(err, x11clip.ErrTimeout) {
 		return "", false, err
 	}
-	// Only local routes get here, whose display is keetui's $DISPLAY or a
-	// herdr client's, which r.env names.
+	// Only local routes get here, whose display is keetui's $DISPLAY, or the
+	// tmux session's or a herdr client's, which r.env names.
 	tool = x11Fallback(l.has)
 	switch tool {
 	case "xclip":
@@ -431,7 +554,8 @@ func (l *linuxClipboard) close() {
 // handOff gives the clipboard to an empty xclip copy and waits until xclip,
 // which takes the clipboard after forking, owns it, so that it never goes
 // ownerless in between. Only displays keetui reached locally get here,
-// whose authority file is keetui's own or a herdr client's.
+// whose authority file is keetui's own, the tmux session's or a herdr
+// client's.
 func (l *linuxClipboard) handOff(s *x11Slot) {
 	done := make(chan error, 1)
 	env := envWith("DISPLAY=" + s.display)

@@ -141,8 +141,14 @@ func newTestLinux(env map[string]string, x *fakeX11, tools *fakeTools) *linuxCli
 		runX:   tools.run,
 		output: tools.output,
 		newX11: func(string, string) x11Owner { return x },
+		// Every loopback port is keetui's own, as for a live ssh -X.
+		listeners: func(int) ([]uint32, error) { return []uint32{testUID}, nil },
+		uid:       testUID,
 	}
 }
+
+// testUID stands in for keetui's uid in tests of displayRefusal.
+const testUID = 1000
 
 var x11Env = map[string]string{"DISPLAY": ":0"}
 

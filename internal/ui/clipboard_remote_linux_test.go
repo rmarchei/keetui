@@ -3,8 +3,13 @@
 package ui
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/fs"
+	"maps"
+	"net"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -249,6 +254,277 @@ func TestSessionDisplayTakesTheSessionsAuthority(t *testing.T) {
 	res, err := c.copy("synthetic-secret", copyOptions{transient: true, osc52: config.OSC52Auto})
 	if help := clipboardHelp(res, err); res.native || !strings.Contains(help, "X authority file /home/u/.Xauthority") {
 		t.Fatalf("copy = %+v, %v; help %q", res, err, help)
+	}
+}
+
+// A local session in tmux copies to the session's DISPLAY, which tmux
+// refreshes on attach, not to the pane's: a pane started during ssh -X
+// keeps that session's forwarded display after it ended, a port that
+// another user may listen on by then. The session's XAUTHORITY goes with
+// its DISPLAY, and xclip, the fallback, reaches the same display.
+func TestLocalTmuxSessionDisplayOverThePanes(t *testing.T) {
+	pane := map[string]string{"DISPLAY": "localhost:10.0", "TMUX": "/tmp/tmux-1000/default,1,0", "HOME": "/home/u"}
+	d := sessionDetector{
+		getenv: func(k string) string { return pane[k] },
+		tmuxEnv: func() (tmuxEnv, error) {
+			return parseTmuxEnv([]byte("-SSH_CONNECTION\nDISPLAY=:0\nXAUTHORITY=/run/user/1000/gdm/Xauthority\n")), nil
+		},
+	}
+	s := d.detect()
+	if s.remote {
+		t.Fatalf("session = %+v", s)
+	}
+	var dialed []string
+	x, tools := &fakeX11{copyErr: x11clip.ErrNotOwner}, &fakeTools{installed: []string{"xclip"}, clip: []byte("synthetic-secret")}
+	l := newTestLinux(pane, x, tools)
+	l.newX11 = func(display, authority string) x11Owner { dialed = append(dialed, display+" "+authority); return x }
+	l.listeners = func(port int) ([]uint32, error) {
+		t.Errorf("looked up port %d for a local socket", port)
+		return nil, nil
+	}
+	c, term := newFakeClipboard(nil)
+	c.native = l
+	c.detect = func() remoteSession { return s }
+	res, err := c.copy("synthetic-secret", copyOptions{transient: true, osc52: config.OSC52Auto})
+	if err != nil || !res.native || res.terminal || len(term.sent) != 0 {
+		t.Fatalf("copy = %+v, %v", res, err)
+	}
+	if !slices.Equal(dialed, []string{":0 /run/user/1000/gdm/Xauthority"}) {
+		t.Fatalf("owner dialed %q", dialed)
+	}
+	if help := clipboardHelp(res, nil); !strings.Contains(help, "Copied to X display :0 (the tmux session's DISPLAY; this pane's is localhost:10.0).") {
+		t.Fatalf("help = %q", help)
+	}
+	if r, err := c.release(); err != nil || r.outcome != clearDone {
+		t.Fatalf("release = %+v, %v", r, err)
+	}
+	want := []string{"DISPLAY=:0", "XAUTHORITY=/run/user/1000/gdm/Xauthority"}
+	if len(tools.envs) != 3 {
+		t.Fatalf("xclip ran %q", tools.runs)
+	}
+	for i, env := range tools.envs {
+		if !containsAll(env, want) {
+			t.Errorf("%s ran with %q, want %q", tools.runs[i], env, want)
+		}
+	}
+
+	wl := []string{"wl-copy", "wl-paste"}
+	for _, tc := range []struct {
+		name      string
+		pane      map[string]string
+		session   string // the tmux session environment
+		tools     []string
+		ok        bool
+		display   string // "" for none, or Wayland with ok
+		authority string
+		env       []string // what the tools get set; nil for keetui's own
+		dest, why string
+	}{
+		{"the session's display", map[string]string{"DISPLAY": "localhost:10.0"}, "DISPLAY=:0\n", nil,
+			true, ":0", "", []string{"DISPLAY=:0"}, "X display :0 (the tmux session's DISPLAY; this pane's is localhost:10.0)", ""},
+		{"the attaching client's authority file", map[string]string{"DISPLAY": "localhost:10.0", "HOME": "/home/u"}, "DISPLAY=:0\n-XAUTHORITY\n", nil,
+			true, ":0", "/home/u/.Xauthority", []string{"DISPLAY=:0", "XAUTHORITY=/home/u/.Xauthority"}, "X display :0 (the tmux session's DISPLAY", ""},
+		{"the same display", map[string]string{"DISPLAY": ":0"}, "DISPLAY=:0\n", nil,
+			true, ":0", "", []string{"DISPLAY=:0"}, "X display :0", ""},
+		{"no display in the session", map[string]string{"DISPLAY": "localhost:10.0"}, "-DISPLAY\n", nil,
+			false, "", "", nil, "", "the tmux session has no DISPLAY (the client that attached last had none); this pane's, localhost:10.0, is left"},
+		{"no display in the session, Wayland", map[string]string{"DISPLAY": "localhost:10.0", "WAYLAND_DISPLAY": "wayland-0"}, "-DISPLAY\n", wl,
+			true, "", "", nil, "the Wayland clipboard (wayland-0)", ""},
+		{"the session's display under Wayland", map[string]string{"WAYLAND_DISPLAY": "wayland-0"}, "DISPLAY=:0\n", wl,
+			true, "", "", nil, "the Wayland clipboard (wayland-0)", ""},
+		{"display not tracked", map[string]string{"DISPLAY": ":1"}, "SSH_AUTH_SOCK=/tmp/a\n", nil,
+			true, ":1", "", nil, "X display :1", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pane := maps.Clone(tc.pane)
+			pane["TMUX"] = "x"
+			l := newTestLinux(pane, &fakeX11{}, &fakeTools{installed: tc.tools})
+			r := l.route(remoteSession{why: "the tmux session was last attached locally", tmux: parseTmuxEnv([]byte(tc.session))})
+			if r.ok != tc.ok || r.display != tc.display || r.authority != tc.authority || r.forwarded || r.alsoTerminal ||
+				!slices.Equal(r.env, tc.env) || !strings.HasPrefix(r.dest, tc.dest) || !strings.Contains(r.why, tc.why) {
+				t.Fatalf("route = %+v", r)
+			}
+		})
+	}
+}
+
+// A display on this machine's loopback, as sshd forwards it, is used only
+// while keetui's user, or root, listens on its port: once the SSH session
+// ends, any user may take the port and would receive the copies. Then
+// nothing goes to that X server, F1 says why, and auto sends the copy to
+// the terminal instead. This holds for every way keetui comes by the
+// display: its own DISPLAY, a tmux session's, or a herdr client's.
+func TestLoopbackDisplayNeedsYourListener(t *testing.T) {
+	sessions := []struct {
+		name    string
+		env     map[string]string
+		session remoteSession
+	}{
+		{"ssh -X", map[string]string{"DISPLAY": "localhost:10.0"}, sshSession},
+		{"tmux attached over ssh -X", map[string]string{"DISPLAY": ":0", "TMUX": "x"}, tmuxSession("DISPLAY=localhost:10.0\nSSH_CONNECTION=a b c d\n")},
+		{"a local tmux session", map[string]string{"DISPLAY": ":0", "TMUX": "x"},
+			remoteSession{why: "the tmux session was last attached locally", tmux: parseTmuxEnv([]byte("-SSH_CONNECTION\nDISPLAY=localhost:10.0\n"))}},
+		{"a pane left from ssh -X", map[string]string{"DISPLAY": "localhost:10.0", "TMUX": "x"},
+			remoteSession{why: "the tmux session was last attached locally", tmux: parseTmuxEnv([]byte("-SSH_CONNECTION\n"))}},
+		{"a herdr client", map[string]string{"HOME": "/home/u"},
+			remoteSession{herdr: true, why: "every herdr client runs locally (1 found)", desktop: herdrDesktop{pid: 201, env: []string{"DISPLAY=localhost:10.0"}}}},
+	}
+	for _, tc := range []struct {
+		name string
+		uids []uint32
+		err  error
+		why  string // "" when the copy goes to the display
+	}{
+		{"yours", []uint32{testUID}, nil, ""},
+		{"root's", []uint32{0}, nil, ""},
+		{"yours and root's", []uint32{testUID, 0}, nil, ""},
+		{"another user's", []uint32{1001}, nil, "its TCP port 6010 belongs to another user (uid 1001), who would receive the copy."},
+		{"yours on one address, another user's on another", []uint32{testUID, 1001}, nil, "another user (uid 1001)"},
+		{"nobody's", nil, nil, "nothing listens on its TCP port 6010, which any user of this machine could take."},
+		{"unknown", nil, fs.ErrPermission, "could not tell whether its TCP port 6010 is yours (permission denied)"},
+	} {
+		for _, s := range sessions {
+			t.Run(tc.name+"/"+s.name, func(t *testing.T) {
+				x, tools := &fakeX11{}, &fakeTools{installed: []string{"xclip", "xsel"}}
+				l := newTestLinux(s.env, x, tools)
+				var ports []int
+				l.listeners = func(port int) ([]uint32, error) { ports = append(ports, port); return tc.uids, tc.err }
+				c, term := newFakeClipboard(nil)
+				c.native = l
+				c.detect = func() remoteSession { return s.session }
+				res, err := c.copy("synthetic-secret", copyOptions{transient: true, osc52: config.OSC52Auto})
+				if !slices.Equal(ports, []int{6010}) {
+					t.Fatalf("looked up ports %v", ports)
+				}
+				if tc.why == "" {
+					if err != nil || !res.native || string(x.value) != "synthetic-secret" {
+						t.Fatalf("copy = %+v, %v", res, err)
+					}
+					return
+				}
+				if err != nil || res.native || !res.terminal || len(term.sent) != 1 || len(x.calls)+len(tools.runs) != 0 {
+					t.Fatalf("copy = %+v, %v (x %q, runs %q)", res, err, x.calls, tools.runs)
+				}
+				help := clipboardHelp(res, nil)
+				if !strings.Contains(help, "Not copied to X display localhost:10.0 (") || !strings.Contains(help, tc.why) ||
+					tc.err == nil && !strings.Contains(help, "has probably ended") {
+					t.Fatalf("help = %q", help)
+				}
+				// never: no clipboard at all.
+				if _, err := c.copy("synthetic-secret", copyOptions{transient: true, osc52: config.OSC52Never}); !errors.Is(err, errNoClipboard) || len(x.calls) != 0 {
+					t.Fatalf("never copy = %v (x %q)", err, x.calls)
+				}
+			})
+		}
+	}
+	// Displays elsewhere are not looked up.
+	for _, display := range []string{":0", "unix:0", "/tmp/launch-x/org.xquartz:0"} {
+		l := newTestLinux(map[string]string{"DISPLAY": display}, &fakeX11{}, &fakeTools{})
+		l.listeners = func(port int) ([]uint32, error) { t.Errorf("%s: looked up port %d", display, port); return nil, nil }
+		if r := l.route(localSession); !r.ok {
+			t.Errorf("%s: route = %+v", display, r)
+		}
+	}
+	l := newTestLinux(map[string]string{"DISPLAY": "remotehost:10.0"}, &fakeX11{}, &fakeTools{})
+	l.listeners = func(port int) ([]uint32, error) { t.Errorf("remotehost: looked up port %d", port); return nil, nil }
+	if r := l.route(sshSession); !r.ok {
+		t.Errorf("remotehost:10.0: route = %+v", r)
+	}
+}
+
+func TestLoopbackDisplay(t *testing.T) {
+	for display, want := range map[string]int{
+		"localhost:10.0":     6010,
+		"localhost:10":       6010,
+		"LOCALHOST:11.0":     6011,
+		"127.0.0.1:12.0":     6012,
+		"127.0.1.1:0":        6000,
+		"[::1]:13":           6013,
+		"::1:13.0":           6013,
+		"::ffff:127.0.0.1:1": 6001,
+		"tcp/localhost:10.0": 6010,
+		":0":                 0,
+		":10.0":              0,
+		"unix:10":            0,
+		"remotehost:10.0":    0,
+		"192.168.1.5:10.0":   0,
+		"/tmp/launch-x:0":    0,
+		"localhost:x":        0,
+		"localhost":          0,
+		"":                   0,
+	} {
+		port, ok := loopbackDisplay(display)
+		if ok != (want != 0) || port != want {
+			t.Errorf("loopbackDisplay(%q) = %d, %v; want %d", display, port, ok, want)
+		}
+	}
+}
+
+// The tables are in the format of the kernel's /proc/net/tcp and tcp6, as
+// a little-endian host prints them.
+const (
+	procTCP = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:177A 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 31337 1 0000000000000000 100 0 0 10 0
+   1: 00000000:177B 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1001        0 31338 1 0000000000000000 100 0 0 10 0
+   2: 0501A8C0:177A 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1002        0 31339 1 0000000000000000 100 0 0 10 0
+   3: 0100007F:177A 0100007F:D431 01 00000000:00000000 00:00000000 00000000  1003        0 31340 1 0000000000000000 20 4 30 10 -1
+   4: 0100007F:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 31341 1 0000000000000000 100 0 0 10 0
+`
+	procTCP6 = `  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000000000000000000001000000:177A 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1004        0 31342 1 0000000000000000 100 0 0 10 0
+   1: 0000000000000000FFFF00000100007F:177A 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1005        0 31343 1 0000000000000000 100 0 0 10 0
+   2: 00000000000000000000000000000000:177B 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1006        0 31344 1 0000000000000000 100 0 0 10 0
+   3: B80D0120000000000000000001000000:177A 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1007        0 31345 1 0000000000000000 100 0 0 10 0
+`
+)
+
+// Listeners count on 127.0.0.1, ::1, ::ffff:127.0.0.1 and the unspecified
+// addresses; not on other addresses, and not connections.
+func TestParseListeners(t *testing.T) {
+	if binary.NativeEndian.Uint16([]byte{1, 0}) != 1 {
+		t.Skip("the tables are a little-endian host's")
+	}
+	for _, tc := range []struct {
+		table string
+		port  int
+		want  []uint32
+	}{
+		{procTCP, 6010, []uint32{1000}},
+		{procTCP, 6011, []uint32{1001}},
+		{procTCP, 6012, nil},
+		{procTCP, 22, []uint32{0}},
+		{procTCP6, 6010, []uint32{1004, 1005}},
+		{procTCP6, 6011, []uint32{1006}},
+	} {
+		got, err := parseListeners([]byte(tc.table), tc.port)
+		if err != nil || !slices.Equal(got, tc.want) {
+			t.Errorf("port %d: %v, %v; want %v", tc.port, got, err, tc.want)
+		}
+	}
+	for _, bad := range []string{
+		"",
+		"sl local_address\n   0: 0100007F:177A 00000000:0000 0A\n",
+		"sl local_address\n   0: 0100007F:ZZZZ 00000000:0000 0A 0:0 0:0 0 1000\n",
+		"sl local_address\n   0: 0100007:177A 00000000:0000 0A 0:0 0:0 0 1000\n",
+		"sl local_address\n   0: 0100007F:177A 00000000:0000 0A 0:0 0:0 0 x\n",
+	} {
+		if got, err := parseListeners([]byte(bad), 6010); err == nil {
+			t.Errorf("parseListeners(%q) = %v, want an error", bad, got)
+		}
+	}
+}
+
+// listenerUIDs reads the kernel's own tables: a loopback listener of the
+// test's is keetui's uid's.
+func TestListenerUIDsFindsYourListener(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Skip("no loopback:", err)
+	}
+	defer func() { _ = ln.Close() }()
+	uids, err := listenerUIDs(ln.Addr().(*net.TCPAddr).Port)
+	if err != nil || !slices.Contains(uids, uint32(os.Geteuid())) {
+		t.Fatalf("listenerUIDs = %v, %v; want uid %d", uids, err, os.Geteuid())
 	}
 }
 
