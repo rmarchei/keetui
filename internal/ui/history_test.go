@@ -101,3 +101,28 @@ func TestHistoryView(t *testing.T) {
 		t.Error("View() should contain entry title")
 	}
 }
+
+// Custom field names come from the database, and the preview labels its
+// rows with them: control and bidi characters, which XML 1.0 allows in the
+// C1 range, must not reach the terminal.
+func TestHistoryPreviewSanitizesFieldNames(t *testing.T) {
+	version := keepass.Entry{Title: "t", CustomFields: []keepass.CustomField{
+		{Key: "a\u009d0;x\u009cb", Value: "v"},
+		{Key: "c\u009b31md", Value: "v"},
+		{Key: "e\u202ef", Value: "v"},
+	}}
+	m := NewHistoryModel("t", []keepass.HistoryEntry{{Entry: version}})
+	m.current = keepass.Entry{Title: "t", CustomFields: []keepass.CustomField{{Key: "g\x1b]0;x\x07h", Value: "v"}}}
+	m.width, m.height, m.previewing = 100, 40, true
+	view := m.View().Content
+	for _, raw := range []string{"\u009b", "\u009c", "\u009d", "\u202e", "\x07", "\x1b]0;x"} {
+		if strings.Contains(view, raw) {
+			t.Errorf("preview renders %q raw", raw)
+		}
+	}
+	for _, want := range []string{"a\ufffd0;x\ufffdb", "c\ufffd31md", "e\ufffdf", "g\ufffd]0;x\ufffdh"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("preview lacks %q:\n%s", want, view)
+		}
+	}
+}

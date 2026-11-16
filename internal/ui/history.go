@@ -181,7 +181,7 @@ func (m HistoryModel) previewBody() string {
 		if protected && value != "" && !m.showPw {
 			value = maskedValue
 		}
-		line := "  " + labelStyle.Render(padCell(label, 12)) + " " + valueStyle.Render(sanitizeDisplay(value))
+		line := "  " + labelStyle.Render(padCell(sanitizeDisplay(label), 12)) + " " + valueStyle.Render(sanitizeDisplay(value))
 		if differs {
 			line += changed
 		}
