@@ -74,6 +74,46 @@ func TestProductionKDF(t *testing.T) {
 	t.Logf("%s: create %v, open %v", want, created.Round(time.Millisecond), opened.Round(time.Millisecond))
 }
 
+// Converting KDBX 3.1 to KDBX 4 gives the key derivation the cost of new
+// databases, not gokeepasslib's default (1 MiB, 2 passes), whatever AES-KDF
+// cost the database had.
+func TestConvertToKDBX4UsesTargetKDF(t *testing.T) {
+	convert := func(t *testing.T, target KDF) *DB {
+		t.Helper()
+		setTargetKDF(t, target)
+		db := createKDBX31(t, filepath.Join(t.TempDir(), "vault.kdbx"), "synthetic", "")
+		db.Database.Header.FileHeaders.TransformRounds = 5_000_000
+		if err := db.ConvertToKDBX4(); err != nil {
+			t.Fatal(err)
+		}
+		if got := db.KDF(); got != target {
+			t.Fatalf("converted to %s, want %s", got, target)
+		}
+		if db.Database.Header.FileHeaders.KdfParameters.Salt == [32]byte{} {
+			t.Error("the KDF salt is zero")
+		}
+		return db
+	}
+	t.Run("production", func(t *testing.T) {
+		// In memory only: saving would derive a key at the production cost.
+		convert(t, productionKDF)
+	})
+	t.Run("saved", func(t *testing.T) {
+		target := KDF{Name: kdfArgon2d, Memory: 2 << 20, Iterations: 3, Parallelism: 2}
+		db := convert(t, target)
+		if err := db.Save(); err != nil {
+			t.Fatal(err)
+		}
+		reopened, err := Open(db.Path, "synthetic")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := reopened.KDF(); got != target {
+			t.Errorf("file holds %s, want %s", got, target)
+		}
+	})
+}
+
 func TestKDFDescription(t *testing.T) {
 	kdbx4 := func(p *gokeepasslib.KdfParameters) *gokeepasslib.DBHeader {
 		h := gokeepasslib.NewKDBX40Header()

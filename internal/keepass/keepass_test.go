@@ -2596,6 +2596,9 @@ func TestConvertToKDBX4(t *testing.T) {
 	if db.FormatVersion() != "KDBX 4 (Argon2)" {
 		t.Errorf("FormatVersion = %q, want %q", db.FormatVersion(), "KDBX 4 (Argon2)")
 	}
+	if db.KDF() != targetKDF {
+		t.Errorf("KDF = %s, want %s", db.KDF(), targetKDF)
+	}
 
 	// Save and reopen
 	savePath := filepath.Join(dir, "converted.kdbx")
@@ -2610,6 +2613,9 @@ func TestConvertToKDBX4(t *testing.T) {
 
 	if !db2.IsKdbx4() {
 		t.Fatal("reopened DB should be KDBX 4")
+	}
+	if db2.KDF() != targetKDF {
+		t.Errorf("reopened KDF = %s, want %s", db2.KDF(), targetKDF)
 	}
 
 	// Verify entries are intact

@@ -609,8 +609,10 @@ func (d *DB) FormatVersion() string {
 	return "KDBX 3.1 (AES)"
 }
 
-// ConvertToKDBX4 upgrades a KDBX 3.1 database to KDBX 4 format in memory.
-// The caller must save the database afterward to persist the change.
+// ConvertToKDBX4 upgrades a KDBX 3.1 database to KDBX 4 format in memory,
+// its key derived with Argon2d at the cost new databases get (see
+// productionKDF). The caller must save the database afterward to persist
+// the change.
 func (d *DB) ConvertToKDBX4() error {
 	if d.Database.Header.IsKdbx4() {
 		return fmt.Errorf("database is already KDBX 4 format")
@@ -634,8 +636,11 @@ func (d *DB) ConvertToKDBX4() error {
 	}
 
 	// Switch to KDBX 4: replaces header (Argon2, ChaCha20) and
-	// creates InnerHeader with ChaCha20 random stream key.
+	// creates InnerHeader with ChaCha20 random stream key. The header's
+	// Argon2 cost is gokeepasslib's default, 1 MiB and 2 passes: far too
+	// cheap, so it takes the target cost instead.
 	gokeepasslib.WithDatabaseKDBXVersion40()(d.Database)
+	d.Database.Header.FileHeaders.KdfParameters = targetKdfParameters()
 
 	// Re-add binaries — AddBinary now routes to InnerHeader for KDBX 4 and
 	// assigns fresh sequential IDs (deduplicating identical contents).
