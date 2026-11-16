@@ -610,6 +610,51 @@ func TestSaveAsOverwriteConfirmation(t *testing.T) {
 	}
 }
 
+// Save As refuses a symbolic link at another path before asking to
+// overwrite: the question would name the link, the save would write where
+// it points. The database's own path through a link still saves.
+func TestSaveAsRefusesASymlink(t *testing.T) {
+	m := createTestApp(t)
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim.txt")
+	if err := os.WriteFile(victim, []byte("synthetic victim"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "planted.kdbx")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = lockStep(t, m, SaveAsStartMsg{})
+	m, cmd := lockStep(t, m, SaveAsMsg{Path: link})
+	if m.state != viewPathInput || m.saving {
+		t.Fatalf("state %d, saving %v: want the path kept to correct", m.state, m.saving)
+	}
+	if status := quickStatus(cmd); !strings.Contains(status, "is a symbolic link") {
+		t.Errorf("status = %q", status)
+	}
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "synthetic victim" {
+		t.Fatal("the file the link points to was written")
+	}
+
+	own := filepath.Join(dir, "own.kdbx")
+	if err := os.Symlink(m.filePath, own); err != nil {
+		t.Fatal(err)
+	}
+	db, err := keepass.Open(own, "testmaster")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.db, m.filePath, m.dirty = db, own, true
+	m, save := lockStep(t, m, SaveAsMsg{Path: own})
+	m = completeSave(t, m, save)
+	if m.dirty || m.filePath != own {
+		t.Fatalf("saving through the database's own link: dirty %v, path %q", m.dirty, m.filePath)
+	}
+	if info, err := os.Lstat(own); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Error("the save replaced the database's link")
+	}
+}
+
 func TestExtractAttachmentOverwriteConfirmation(t *testing.T) {
 	m := createTestApp(t)
 	root := m.db.RootGroup()

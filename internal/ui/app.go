@@ -1143,6 +1143,12 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, statusCmd("Read-only mode", true)
 		}
 		if target := filepath.Clean(msg.Path); target != filepath.Clean(m.filePath) {
+			if info, err := os.Lstat(target); err == nil && info.Mode()&os.ModeSymlink != 0 {
+				// The save would follow it wherever it points, while the
+				// question below names only the link. The path stays to
+				// correct.
+				return m, statusCmd(fmt.Sprintf("Not saved: %s is a symbolic link; save to the file itself", target), true)
+			}
 			if _, err := os.Stat(target); err == nil {
 				// The target is a different existing file: confirm before
 				// clobbering it (it could be another vault).

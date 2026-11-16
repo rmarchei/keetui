@@ -435,12 +435,16 @@ func (d *DB) Save() error {
 // its own file it first checks that the file still holds what keetui last
 // read or wrote there, and returns a *DiskError instead of overwriting
 // another program's changes (or a file it cannot read to tell) or
-// recreating a file that is gone.
+// recreating a file that is gone. It refuses another path that is a
+// symbolic link, which the save would follow wherever it points; the
+// database's own file may be one.
 func (d *DB) SaveAs(path string) error {
 	if d.ownsPath(path) {
 		if state, err := d.checkDisk(); state != DiskUnchanged {
 			return &DiskError{State: state, Path: d.Path, Err: err}
 		}
+	} else if fi, err := os.Lstat(path); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to save to symlink %q", path)
 	}
 	return d.write(path)
 }
