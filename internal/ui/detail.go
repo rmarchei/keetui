@@ -114,11 +114,9 @@ func (m DetailModel) selectableFields() []selectableField {
 	f = append(f, selectableField{label: "password", value: m.entry.Password, protected: true, revealKey: "builtin:password"})
 	f = append(f, selectableField{label: "URL", value: m.entry.URL})
 	if m.entry.TOTP != "" {
-		val := m.totpCode
-		if val == "" {
-			val = m.entry.TOTP // fallback to raw secret when code generation fails
-		}
-		f = append(f, selectableField{label: "TOTP", value: val, qrValue: m.entry.TOTP, protected: true, revealKey: "builtin:totp"})
+		// The code, or nothing when none can be generated: the secret is
+		// copied only revealed, never in place of a code.
+		f = append(f, selectableField{label: "TOTP", value: m.totpCode, qrValue: m.entry.TOTP, protected: true, revealKey: "builtin:totp"})
 	}
 	if m.entry.Notes != "" {
 		f = append(f, selectableField{label: "Notes", value: m.entry.Notes})
@@ -768,6 +766,11 @@ func (m DetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if val != "" {
 					return m, func() tea.Msg {
 						return CopyToClipboardMsg{Field: f.label, Value: val}
+					}
+				}
+				if f.revealKey == "builtin:totp" {
+					return m, func() tea.Msg {
+						return StatusMsg{Text: "No TOTP code: none can be generated from this entry's secret", IsError: true}
 					}
 				}
 			}

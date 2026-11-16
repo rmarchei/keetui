@@ -584,6 +584,37 @@ func TestTOTPVisibleWhenCodeGenerationFails(t *testing.T) {
 	}
 }
 
+// Enter on the TOTP row copies the code. With none (an invalid secret) it
+// copies nothing, the secret above all, and says why; the QR keeps the
+// secret.
+func TestTOTPRowCopiesOnlyACode(t *testing.T) {
+	for _, secret := range []string{"JBSWY3DPEHPK3PXP", "not-a-valid-base32-secret!!!"} {
+		m := NewDetailModel(keepass.Entry{Title: "Synthetic", TOTP: secret}, config.Default())
+		m.SetSize(80, 24)
+		m.selectedField = 3 // username, password, URL, TOTP
+		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		if cmd == nil {
+			t.Fatalf("%s: enter did nothing", secret)
+		}
+		switch msg := cmd().(type) {
+		case CopyToClipboardMsg:
+			if m.totpCode == "" || msg.Value != m.totpCode {
+				t.Errorf("%s: enter copied %q, the code is %q", secret, msg.Value, m.totpCode)
+			}
+		case StatusMsg:
+			if m.totpCode != "" || !msg.IsError || !strings.Contains(msg.Text, "No TOTP code") {
+				t.Errorf("%s: status %+v with code %q", secret, msg, m.totpCode)
+			}
+		default:
+			t.Fatalf("%s: enter sent %T", secret, msg)
+		}
+		updated, _ := m.Update(textKey(m.keys.ShowQR))
+		if m = updated.(DetailModel); !m.showQR || m.qrLabel != "TOTP" {
+			t.Errorf("%s: the QR of the secret does not show", secret)
+		}
+	}
+}
+
 func TestLineForFieldBigNotes(t *testing.T) {
 	m := NewDetailModel(bigNotesEntry(), config.Default())
 	m.SetSize(80, 24)
