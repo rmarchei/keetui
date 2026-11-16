@@ -130,8 +130,8 @@ git config core.hooksPath .githooks   # enable pre-commit gofmt check
 ### Building
 
 CI, release builds, and the Makefile's container image are pinned to Go 1.27.4.
-Keep `go 1.26.0` in `go.mod` as the minimum source version unless newer language
-features are required. Go 1.27-built macOS binaries require macOS 13 Ventura or
+The `go` line in `go.mod` (1.26.7) is the minimum source version, set by the
+dependencies. Do not raise it unless a dependency or a language feature needs it. Go 1.27-built macOS binaries require macOS 13 Ventura or
 newer; the generated Homebrew formula declares that requirement.
 
 ```sh

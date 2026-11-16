@@ -1,9 +1,42 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-  "postUpdateOptions": ["gomodTidy"],
+  "extends": [
+    "config:recommended"
+  ],
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
   "ignoreDeps": [
     "github.com/tobischo/gokeepasslib/v3",
     "github.com/rmarchei/gokeepasslib/v3"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^Makefile$/",
+        "/^README\\.md$/",
+        "/^AGENTS\\.md$/"
+      ],
+      "matchStrings": [
+        "GOIMAGE\\s*:=\\s*golang:(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "use \\*\\*Go (?<currentValue>\\d+\\.\\d+\\.\\d+)\\*\\*",
+        "pinned to Go (?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "go",
+      "datasourceTemplate": "golang-version"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchManagers": [
+        "github-actions",
+        "custom.regex"
+      ],
+      "matchDepNames": [
+        "go"
+      ],
+      "groupName": "Go toolchain"
+    }
   ]
 }
