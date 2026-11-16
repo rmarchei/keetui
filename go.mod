@@ -38,4 +38,4 @@ require (
 )
 
 // Upstream v3.7.1 with KeeWeb timestamp and save-order fixes.
-replace github.com/tobischo/gokeepasslib/v3 => github.com/rmarchei/gokeepasslib/v3 v3.6.2-0.20261024212428-f5b76429b5af
+replace github.com/tobischo/gokeepasslib/v3 => github.com/rmarchei/gokeepasslib/v3 v3.6.2
