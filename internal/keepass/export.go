@@ -399,8 +399,12 @@ func (d *DB) importXMLGroup(xg *XMLGroup, parentUUID [16]byte, isRoot bool) (int
 				entry.URL = value
 			case "Notes":
 				entry.Notes = value
-			case "TOTP":
+			case "TOTP", "otp": // keetui's, KeePassXC's
 				entry.TOTP = value
+			case "TimeOtp-Secret-Base32": // KeePass 2's, unless an otp URI says more
+				if entry.TOTP == "" {
+					entry.TOTP = value
+				}
 			default:
 				entry.CustomFields = append(entry.CustomFields, CustomField{
 					Key:       xs.Key,

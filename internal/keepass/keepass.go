@@ -687,9 +687,13 @@ func (d *DB) ChangePassword(newPassword string) error {
 
 // AddEntry adds a new entry to the group identified by groupUUID.
 // It searches recursively from the root group. Returns the UUID of the new entry.
+// Custom fields must pass CheckCustomFields.
 func (d *DB) AddEntry(groupUUID gokeepasslib.UUID, e Entry) (gokeepasslib.UUID, error) {
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return gokeepasslib.UUID{}, fmt.Errorf("database has no root group")
+	}
+	if err := CheckCustomFields(e.CustomFields); err != nil {
+		return gokeepasslib.UUID{}, err
 	}
 	g := findGroup(&d.Database.Content.Root.Groups[0], groupUUID)
 	if g == nil {
@@ -816,9 +820,13 @@ func (d *DB) addHistory(entry *gokeepasslib.Entry) {
 }
 
 // UpdateEntry updates an existing entry identified by entryUUID.
+// Custom fields must pass CheckCustomFields.
 func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 	if len(d.Database.Content.Root.Groups) == 0 {
 		return fmt.Errorf("database has no root group")
+	}
+	if err := CheckCustomFields(e.CustomFields); err != nil {
+		return err
 	}
 	entry := findEntry(&d.Database.Content.Root.Groups[0], entryUUID)
 	if entry == nil {
@@ -850,7 +858,7 @@ func (d *DB) UpdateEntry(entryUUID gokeepasslib.UUID, e Entry) error {
 	// Sync custom fields: remove old custom fields, add new ones
 	var cleaned []gokeepasslib.ValueData
 	for _, v := range entry.Values {
-		if standardFields[v.Key] {
+		if standardFields[v.Key] != "" {
 			cleaned = append(cleaned, v)
 		}
 	}
@@ -1384,21 +1392,41 @@ func TOTPPeriod(totp string) uint {
 	return 30
 }
 
-// standardFields are the built-in KeePass fields that are handled separately.
-var standardFields = map[string]bool{
-	"Title":                 true,
-	"UserName":              true,
-	"Password":              true,
-	"URL":                   true,
-	"Notes":                 true,
-	"otp":                   true,
-	"TimeOtp-Secret-Base32": true,
+// standardFields are the built-in KeePass fields that are handled
+// separately, named as KeePass (and KeePassXC, for otp) store them, with
+// what each holds.
+var standardFields = map[string]string{
+	"Title":                 "title",
+	"UserName":              "user name",
+	"Password":              "password",
+	"URL":                   "URL",
+	"Notes":                 "notes",
+	"otp":                   "TOTP",
+	"TimeOtp-Secret-Base32": "TOTP",
+}
+
+// CheckCustomFields reports custom fields an entry cannot hold: one named
+// like a built-in field, or two with the same name. An entry keeps one
+// value per name, so KeePass clients would show only one of them, or the
+// custom field in place of the built-in one.
+func CheckCustomFields(fields []CustomField) error {
+	seen := make(map[string]bool, len(fields))
+	for _, cf := range fields {
+		if holds := standardFields[cf.Key]; holds != "" {
+			return fmt.Errorf("a custom field cannot be named %q: that name holds the entry's %s", cf.Key, holds)
+		}
+		if seen[cf.Key] {
+			return fmt.Errorf("two custom fields are named %q", cf.Key)
+		}
+		seen[cf.Key] = true
+	}
+	return nil
 }
 
 func extractCustomFields(e gokeepasslib.Entry) []CustomField {
 	var fields []CustomField
 	for _, v := range e.Values {
-		if standardFields[v.Key] {
+		if standardFields[v.Key] != "" {
 			continue
 		}
 		fields = append(fields, CustomField{

@@ -504,28 +504,35 @@ func (m EditorModel) save() (tea.Model, tea.Cmd) {
 		expiryTime = t
 		hasExpiry = true
 	}
+	var custom []keepass.CustomField
+	for _, cf := range m.customInputs {
+		key := cf.loadedKey.keep(cf.key.Value())
+		val := cf.loadedVal.keep(cf.value.Value())
+		if key != "" {
+			custom = append(custom, keepass.CustomField{
+				Key:       key,
+				Value:     val,
+				Protected: cf.protected,
+			})
+		}
+	}
+	// Checked here as well as when saving, so that the form stays open.
+	if err := keepass.CheckCustomFields(custom); err != nil {
+		m.err = err
+		return m, nil
+	}
 	return m, func() tea.Msg {
 		entry := keepass.Entry{
-			Title:      title,
-			UserName:   m.value(fieldUserName),
-			Password:   m.value(fieldPassword),
-			URL:        m.value(fieldURL),
-			Notes:      m.loadedNotes.keep(m.notesInput.Value()),
-			TOTP:       m.value(fieldTOTP),
-			Expires:    hasExpiry,
-			ExpiryTime: expiryTime,
-			Tags:       m.tags,
-		}
-		for _, cf := range m.customInputs {
-			key := cf.loadedKey.keep(cf.key.Value())
-			val := cf.loadedVal.keep(cf.value.Value())
-			if key != "" {
-				entry.CustomFields = append(entry.CustomFields, keepass.CustomField{
-					Key:       key,
-					Value:     val,
-					Protected: cf.protected,
-				})
-			}
+			Title:        title,
+			UserName:     m.value(fieldUserName),
+			Password:     m.value(fieldPassword),
+			URL:          m.value(fieldURL),
+			Notes:        m.loadedNotes.keep(m.notesInput.Value()),
+			TOTP:         m.value(fieldTOTP),
+			Expires:      hasExpiry,
+			ExpiryTime:   expiryTime,
+			Tags:         m.tags,
+			CustomFields: custom,
 		}
 		return SaveEntryMsg{
 			IsNew:     m.isNew,

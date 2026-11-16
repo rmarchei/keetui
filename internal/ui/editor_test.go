@@ -345,6 +345,40 @@ func TestEditorRejectsEmptyTitle(t *testing.T) {
 	}
 }
 
+// Custom fields an entry cannot hold (named like a built-in field, or two
+// of one name) keep the form open with the reason shown, the user's input
+// intact.
+func TestEditorRejectsClashingCustomFields(t *testing.T) {
+	for _, tc := range []struct {
+		keys []string
+		want string
+	}{
+		{[]string{"Password"}, `cannot be named "Password"`},
+		{[]string{"PIN", "PIN"}, `two custom fields are named "PIN"`},
+	} {
+		entry := keepass.Entry{Title: "Existing"}
+		for _, key := range tc.keys {
+			entry.CustomFields = append(entry.CustomFields, keepass.CustomField{Key: key, Value: "synthetic"})
+		}
+		m := NewEditorModel(&entry, gokeepasslib.UUID{}, config.Default())
+		m.width, m.height = 80, 24
+		updated, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+		m = updated.(EditorModel)
+		if cmd != nil {
+			t.Errorf("%v: save produced a command", tc.keys)
+		}
+		if m.err == nil || !strings.Contains(m.err.Error(), tc.want) {
+			t.Fatalf("%v: error %v, want %q", tc.keys, m.err, tc.want)
+		}
+		if !strings.Contains(m.View().Content, tc.want) {
+			t.Errorf("%v: the editor does not show the error", tc.keys)
+		}
+		if len(m.customInputs) != len(tc.keys) || m.inputs[fieldTitle].Value() != "Existing" {
+			t.Errorf("%v: the form lost its input", tc.keys)
+		}
+	}
+}
+
 func TestEditorRejectsWhitespaceTitle(t *testing.T) {
 	m := NewEditorModel(nil, gokeepasslib.UUID{}, config.Default())
 	m.width, m.height = 80, 24

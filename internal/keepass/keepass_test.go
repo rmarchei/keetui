@@ -829,6 +829,77 @@ func TestCustomFields(t *testing.T) {
 	}
 }
 
+// An entry keeps one value per name: a custom field named like a built-in
+// field (as KeePass spells it), or two of one name, would be lost or shown
+// in place of the other, so adding or updating refuses them and changes
+// nothing. Names KeePass tells apart (case, other TimeOtp fields) are fine.
+func TestCustomFieldsCannotClash(t *testing.T) {
+	db, err := Create(filepath.Join(t.TempDir(), "synthetic.kdbx"), "synthetic-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := db.RootGroup().UUID
+	id, err := db.AddEntry(root, Entry{Title: "Kept", Password: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fields := range [][]CustomField{
+		{{Key: "Password", Value: "custom", Protected: true}},
+		{{Key: "Title", Value: "x"}}, {{Key: "UserName", Value: "x"}}, {{Key: "URL", Value: "x"}}, {{Key: "Notes", Value: "x"}},
+		{{Key: "otp", Value: "otpauth://totp/x?secret=JBSWY3DPEHPK3PXP"}}, {{Key: "TimeOtp-Secret-Base32", Value: "JBSWY3DPEHPK3PXP"}},
+		{{Key: "PIN", Value: "1"}, {Key: "PIN", Value: "2"}},
+	} {
+		if _, err := db.AddEntry(root, Entry{Title: "Clash", CustomFields: fields}); err == nil {
+			t.Errorf("AddEntry with custom fields %v: no error", fields)
+		}
+		if err := db.UpdateEntry(id, Entry{Title: "Changed", Password: "main", CustomFields: fields}); err == nil {
+			t.Errorf("UpdateEntry with custom fields %v: no error", fields)
+		}
+	}
+	if n := len(db.RootGroup().Entries); n != 1 {
+		t.Fatalf("%d entries: a refused AddEntry added one", n)
+	}
+	if e, _ := db.GetEntry(id); e.Title != "Kept" || e.HistoryCount != 0 {
+		t.Fatalf("a refused UpdateEntry changed the entry: title %q, %d history versions", e.Title, e.HistoryCount)
+	}
+
+	allowed := []CustomField{{Key: "password", Value: "a"}, {Key: "Password ", Value: "b"}, {Key: "TimeOtp-Length", Value: "8"}}
+	if _, err := db.AddEntry(root, Entry{Title: "Allowed", CustomFields: allowed}); err != nil {
+		t.Fatalf("AddEntry with names KeePass tells apart: %v", err)
+	}
+	if err := db.UpdateEntry(id, Entry{Title: "Kept", CustomFields: allowed}); err != nil {
+		t.Fatalf("UpdateEntry with names KeePass tells apart: %v", err)
+	}
+}
+
+// KeePass XML from KeePassXC (otp) and KeePass 2 (TimeOtp-Secret-Base32)
+// imports their TOTP as the entry's, not as a custom field it cannot hold.
+func TestImportXMLTakesOtherClientsTOTP(t *testing.T) {
+	db, err := Create(filepath.Join(t.TempDir(), "synthetic.kdbx"), "synthetic-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const uri = "otpauth://totp/Synthetic?secret=JBSWY3DPEHPK3PXP"
+	xmlData := `<?xml version="1.0" encoding="UTF-8"?>
+<KeePassFile><Root><Group><Name>Root</Name>
+<Entry><String><Key>Title</Key><Value>KeePassXC</Value></String><String><Key>otp</Key><Value>` + uri + `</Value></String></Entry>
+<Entry><String><Key>Title</Key><Value>KeePass</Value></String><String><Key>TimeOtp-Secret-Base32</Key><Value>JBSWY3DPEHPK3PXP</Value></String><String><Key>TimeOtp-Length</Key><Value>8</Value></String></Entry>
+<Entry><String><Key>Title</Key><Value>Both</Value></String><String><Key>TimeOtp-Secret-Base32</Key><Value>OTHERSECRET</Value></String><String><Key>otp</Key><Value>` + uri + `</Value></String></Entry>
+</Group></Root></KeePassFile>`
+	if n, err := db.ImportXML(strings.NewReader(xmlData)); err != nil || n != 3 {
+		t.Fatalf("ImportXML: %d, %v", n, err)
+	}
+	want := map[string]string{"KeePassXC": uri, "KeePass": "JBSWY3DPEHPK3PXP", "Both": uri}
+	for _, e := range db.RootGroup().Entries {
+		if e.TOTP != want[e.Title] {
+			t.Errorf("%s: TOTP %q, want %q", e.Title, e.TOTP, want[e.Title])
+		}
+		if e.Title == "KeePass" && (len(e.CustomFields) != 1 || e.CustomFields[0].Key != "TimeOtp-Length") {
+			t.Errorf("KeePass: custom fields %+v, want TimeOtp-Length", e.CustomFields)
+		}
+	}
+}
+
 func TestChangePassword(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.kdbx")
