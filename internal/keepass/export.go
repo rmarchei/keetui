@@ -11,8 +11,42 @@ import (
 	"syscall"
 )
 
+// csvFormulaStart lists the characters that make a spreadsheet take a CSV
+// field for a formula (CSV injection), which can run commands or send other
+// cells' contents away when the file is opened.
+const csvFormulaStart = "=+-@\t\r"
+
+// formulaLike reports whether s, past any leading single quotes, starts
+// like a formula.
+func formulaLike(s string) bool {
+	rest := strings.TrimLeft(s, "'")
+	return rest != "" && strings.IndexByte(csvFormulaStart, rest[0]) >= 0
+}
+
+// csvText makes a field a spreadsheet would take for a formula plain text,
+// with a leading single quote. One that already starts with quotes before
+// such a character gets one more, so that csvValue can tell the quote added
+// from the field's own.
+func csvText(s string) string {
+	if formulaLike(s) {
+		return "'" + s
+	}
+	return s
+}
+
+// csvValue undoes csvText.
+func csvValue(s string) string {
+	if strings.HasPrefix(s, "'") && formulaLike(s) {
+		return s[1:]
+	}
+	return s
+}
+
 // ExportCSV writes all entries in the database to a CSV file.
-// Columns: Group, Title, Username, Password, URL, Notes, TOTP, Attachments
+// Columns: Group, Title, Username, Password, URL, Notes, TOTP, Attachments.
+// Fields a spreadsheet would take for a formula get a leading single quote
+// (see csvText), which ImportCSV removes; the password and TOTP are written
+// as they are, as only a password manager should read them.
 func (d *DB) ExportCSV(w io.Writer) error {
 	writer := csv.NewWriter(w)
 
@@ -43,7 +77,8 @@ func (d *DB) writeGroupCSV(w *csv.Writer, g *Group, path string) error {
 			names = append(names, a.Name)
 		}
 		attachStr := strings.Join(names, ";")
-		record := []string{path, e.Title, e.UserName, e.Password, e.URL, e.Notes, e.TOTP, attachStr}
+		record := []string{csvText(path), csvText(e.Title), csvText(e.UserName), e.Password,
+			csvText(e.URL), csvText(e.Notes), e.TOTP, csvText(attachStr)}
 		if err := w.Write(record); err != nil {
 			return fmt.Errorf("write CSV row: %w", err)
 		}
@@ -248,7 +283,9 @@ func (d *DB) ExportXMLFile(path string) (err error) {
 
 // ImportCSV reads entries from a CSV file and adds them to the database root group.
 // Expected columns: Group, Title, Username, Password, URL, Notes, TOTP
-// The Group column is used to create sub-groups as needed.
+// The Group column is used to create sub-groups as needed. The single quote
+// ExportCSV puts before a field that looks like a formula is removed; the
+// password and TOTP are taken as they are.
 func (d *DB) ImportCSV(r io.Reader) (int, error) {
 	reader := csv.NewReader(r)
 	records, err := reader.ReadAll()
@@ -275,22 +312,22 @@ func (d *DB) ImportCSV(r io.Reader) (int, error) {
 		groupPath := ""
 
 		if idx, ok := colIdx["group"]; ok && idx < len(record) {
-			groupPath = record[idx]
+			groupPath = csvValue(record[idx])
 		}
 		if idx, ok := colIdx["title"]; ok && idx < len(record) {
-			entry.Title = record[idx]
+			entry.Title = csvValue(record[idx])
 		}
 		if idx, ok := colIdx["username"]; ok && idx < len(record) {
-			entry.UserName = record[idx]
+			entry.UserName = csvValue(record[idx])
 		}
 		if idx, ok := colIdx["password"]; ok && idx < len(record) {
 			entry.Password = record[idx]
 		}
 		if idx, ok := colIdx["url"]; ok && idx < len(record) {
-			entry.URL = record[idx]
+			entry.URL = csvValue(record[idx])
 		}
 		if idx, ok := colIdx["notes"]; ok && idx < len(record) {
-			entry.Notes = record[idx]
+			entry.Notes = csvValue(record[idx])
 		}
 		if idx, ok := colIdx["totp"]; ok && idx < len(record) {
 			entry.TOTP = record[idx]
