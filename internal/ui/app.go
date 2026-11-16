@@ -67,6 +67,31 @@ type saveResultMsg struct {
 	merged  *keepass.SyncResult // the changes on disk merged in before the save
 }
 
+// lockSaveMsg carries the outcome of the save an auto-lock started.
+type lockSaveMsg struct {
+	db     *keepass.DB // the database saved, held while the save ran
+	err    error
+	merged bool // the changes on disk were merged in first
+}
+
+// softLockMsg locks a database whose changes could not be saved, holding
+// them (see heldDatabase).
+type softLockMsg struct{ err error }
+
+// heldDatabase is a soft lock: a database locked with changes that are not
+// in its file. The screen locks as on any lock, but the database stays in
+// memory, out of reach of every view, and its password brings it back with
+// its changes.
+type heldDatabase struct {
+	db     *keepass.DB
+	saving bool  // the save the auto-lock started still runs, and owns db
+	err    error // why the save failed
+	unlock bool  // the right password came during the save: unlock once it ends
+}
+
+// errInactive is why an auto-lock shows the unlock screen.
+var errInactive = errors.New("locked due to inactivity")
+
 // diskSave is a save waiting on what to do about the file on disk (see
 // keepass.DiskError): what the save was for.
 type diskSave struct {
@@ -143,6 +168,7 @@ type quitContext struct {
 type AppModel struct {
 	state           viewState
 	db              *keepass.DB
+	held            heldDatabase // a soft lock's database; db is nil while it is held
 	unlock          UnlockModel
 	browser         BrowserModel
 	detail          DetailModel
@@ -402,6 +428,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.unlock.input.SetValue("")
 		return m, func() tea.Msg { return ShowSettingsMsg{} }
 	}
+	// Quitting a soft lock loses the changes it holds: ask first.
+	if key, ok := msg.(tea.KeyPressMsg); ok && m.state == viewUnlock && m.held.db != nil && quitsUnlock(key) {
+		return m.update(RequestQuitMsg{})
+	}
 
 	// Track user activity for auto-lock (key presses, mouse events, and pastes).
 	if m.state != viewUnlock {
@@ -446,6 +476,9 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			prompt := "Quit?"
 			if m.dirty {
 				prompt = "You have unsaved changes. Quit anyway?"
+			}
+			if m.held.db != nil {
+				prompt = "keetui is holding changes it could not save; quitting loses them. Quit anyway?"
 			}
 			m.confirm = NewConfirmModel(m.state, prompt, func() tea.Msg { return quitMsg{} })
 			if m.dirty {
@@ -1165,6 +1198,10 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state, m.confirm = previous.state, previous.confirm
 			m.help, m.helpReturnState = previous.help, previous.helpReturnState
 			m.quitReturn = nil
+			if m.state == viewUnlock {
+				// Back to a soft lock: its file check stopped meanwhile.
+				return m, m.watchUnlockFiles()
+			}
 			return m, nil
 		}
 		if m.state == viewConfirm && m.confirm.returnState != viewNone {
@@ -1243,29 +1280,51 @@ func (m AppModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := m.scheduleAutoLockIn(d - idle)
 			return m, cmd
 		}
-		merged := false
-		if m.dirty && !m.readOnly {
-			var err error
-			if merged, err = m.saveBeforeLock(); err != nil {
-				// Abort the lock rather than discard unsaved changes; keep the
-				// database open, surface the error, and retry next interval.
-				var refresh tea.Cmd
-				if merged {
-					refresh = m.mergedIn()
-				}
-				cmd := m.scheduleAutoLock()
-				return m, tea.Batch(
-					statusCmd(fmt.Sprintf("Auto-lock aborted: save failed: %s", err), true),
-					cmd, refresh,
-				)
-			}
+		if !m.dirty || m.readOnly {
+			cmd := m.lockDatabase()
+			m.unlock.err = errInactive
+			return m, cmd
+		}
+		// The screen locks now, whatever becomes of the save: the database
+		// is held meanwhile, and the save runs as a command, since a file
+		// that does not answer must not freeze the screen.
+		db := m.db
+		cmd := m.lockDatabase()
+		m.unlock.err = errInactive
+		m.held = heldDatabase{db: db, saving: true}
+		m.unlock.held = "Saving your changes… keetui holds them until the save ends; quitting before then may lose them."
+		return m, tea.Batch(cmd, func() tea.Msg { return saveBeforeLock(db) })
+
+	case lockSaveMsg:
+		if m.held.db == nil || msg.db != m.held.db {
+			return m, nil
+		}
+		m.held.saving, m.held.err = false, msg.err
+		if msg.err == nil {
 			m.dirty = false
 		}
-		cmd := m.lockDatabase()
-		m.unlock.err = fmt.Errorf("locked due to inactivity")
-		if merged {
-			m.unlock.err = fmt.Errorf("locked due to inactivity; the changes another program made to the file were merged in before saving")
+		if m.held.unlock {
+			// The right password came during the save.
+			return m.handleDatabaseOpenResult(databaseOpenResultMsg{db: msg.db, gen: m.openGen})
 		}
+		if msg.err != nil {
+			m.unlock.held = heldNotice(msg.err)
+			return m, nil
+		}
+		// Saved: a lock like any other.
+		m.held = heldDatabase{}
+		m.unlock.held = ""
+		if msg.merged && m.unlock.err == errInactive {
+			m.unlock.err = errors.New("locked due to inactivity; the changes another program made to the file were merged in before saving")
+		}
+		return m, nil
+
+	case softLockMsg:
+		db := m.db
+		cmd := m.lockDatabase()
+		m.held = heldDatabase{db: db, err: msg.err}
+		m.unlock.notice = "Locked."
+		m.unlock.held = heldNotice(msg.err)
 		return m, cmd
 
 	case confirmLockMsg:
@@ -1356,7 +1415,7 @@ func needsDatabase(msg tea.Msg) bool {
 		ShowAuditMsg, ShowStatsMsg, ShowPresetPickerMsg, GeneratedPasswordMsg, CancelPresetMsg, SetDefaultPresetMsg,
 		ShowHistoryMsg, BackToDetailMsg, hibpResultMsg, ExtractAttachmentMsg, confirmExtractAttachmentMsg,
 		DeleteAttachmentMsg, confirmDeleteAttachmentMsg, AddAttachmentMsg, SaveEntryMsg, SaveGroupMsg,
-		SaveAsStartMsg, SaveAsMsg, confirmSaveAsMsg, CopyToClipboardMsg, OpenURLMsg, confirmLockMsg,
+		SaveAsStartMsg, SaveAsMsg, confirmSaveAsMsg, CopyToClipboardMsg, OpenURLMsg, confirmLockMsg, softLockMsg,
 		diskMergeMsg, diskOverwriteAskMsg, diskOverwriteMsg,
 		RestoreHistoryMsg, confirmRestoreHistoryMsg:
 		return true
@@ -1653,6 +1712,16 @@ func (m AppModel) handleDatabaseOpened(msg DatabaseOpenedMsg) (tea.Model, tea.Cm
 	m.unlock.err = nil
 	m.openGen++
 	gen := m.openGen
+	if held := m.held.db; held != nil {
+		// A soft lock: the password is checked against the database held,
+		// not by opening its file, which may be what failed.
+		return m, func() tea.Msg {
+			if err := held.CheckCredentials(msg.Password, msg.KeyFilePath); err != nil {
+				return databaseOpenResultMsg{err: err, gen: gen}
+			}
+			return databaseOpenResultMsg{db: held, gen: gen}
+		}
+	}
 	return m, func() tea.Msg {
 		var db *keepass.DB
 		var err error
@@ -1671,11 +1740,20 @@ func (m AppModel) handleDatabaseOpenResult(msg databaseOpenResultMsg) (tea.Model
 		// database: replacing it would drop the edits made since.
 		return m, nil
 	}
+	if msg.err == nil && m.held.saving && msg.db == m.held.db {
+		// The right password, but the save still owns the database: it
+		// opens when the save ends (lockSaveMsg).
+		m.held.unlock = true
+		m.unlock.held = "Saving your changes… keetui unlocks when the save ends."
+		return m, nil
+	}
 	m.unlock.unlocking = false
 	if msg.err != nil {
 		m.unlock.err = m.openError(msg.err)
 		return m, nil
 	}
+	held := m.held
+	m.held, m.unlock.held = heldDatabase{}, ""
 	db := msg.db
 	m.db = db
 	overrides, overridesErr := config.ParseOverrides(db.CustomData(config.OverridesKey))
@@ -1692,11 +1770,25 @@ func (m AppModel) handleDatabaseOpenResult(msg databaseOpenResultMsg) (tea.Model
 	m.browser.readOnly = m.readOnly
 	m.browser.width = m.width
 	m.browser.height = m.viewHeight()
-	m.state = viewBrowser
+	if m.quitReturn != nil {
+		// A quit prompt asked over a soft lock stays, over the database now.
+		q := *m.quitReturn
+		q.state = viewBrowser
+		m.quitReturn, m.confirm.returnState = &q, viewBrowser
+	} else {
+		m.state = viewBrowser
+	}
 	m.recordActivity()
 	m.refreshEntryCount()
 	m.undoStack.clear()
 	autoLockCmd := m.scheduleAutoLock()
+	switch {
+	case held.db != nil && held.err != nil:
+		return m, tea.Batch(autoLockCmd,
+			statusCmd(fmt.Sprintf("Unlocked with the changes that could not be saved: %s", held.err), true))
+	case held.db != nil:
+		return m, tea.Batch(autoLockCmd, statusCmd("Unlocked; the changes were saved while locked", false))
+	}
 	if m.db.SuspectCorruption() {
 		return m, tea.Batch(autoLockCmd,
 			statusCmd("Protected values look corrupted (incompatible writer?) - forced read-only, see README", true))
@@ -1842,13 +1934,21 @@ func (m AppModel) handleSaveResult(msg saveResultMsg) (tea.Model, tea.Cmd) {
 		refresh = m.mergedIn()
 	}
 	var diskErr *keepass.DiskError
-	if errors.As(msg.err, &diskErr) {
+	// A folder that is gone fails a save like any error: a lock offers to
+	// hold the changes, rather than asking about the file.
+	if errors.As(msg.err, &diskErr) && (!lock || diskErr.State != keepass.DiskNoFolder) {
 		next, cmd := m.askDisk(diskErr, diskSave{lock: lock, upgrade: msg.upgrade, path: msg.path})
 		return next, tea.Batch(refresh, cmd)
 	}
 	if msg.err != nil {
 		if lock {
-			return m, tea.Batch(refresh, statusCmd(fmt.Sprintf("Not locked: error saving: %s", msg.err), true))
+			err := msg.err
+			m.confirm = NewConfirmModel(viewBrowser, fmt.Sprintf("Not saved: %s. Lock anyway? keetui holds the "+
+				"changes in memory until you unlock; quitting loses them.", err),
+				func() tea.Msg { return softLockMsg{err: err} })
+			m.state = viewConfirm
+			m.statusText, m.statusError, m.statusDetail = fmt.Sprintf("Not locked: error saving: %s", err), true, ""
+			return m, refresh
 		}
 		return m, tea.Batch(refresh, statusCmd(fmt.Sprintf("Error saving: %s", msg.err), true))
 	}
@@ -1941,26 +2041,33 @@ func (m *AppModel) mergedIn() tea.Cmd {
 	return func() tea.Msg { return RefreshMsg{} }
 }
 
-// saveBeforeLock saves before an auto-lock. Nobody is there to answer for
-// a file another program changed, so its changes are merged in first (a
-// merge loses nothing on either side), and a file deleted elsewhere is
-// written again; a folder that is gone still stops the lock.
-func (m AppModel) saveBeforeLock() (merged bool, err error) {
-	err = m.db.Save()
+// saveBeforeLock saves before an auto-lock, as a command, while the database
+// is held. Nobody is there to answer for a file another program changed, so
+// its changes are merged in first (a merge loses nothing on either side),
+// and a file deleted elsewhere is written again; a folder that is gone
+// fails the save, and the database stays held.
+func saveBeforeLock(db *keepass.DB) lockSaveMsg {
+	err := db.Save()
 	var diskErr *keepass.DiskError
 	if !errors.As(err, &diskErr) {
-		return false, err
+		return lockSaveMsg{db: db, err: err}
 	}
 	switch diskErr.State {
 	case keepass.DiskChanged:
-		if _, err := m.db.MergeDisk(); err != nil {
-			return false, fmt.Errorf("the file changed on disk and could not be merged: %w", err)
+		if _, err := db.MergeDisk(); err != nil {
+			return lockSaveMsg{db: db, err: fmt.Errorf("the file changed on disk and could not be merged: %w", err)}
 		}
-		return true, m.db.Save()
+		return lockSaveMsg{db: db, err: db.Save(), merged: true}
 	case keepass.DiskMissing:
-		return false, m.db.Overwrite()
+		return lockSaveMsg{db: db, err: db.Overwrite()}
 	}
-	return false, err
+	return lockSaveMsg{db: db, err: err}
+}
+
+// heldNotice tells the unlock screen of a soft lock why the changes are
+// held.
+func heldNotice(err error) string {
+	return fmt.Sprintf("Your changes are not saved: %s. keetui holds them until you unlock; quitting loses them.", err)
 }
 
 // plural picks the word for n of something.

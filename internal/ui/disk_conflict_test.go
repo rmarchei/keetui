@@ -267,8 +267,9 @@ func TestLockMergesTheChangedFileWhenAsked(t *testing.T) {
 func TestAutoLockMergesAChangedFile(t *testing.T) {
 	m := changedApp(t)
 	m.lastActivity = time.Now().Add(-time.Hour)
-	m, _ = lockStep(t, m, autoLockMsg{gen: m.autoLockGen})
-	if m.state != viewUnlock || m.db != nil || m.unlock.err == nil || !strings.Contains(m.unlock.err.Error(), "merged in") {
+	m, cmd := lockStep(t, m, autoLockMsg{gen: m.autoLockGen})
+	m, _ = lockStep(t, m, awaitLockSave(t, runLockSave(cmd)))
+	if m.state != viewUnlock || m.db != nil || m.held.db != nil || m.unlock.err == nil || !strings.Contains(m.unlock.err.Error(), "merged in") {
 		t.Fatalf("state %d, db open %v, err %v", m.state, m.db != nil, m.unlock.err)
 	}
 	if on := titlesOnDisk(t, m.filePath); !strings.Contains(on, ",Ours,") || !strings.Contains(on, ",Theirs,") {

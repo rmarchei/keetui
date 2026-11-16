@@ -22,6 +22,7 @@ type UnlockModel struct {
 	notice      string // why the screen shows, when that is no error ("Locked.")
 	unlocking   bool   // true while the database is being opened in the background
 	missing     string // what is wrong with the files' paths (see fileProblem); "" when they are there
+	held        string // a soft lock's changes not in the file, and why (see heldDatabase)
 	width       int
 	height      int
 	errorOffset int
@@ -167,6 +168,9 @@ func (m UnlockModel) header() string {
 	if m.missing != "" {
 		fmt.Fprintf(&b, " %s\n", warnStyle.Render(m.missing))
 	}
+	if m.held != "" {
+		fmt.Fprintf(&b, "%s\n", warnStyle.Padding(0, 1, 0, 2).Render(wrapContent(sanitizeDisplay(m.held), width-3)))
+	}
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "  %s\n", m.input.View())
 	return b.String()
@@ -215,6 +219,9 @@ func (m UnlockModel) card() (card string, fits bool) {
 	}
 	if m.missing != "" {
 		lines = append(lines, warnStyle.Padding(0).Render(m.missing))
+	}
+	if m.held != "" {
+		lines = append(lines, "", warnStyle.Padding(0).Render(wrapContent(sanitizeDisplay(m.held), inner)))
 	}
 	lines = append(lines, "", m.input.View())
 	border := primaryColor

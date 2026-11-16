@@ -794,27 +794,46 @@ func TestLockedAppIgnoresLateNavigation(t *testing.T) {
 	}
 }
 
-func TestAutoLockSaveFailureAbortsLock(t *testing.T) {
-	m := createTestApp(t)
-	m.dirty = true
-	// Point the database at a nonexistent directory so Save() fails.
+// An auto-lock whose save fails still locks the screen, but holds the
+// database with its changes: the unlock screen says so and why, a wrong
+// password is refused, and the right one brings the changes back.
+func TestAutoLockSaveFailureHoldsTheChanges(t *testing.T) {
+	m := copyForCountdown(t, softLockApp(t), "synthetic")
+	clip := m.clipboard.(*testClipboard)
+	entry := m.db.RootGroup().Entries[0]
+	m, _ = lockStep(t, m, ViewEntryMsg{Entry: entry})
+	// Point the database at a nonexistent directory so the save fails.
 	m.db.Path = filepath.Join(t.TempDir(), "missing", "test.kdbx")
-	m.lastActivity = time.Now().Add(-time.Hour)
 
-	updated, cmd := m.Update(autoLockMsg{gen: m.autoLockGen})
-	m = updated.(AppModel)
+	m, cmd := lockStep(t, m, autoLockMsg{gen: m.autoLockGen})
+	if m.state != viewUnlock || m.db != nil || m.detail.entry.Password != "" || m.browser.db != nil {
+		t.Fatalf("state %d, db open %v, detail keeps %q", m.state, m.db != nil, m.detail.entry.Password)
+	}
+	if clip.value != "" || clip.releases != 1 {
+		t.Errorf("clipboard holds %q after the lock (releases %d)", clip.value, clip.releases)
+	}
+	m, _ = lockStep(t, m, awaitLockSave(t, runLockSave(cmd)))
+	if m.state != viewUnlock || m.db != nil || m.held.db == nil || !m.dirty {
+		t.Fatalf("after the failed save: state %d, held %v, dirty %v", m.state, m.held.db != nil, m.dirty)
+	}
+	if !strings.Contains(m.unlock.held, "create temp file") || !strings.Contains(unlockText(m), "Your changes are not saved") {
+		t.Errorf("the unlock screen does not say why the changes are held: %q", m.unlock.held)
+	}
 
-	if m.state != viewBrowser {
-		t.Errorf("state = %d, want viewBrowser (lock must be aborted on save failure)", m.state)
+	m = typePassword(t, m, "wrong")
+	if m.state != viewUnlock || m.db != nil || m.held.db == nil || m.unlock.err == nil {
+		t.Fatalf("wrong password: state %d, db open %v, err %v", m.state, m.db != nil, m.unlock.err)
 	}
-	if m.db == nil {
-		t.Error("db must be retained when the save fails")
+	if !strings.Contains(unlockText(m), "Your changes are not saved") {
+		t.Error("a failed attempt hid why the changes are held")
 	}
-	if !m.dirty {
-		t.Error("dirty must be retained when the save fails")
+
+	m = typePassword(t, m, "testmaster")
+	if m.state != viewBrowser || m.db == nil || m.held.db != nil || !m.dirty || !hasEntry(m.db, "Unsaved") {
+		t.Fatalf("right password: state %d, db open %v, dirty %v", m.state, m.db != nil, m.dirty)
 	}
-	if cmd == nil {
-		t.Error("expected a retry command after aborting the lock")
+	if !m.statusError || !strings.Contains(m.statusText, "could not be saved") {
+		t.Errorf("status %q", m.statusText)
 	}
 }
 

@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -72,20 +74,66 @@ func TestManualLockAsksBeforeSaving(t *testing.T) {
 	}
 }
 
-// A save that fails leaves the database open, unlocked, with the error.
-func TestManualLockStaysOpenWhenTheSaveFails(t *testing.T) {
+// failLockSave asks Ctrl+L to save and lock where the save fails.
+func failLockSave(t *testing.T, m AppModel) AppModel {
+	t.Helper()
+	m, _ = lockStep(t, m, ctrlL)
+	m, save := answer(t, m, keyY)
+	m, _ = lockStep(t, m, save())
+	return m
+}
+
+// A save that fails offers to lock anyway, holding the changes: No leaves
+// the database open with them; Yes locks, and the password brings them
+// back.
+func TestManualLockOffersToHoldTheChangesWhenTheSaveFails(t *testing.T) {
 	m := createTestApp(t)
+	if _, err := m.db.AddEntry(m.db.RootGroup().UUID, keepass.Entry{Title: "Unsaved"}); err != nil {
+		t.Fatal(err)
+	}
 	m.dirty = true
 	m.filePath = filepath.Join(t.TempDir(), "missing", "test.kdbx")
-	m, _ = lockStep(t, m, ctrlL)
-	m, cmd := lockStep(t, m, tea.KeyPressMsg{Code: 'y', Text: "y"})
-	m, save := lockStep(t, m, cmd())
-	m, status := lockStep(t, m, save())
-	if m.state != viewBrowser || m.db == nil || m.lockAfterSave || !m.dirty {
-		t.Fatalf("state %d, db open %v, lock pending %v, dirty %v", m.state, m.db != nil, m.lockAfterSave, m.dirty)
+	m = failLockSave(t, m)
+	if m.state != viewConfirm || m.db == nil || m.lockAfterSave || !strings.Contains(m.confirm.message, "Lock anyway?") {
+		t.Fatalf("state %d, db open %v, lock pending %v, question %q", m.state, m.db != nil, m.lockAfterSave, m.confirm.message)
 	}
-	if text := quickStatus(status); len(text) < 11 || text[:11] != "Not locked:" {
-		t.Errorf("status = %q", text)
+	if !m.statusError || !strings.HasPrefix(m.statusText, "Not locked:") {
+		t.Errorf("status = %q", m.statusText)
+	}
+	m, _ = answer(t, m, keyN)
+	if m.state != viewBrowser || m.db == nil || !m.dirty {
+		t.Fatalf("No: state %d, db open %v, dirty %v", m.state, m.db != nil, m.dirty)
+	}
+
+	m = failLockSave(t, m)
+	m, _ = answer(t, m, keyY)
+	if m.state != viewUnlock || m.db != nil || m.held.db == nil || m.unlock.notice != "Locked." || !strings.Contains(m.unlock.held, "not saved") {
+		t.Fatalf("Yes: state %d, db open %v, held %v, notice %q, %q", m.state, m.db != nil, m.held.db != nil, m.unlock.notice, m.unlock.held)
+	}
+	m = typePassword(t, m, "testmaster")
+	if m.state != viewBrowser || m.db == nil || !m.dirty || !hasEntry(m.db, "Unsaved") {
+		t.Fatalf("unlocked: state %d, db open %v, dirty %v", m.state, m.db != nil, m.dirty)
+	}
+}
+
+// A folder that is gone fails the save like any error: the lock offers to
+// hold the changes rather than leaving the database impossible to lock.
+func TestManualLockOffersToHoldTheChangesWhenTheFolderIsGone(t *testing.T) {
+	m := createTestApp(t)
+	dir := filepath.Join(t.TempDir(), "volume")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	m = saveNow(t, m)
+	m, save := lockStep(t, m, SaveAsMsg{Path: filepath.Join(dir, "test.kdbx")})
+	m = finishSave(t, m, save)
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	m.dirty = true
+	m = failLockSave(t, m)
+	if m.state != viewConfirm || !strings.Contains(m.confirm.message, "the folder of") || !strings.Contains(m.confirm.message, "Lock anyway?") {
+		t.Fatalf("state %d, question %q", m.state, m.confirm.message)
 	}
 }
 

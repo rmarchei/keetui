@@ -52,15 +52,13 @@ func TestFailedLockSaveDoesNotLockAfterAnOrdinaryRetry(t *testing.T) {
 	m := createTestApp(t)
 	m.dirty = true
 	m.filePath = filepath.Join(t.TempDir(), "missing", "vault.kdbx")
-	m, _ = lockStep(t, m, ctrlL)
-	m, cmd := lockStep(t, m, textKey("y"))
-	m, save := lockStep(t, m, cmd())
-	m, status := lockStep(t, m, save())
-	if m.db == nil || !m.dirty || !strings.HasPrefix(quickStatus(status), "Not locked:") {
+	m = failLockSave(t, m)
+	if m.db == nil || !m.dirty || !strings.HasPrefix(m.statusText, "Not locked:") {
 		t.Fatal("failed save did not keep the database unlocked with its changes")
 	}
+	m, _ = answer(t, m, keyN) // not holding the changes either
 	retryPath := filepath.Join(t.TempDir(), "retry.kdbx")
-	m, save = lockStep(t, m, SaveAsMsg{Path: retryPath})
+	m, save := lockStep(t, m, SaveAsMsg{Path: retryPath})
 	if !m.saving || save == nil {
 		t.Fatal("ordinary retry did not start saving")
 	}
