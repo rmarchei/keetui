@@ -50,7 +50,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 ## Installation
 
 ```sh
-go install github.com/rmarchei/keetui/cmd/keetui@latest
+brew install rmarchei/tap/keetui
 ```
 
 Or build from source:
