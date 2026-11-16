@@ -108,6 +108,23 @@ type nativeClipboard interface {
 	clear() error
 }
 
+// nativeCopy is a copy on the local clipboard, as holds and clear see it: a
+// nativeClipboard's last write, or a copy that elsewhere returned.
+type nativeCopy interface {
+	holds(matches func([]byte) bool, alsoTerminal bool) bool
+	clear() error
+}
+
+// nativeClipboards is a nativeClipboard with more than one clipboard
+// (Linux: a Wayland compositor's, and each X display's), where a write to
+// one leaves the copy on another in place.
+type nativeClipboards interface {
+	// elsewhere returns the last write's copy, to check and clear on its
+	// own, when a write along r would leave it in place on another
+	// clipboard; nil when the write would replace it.
+	elsewhere(r nativeRoute) nativeCopy
+}
+
 // nativeRoute is where a copy goes on the local clipboard.
 type nativeRoute struct {
 	ok           bool     // the local clipboard is the user's
@@ -129,14 +146,20 @@ type systemClipboard struct {
 	terminal terminalRoutes       // OSC 52
 	detect   func() remoteSession // nil: the user is local
 	held     *heldCopy
-	// A route change can leave an older native copy behind if its clear
-	// fails. Keep its ownership check independently of the new terminal copy.
-	previousNative *heldCopy
+	// Local copies that a later copy did not replace: the one a copy that
+	// went only to the terminal left behind (the session turned remote), and
+	// those a local copy left on another clipboard (Linux: Wayland, then a
+	// forwarded X display). Each keeps its ownership check, independently of
+	// the new copy, until its clear succeeds.
+	previousNative []*heldCopy
 }
 
 type heldCopy struct {
 	result   copyResult
 	terminal terminalClipboard // the route that sent the terminal copy
+	// native is the local copy once a write to another clipboard left it in
+	// place (see nativeClipboards); nil while it is the backend's last write.
+	native   nativeCopy
 	key, sum []byte
 }
 
@@ -175,7 +198,11 @@ func (c *systemClipboard) copy(value string, opts copyOptions) (copyResult, erro
 	useTerminal := opts.osc52 == config.OSC52Always ||
 		opts.osc52 != config.OSC52Never && (!useNative || res.local.alsoTerminal)
 	var err error
+	var left nativeCopy // the last local copy, which this one leaves on another clipboard
 	if useNative {
+		if n, ok := c.native.(nativeClipboards); ok {
+			left = n.elsewhere(res.local)
+		}
 		if res.marked, err = c.native.write([]byte(value), opts.transient, res.local); err == nil {
 			res.native = true
 		} else {
@@ -209,23 +236,45 @@ func (c *systemClipboard) copy(value string, opts copyOptions) (copyResult, erro
 	prev := c.held
 	c.held = newHeldCopy([]byte(value), res, terminal)
 	if res.native {
-		// The new native write replaced the earlier value; retrying its
-		// clear would now risk erasing the new copy.
-		c.previousNative = nil
+		c.nativeWritten(prev, left)
 	}
 	c.clearSuperseded(prev, res)
 	return res, nil
 }
 
+// nativeWritten accounts for a new local write. The earlier local copy that
+// it replaced is forgotten: retrying its clear would now erase the new copy.
+// One that it left on another clipboard (left) keeps a handle of its own,
+// and is cleared next, like a copy left behind when the session turned
+// remote; the backend's state now belongs to the new copy.
+func (c *systemClipboard) nativeWritten(prev *heldCopy, left nativeCopy) {
+	var kept []*heldCopy
+	for _, h := range c.previousNative {
+		if h.native == nil { // the backend's last write before this one
+			if left == nil {
+				continue
+			}
+			h.native = left
+		}
+		kept = append(kept, h)
+	}
+	if prev != nil && prev.result.native && left != nil {
+		prev.native = left
+		kept = append(kept, prev)
+	}
+	c.previousNative = kept
+}
+
 // clearSuperseded clears what a new copy did not replace of the previous
 // one, whose timed clear the new copy's takes over: the local copy when the
-// new one went only to the terminal (the session turned remote), and the
-// terminal copy, once, when the new one went only to the local clipboard.
+// new one went only to the terminal (the session turned remote) or to
+// another local clipboard (see nativeWritten), and the terminal copy, once,
+// when the new one went only to the local clipboard.
 func (c *systemClipboard) clearSuperseded(prev *heldCopy, next copyResult) {
 	if prev != nil && prev.result.native && !next.native {
-		c.previousNative = prev
+		c.previousNative = append(c.previousNative, prev)
 	}
-	_, _ = c.clearPreviousNative()
+	_, _, _ = c.clearPreviousNative()
 	if prev == nil {
 		return
 	}
@@ -238,29 +287,46 @@ func (c *systemClipboard) clearSuperseded(prev *heldCopy, next copyResult) {
 	}
 }
 
-// clearPreviousNative rechecks ownership on every retry: a failed clear
-// must not grant permission to erase something copied by another app later.
-func (c *systemClipboard) clearPreviousNative() (clearOutcome, error) {
-	h := c.previousNative
-	if h == nil {
-		return clearNothing, nil
+// clearPreviousNative clears the local copies that later copies did not
+// replace, and keeps those whose clear failed. It rechecks ownership on
+// every retry: a failed clear must not grant permission to erase something
+// copied by another app later. repaint reports that it spoke to the local
+// clipboard of a remote session (see clearResult.repaint).
+func (c *systemClipboard) clearPreviousNative() (outcome clearOutcome, repaint bool, err error) {
+	var kept []*heldCopy
+	var errs []error
+	for _, h := range c.previousNative {
+		n := nativeCopy(c.native)
+		if h.native != nil {
+			n = h.native
+		}
+		repaint = repaint || h.result.session.remote
+		if !n.holds(h.matches, h.result.terminal) {
+			if outcome == clearNothing {
+				outcome = clearChanged
+			}
+			continue
+		}
+		if cerr := n.clear(); cerr != nil {
+			errs = append(errs, cerr)
+			kept = append(kept, h)
+			continue
+		}
+		outcome = clearDone
 	}
-	if !c.native.holds(h.matches, h.result.terminal) {
-		c.previousNative = nil
-		return clearChanged, nil
+	c.previousNative = kept
+	if len(errs) > 0 {
+		return outcome, repaint, fmt.Errorf("clear previous clipboard copy: %w", errors.Join(errs...))
 	}
-	if err := c.native.clear(); err != nil {
-		return clearNothing, fmt.Errorf("clear previous clipboard copy: %w", err)
-	}
-	c.previousNative = nil
-	return clearDone, nil
+	return outcome, repaint, nil
 }
 
 func (c *systemClipboard) release() (clearResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	previousOutcome, previousErr := c.clearPreviousNative()
+	previousOutcome, previousRepaint, previousErr := c.clearPreviousNative()
 	result, err := c.releaseHeld()
+	result.repaint = result.repaint || previousRepaint
 	if result.outcome == clearNothing {
 		result.outcome = previousOutcome
 	}

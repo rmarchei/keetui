@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -214,6 +215,155 @@ func TestDisplayChangeKeepsTheOldClipboard(t *testing.T) {
 		if len(x.calls) == 0 || x.calls[len(x.calls)-1] != "Close" || forwardedDisplay(display) && slices.Contains(x.calls, "Owns") {
 			t.Errorf("%s: calls %q", display, x.calls)
 		}
+	}
+}
+
+// When the session turns remote or local between two copies, the second
+// goes to another clipboard than the first (Wayland, then the display
+// ssh -X forwards, or back), which it does not replace: keetui clears the
+// first one right away, with the tool and environment that made it, after
+// checking that it is still there.
+func TestSessionSwitchClearsTheCopyLeftBehind(t *testing.T) {
+	env := map[string]string{"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": "localhost:10.0", "XDG_RUNTIME_DIR": "/run/user/1000"}
+	opts := copyOptions{transient: true, osc52: config.OSC52Never}
+	setup := func() (c *systemClipboard, x *fakeX11, tools *fakeTools, remote *bool) {
+		x, tools, remote = &fakeX11{}, &fakeTools{installed: []string{"wl-copy", "wl-paste"}}, new(bool)
+		tools.onRun = func(name string, input []byte) {
+			if name == "wl-copy" {
+				tools.clip = bytes.Clone(input)
+			}
+		}
+		c, _ = newFakeClipboard(nil)
+		c.native = newTestLinux(env, x, tools)
+		c.detect = func() remoteSession {
+			if *remote {
+				return sshSession
+			}
+			return localSession
+		}
+		return c, x, tools, remote
+	}
+	t.Run("Wayland, then a forwarded display", func(t *testing.T) {
+		c, x, tools, remote := setup()
+		if _, err := c.copy("synthetic-one", opts); err != nil || string(tools.clip) != "synthetic-one" {
+			t.Fatalf("copy = %v (Wayland %q)", err, tools.clip)
+		}
+		*remote = true
+		res, err := c.copy("synthetic-two", opts)
+		if err != nil || !res.native || string(x.value) != "synthetic-two" {
+			t.Fatalf("copy = %+v, %v", res, err)
+		}
+		if len(tools.clip) != 0 || tools.runs[len(tools.runs)-1] != `wl-copy --clear <""` {
+			t.Fatalf("Wayland still holds %q (runs %q)", tools.clip, tools.runs)
+		}
+		if r, err := c.release(); err != nil || r.outcome != clearDone || x.value != nil {
+			t.Fatalf("release = %+v, %v (X %q)", r, err, x.value)
+		}
+	})
+	t.Run("a forwarded display, then Wayland", func(t *testing.T) {
+		c, x, tools, remote := setup()
+		*remote = true
+		if _, err := c.copy("synthetic-one", opts); err != nil || string(x.value) != "synthetic-one" {
+			t.Fatalf("copy = %v (X %q)", err, x.value)
+		}
+		*remote = false
+		if res, err := c.copy("synthetic-two", opts); err != nil || !res.native || string(tools.clip) != "synthetic-two" {
+			t.Fatalf("copy = %+v, %v (Wayland %q)", res, err, tools.clip)
+		}
+		if x.value != nil || !x.owned {
+			t.Fatalf("X display holds %q (owned %v, calls %q)", x.value, x.owned, x.calls)
+		}
+		if r, err := c.release(); err != nil || r.outcome != clearDone || len(tools.clip) != 0 {
+			t.Fatalf("release = %+v, %v (Wayland %q)", r, err, tools.clip)
+		}
+	})
+	t.Run("another application's copy stays", func(t *testing.T) {
+		c, _, tools, remote := setup()
+		if _, err := c.copy("synthetic-one", opts); err != nil {
+			t.Fatal(err)
+		}
+		tools.clip = []byte("another application's copy")
+		*remote = true
+		if _, err := c.copy("synthetic-two", opts); err != nil {
+			t.Fatal(err)
+		}
+		if string(tools.clip) != "another application's copy" || slices.Contains(tools.runs, `wl-copy --clear <""`) {
+			t.Fatalf("Wayland holds %q (runs %q)", tools.clip, tools.runs)
+		}
+	})
+	t.Run("clear fails, then a copy there", func(t *testing.T) {
+		// The first copy stays tracked while its clear fails. A later copy
+		// to the same clipboard replaced it: that one, even of the same
+		// value, has its own clear, so the first one's is dropped.
+		c, x, tools, remote := setup()
+		if _, err := c.copy("synthetic-one", opts); err != nil {
+			t.Fatal(err)
+		}
+		failure := errors.New("Failed to connect to a Wayland server")
+		tools.runErr, *remote = failure, true
+		if _, err := c.copy("synthetic-two", opts); err != nil {
+			t.Fatal(err)
+		}
+		if string(tools.clip) != "synthetic-one" || len(c.previousNative) != 1 {
+			t.Fatalf("Wayland holds %q, %d tracked", tools.clip, len(c.previousNative))
+		}
+		tools.runErr, *remote = nil, false
+		if _, err := c.copy("synthetic-one", opts); err != nil {
+			t.Fatal(err)
+		}
+		if string(tools.clip) != "synthetic-one" || x.value != nil || len(c.previousNative) != 0 {
+			t.Fatalf("Wayland holds %q, X %q, %d tracked", tools.clip, x.value, len(c.previousNative))
+		}
+		if r, err := c.release(); err != nil || r.outcome != clearDone || len(tools.clip) != 0 {
+			t.Fatalf("release = %+v, %v (Wayland %q)", r, err, tools.clip)
+		}
+	})
+}
+
+// A copy left behind on another display whose clear fails stays tracked:
+// the release reports the failure, not a clear, and clears it once the
+// tool works again.
+func TestDisplaySwitchRetriesTheCopyLeftBehind(t *testing.T) {
+	owners := map[string]*fakeX11{":0": {copyErr: x11clip.ErrNotOwner}, "localhost:10.0": {}}
+	tools := &fakeTools{installed: []string{"xclip"}}
+	tools.onRun = func(name string, input []byte) {
+		if name == "xclip" {
+			tools.clip = bytes.Clone(input)
+		}
+	}
+	l := newTestLinux(map[string]string{"DISPLAY": ":0", "TMUX": "x"}, nil, tools)
+	l.newX11 = func(display, _ string) x11Owner { return owners[display] }
+	session := localSession
+	c, _ := newFakeClipboard(nil)
+	c.native = l
+	c.detect = func() remoteSession { return session }
+	opts := copyOptions{transient: true, osc52: config.OSC52Never}
+	if res, err := c.copy("synthetic-one", opts); err != nil || !res.native || string(tools.clip) != "synthetic-one" {
+		t.Fatalf("copy = %+v, %v (xclip %q)", res, err, tools.clip)
+	}
+	// Attached over ssh -X; xclip can no longer reach :0.
+	session = tmuxSession("DISPLAY=localhost:10.0\nSSH_CONNECTION=a b c d\n")
+	failure := errors.New("Error: Can't open display: :0")
+	tools.runErr = failure
+	if res, err := c.copy("synthetic-two", opts); err != nil || !res.native || string(owners["localhost:10.0"].value) != "synthetic-two" {
+		t.Fatalf("copy = %+v, %v", res, err)
+	}
+	r, err := c.release()
+	if text, isError := clearStatus(r, err); !errors.Is(err, failure) || !isError || !r.repaint || owners["localhost:10.0"].value != nil {
+		t.Fatalf("release = %+v, %v (status %q)", r, err, text)
+	}
+	if string(tools.clip) != "synthetic-one" {
+		t.Fatalf("xclip holds %q", tools.clip)
+	}
+	tools.runErr = nil
+	if r, err := c.release(); err != nil || r.outcome != clearDone || len(tools.clip) != 0 {
+		t.Fatalf("retry = %+v, %v (xclip %q)", r, err, tools.clip)
+	}
+	if tools.runs[len(tools.runs)-1] != `xclip -selection clipboard <""` {
+		t.Fatalf("runs %q", tools.runs)
+	}
+	if r, err := c.release(); err != nil || r.outcome != clearNothing {
+		t.Fatalf("later release = %+v, %v", r, err)
 	}
 }
 
@@ -734,8 +884,8 @@ func TestHerdrPaneCopiesToTheClientsX11Display(t *testing.T) {
 	// The owner failing, xclip copies to the same display.
 	x, tools = &fakeX11{copyErr: x11clip.ErrNotOwner}, &fakeTools{installed: []string{"xclip"}}
 	l = newTestLinux(map[string]string{"HOME": "/home/u"}, x, tools)
-	if _, err := l.write([]byte("synthetic-secret"), true, l.route(session)); err != nil || l.tool != "xclip" {
-		t.Fatalf("write = %v (tool %q)", err, l.tool)
+	if _, err := l.write([]byte("synthetic-secret"), true, l.route(session)); err != nil || l.last.tool != "xclip" {
+		t.Fatalf("write = %v (tool %q)", err, l.last.tool)
 	}
 	if err := l.clear(); err != nil {
 		t.Fatal(err)

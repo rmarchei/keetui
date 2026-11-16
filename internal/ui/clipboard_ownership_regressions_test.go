@@ -255,3 +255,141 @@ func TestClipboardPreviousNativeErrorPreservesPendingTerminalRetries(t *testing.
 		}
 	}
 }
+
+// twoClipboards is a backend with two clipboards, as Linux has Wayland's
+// and each X display's: route picks the one in use, and a write to the
+// other one leaves the last copy in place.
+type twoClipboards struct {
+	use, last int
+	clip      [2]fakeNative
+}
+
+func newTwoClipboards() *twoClipboards {
+	t := &twoClipboards{}
+	t.clip[0].marks, t.clip[1].marks = true, true
+	return t
+}
+
+func (t *twoClipboards) route(remoteSession) nativeRoute {
+	return nativeRoute{ok: true, dest: "one of two clipboards"}
+}
+
+func (t *twoClipboards) write(value []byte, transient bool, r nativeRoute) (bool, error) {
+	marked, err := t.clip[t.use].write(value, transient, r)
+	if err == nil {
+		t.last = t.use
+	}
+	return marked, err
+}
+
+func (t *twoClipboards) holds(matches func([]byte) bool, alsoTerminal bool) bool {
+	return t.clip[t.last].holds(matches, alsoTerminal)
+}
+
+func (t *twoClipboards) clear() error { return t.clip[t.last].clear() }
+
+func (t *twoClipboards) elsewhere(nativeRoute) nativeCopy {
+	if t.use == t.last {
+		return nil
+	}
+	return &t.clip[t.last]
+}
+
+// A local copy to another clipboard than the last one leaves that copy in
+// place: it is cleared right away, after an ownership check, and a clear
+// that fails keeps it tracked, so that the release reports the failure,
+// never a clean clear, and retries it.
+func TestClipboardSwitchClearsTheCopyLeftOnTheOtherClipboard(t *testing.T) {
+	opts := copyOptions{transient: true, osc52: config.OSC52Never}
+	t.Run("cleared", func(t *testing.T) {
+		native := newTwoClipboards()
+		c, _ := newFakeClipboard(nil)
+		c.native = native
+		if _, err := c.copy("synthetic-one", opts); err != nil {
+			t.Fatal(err)
+		}
+		native.use = 1
+		if res, err := c.copy("synthetic-two", opts); err != nil || !res.native {
+			t.Fatalf("copy = %+v, %v", res, err)
+		}
+		if native.clip[0].owned || native.clip[0].clears != 1 || string(native.clip[1].value) != "synthetic-two" {
+			t.Fatalf("clipboards hold %q and %q", native.clip[0].value, native.clip[1].value)
+		}
+		if r, err := c.release(); err != nil || r.outcome != clearDone || native.clip[1].owned {
+			t.Fatalf("release = %+v, %v", r, err)
+		}
+		if r, err := c.release(); err != nil || r.outcome != clearNothing {
+			t.Fatalf("later release = %+v, %v", r, err)
+		}
+	})
+	t.Run("replaced by another app", func(t *testing.T) {
+		native := newTwoClipboards()
+		c, _ := newFakeClipboard(nil)
+		c.native = native
+		if _, err := c.copy("synthetic-one", opts); err != nil {
+			t.Fatal(err)
+		}
+		native.clip[0].owned, native.clip[0].value = false, []byte("another application's copy")
+		native.use = 1
+		if _, err := c.copy("synthetic-two", opts); err != nil {
+			t.Fatal(err)
+		}
+		if string(native.clip[0].value) != "another application's copy" || native.clip[0].clears != 0 {
+			t.Fatal("the switch cleared another application's copy")
+		}
+	})
+	t.Run("clear fails", func(t *testing.T) {
+		native := newTwoClipboards()
+		c, _ := newFakeClipboard(nil)
+		c.native = native
+		if _, err := c.copy("synthetic-one", opts); err != nil {
+			t.Fatal(err)
+		}
+		failure := errors.New("clipboard temporarily unavailable")
+		native.clip[0].clearErr = failure
+		native.use = 1
+		if _, err := c.copy("synthetic-two", opts); err != nil {
+			t.Fatal(err)
+		}
+		if !native.clip[0].owned {
+			t.Fatal("fixture cleared the first copy")
+		}
+		r, err := c.release()
+		if text, isError := clearStatus(r, err); !errors.Is(err, failure) || !isError || native.clip[1].owned {
+			t.Fatalf("release = %+v, %v (status %q)", r, err, text)
+		}
+		native.clip[0].clearErr = nil
+		if r, err := c.release(); err != nil || r.outcome != clearDone || native.clip[0].owned {
+			t.Fatalf("retry = %+v, %v", r, err)
+		}
+		if r, err := c.release(); err != nil || r.outcome != clearNothing || native.clip[0].clears != 1 {
+			t.Fatalf("later release = %+v, %v", r, err)
+		}
+	})
+	t.Run("clear fails, then a copy there", func(t *testing.T) {
+		native := newTwoClipboards()
+		c, _ := newFakeClipboard(nil)
+		c.native = native
+		if _, err := c.copy("synthetic-one", opts); err != nil {
+			t.Fatal(err)
+		}
+		native.clip[0].clearErr = errors.New("clipboard temporarily unavailable")
+		native.use = 1
+		if _, err := c.copy("synthetic-two", opts); err != nil {
+			t.Fatal(err)
+		}
+		// Back on the first clipboard: the new copy replaced the one left
+		// there, and the second one is left in turn.
+		native.use = 0
+		if _, err := c.copy("synthetic-three", opts); err != nil {
+			t.Fatal(err)
+		}
+		if string(native.clip[0].value) != "synthetic-three" || native.clip[1].owned {
+			t.Fatalf("clipboards hold %q and %q", native.clip[0].value, native.clip[1].value)
+		}
+		native.clip[0].clearErr = nil
+		if r, err := c.release(); err != nil || r.outcome != clearDone || native.clip[0].owned || native.clip[0].clears != 1 {
+			t.Fatalf("release = %+v, %v", r, err)
+		}
+	})
+}

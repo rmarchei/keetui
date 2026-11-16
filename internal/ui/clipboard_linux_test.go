@@ -168,8 +168,8 @@ func TestX11CopiesThroughOwner(t *testing.T) {
 		t.Fatal("X11 without tools must still be available")
 	}
 	marked, err := l.writeLocal([]byte("synthetic-secret"), true)
-	if err != nil || !marked || !x.marked || l.tool != "x11" {
-		t.Fatalf("write = %v, %v (tool %q)", marked, err, l.tool)
+	if err != nil || !marked || !x.marked || l.last.tool != "x11" {
+		t.Fatalf("write = %v, %v (tool %q)", marked, err, l.last.tool)
 	}
 	if !l.holds(func([]byte) bool { return false }, false) {
 		t.Fatal("holds checked content instead of ownership")
@@ -197,8 +197,8 @@ func TestX11FallsBackToTools(t *testing.T) {
 				x, tools := &fakeX11{copyErr: failure}, &fakeTools{installed: tc.installed}
 				l := newTestLinux(x11Env, x, tools)
 				marked, err := l.writeLocal([]byte("synthetic-secret"), true)
-				if err != nil || marked || l.tool != tc.wantTool {
-					t.Fatalf("write = %v, %v (tool %q)", marked, err, l.tool)
+				if err != nil || marked || l.last.tool != tc.wantTool {
+					t.Fatalf("write = %v, %v (tool %q)", marked, err, l.last.tool)
 				}
 				if !slices.Equal(tools.runs, []string{tc.wantRun}) {
 					t.Fatalf("runs = %q", tools.runs)
@@ -271,8 +271,8 @@ func TestXselClearKeepsClipboard(t *testing.T) {
 	setup := func(installed ...string) (*linuxClipboard, *fakeX11, *fakeTools) {
 		x, tools := &fakeX11{copyErr: x11clip.ErrTooLarge}, &fakeTools{installed: installed}
 		l := newTestLinux(x11Env, x, tools)
-		if _, err := l.writeLocal([]byte("large-synthetic-note"), true); err != nil || l.tool != "xsel" {
-			t.Fatalf("write = %v (tool %q)", err, l.tool)
+		if _, err := l.writeLocal([]byte("large-synthetic-note"), true); err != nil || l.last.tool != "xsel" {
+			t.Fatalf("write = %v (tool %q)", err, l.last.tool)
 		}
 		tools.clip, tools.runs = []byte("large-synthetic-note"), nil
 		if !l.holds(matching("large-synthetic-note"), false) {

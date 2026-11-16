@@ -46,15 +46,65 @@ type linuxClipboard struct {
 	listeners func(port int) ([]uint32, error)
 	uid       uint32 // keetui's effective uid
 
-	tool      string   // backend of the last write: wl-copy, x11, xclip or xsel
-	env       []string // the route's env for the last write, for the tools that check and clear it
-	x11       *x11Slot // the owner of the last X11 copy
-	owners    []*x11Slot
-	byContent bool // holds matched another client's copy of the value
-	gone      bool // holds found the forwarded X server gone, with keetui's copy
+	last   linuxCopy         // the last write
+	writes map[string]uint64 // writes to each clipboard (see clipboardOf)
+	owners []*x11Slot
 
 	sensitiveOnce sync.Once
 	sensitive     bool // wl-copy understands --sensitive
+}
+
+// linuxCopy is a copy keetui wrote: the clipboard that holds it, and what
+// holds found out for clear.
+type linuxCopy struct {
+	tool      string   // wl-copy, x11, xclip or xsel; "" for none
+	env       []string // the route's env, for the tools that check and clear it
+	x11       *x11Slot // keetui's owner on its X display, whichever tool copied; nil on Wayland
+	clipboard string   // which clipboard holds it (see clipboardOf)
+	gen       uint64   // writes to that clipboard, this one included
+	byContent bool     // holds matched another client's copy of the value
+	gone      bool     // holds found the forwarded X server gone, with keetui's copy
+}
+
+// leftCopy is a copy that a write to another clipboard left in place (see
+// elsewhere). It is checked and cleared as the last write is, unless keetui
+// has copied to its clipboard since, which replaced it.
+type leftCopy struct {
+	l *linuxClipboard
+	c linuxCopy
+}
+
+func (o *leftCopy) holds(matches func([]byte) bool, alsoTerminal bool) bool {
+	return o.l.writes[o.c.clipboard] == o.c.gen && o.l.holdsCopy(&o.c, matches, alsoTerminal)
+}
+
+func (o *leftCopy) clear() error { return o.l.clearCopy(&o.c) }
+
+// elsewhere returns the last write's copy, to check and clear on its own,
+// when a write along r goes to another clipboard and so leaves it in place:
+// the session moved between Wayland and a forwarded X display, or between X
+// displays, within one clear interval. nil when the write replaces it.
+func (l *linuxClipboard) elsewhere(r nativeRoute) nativeCopy {
+	if l.last.tool == "" || l.clipboardOf(r) == l.last.clipboard {
+		return nil
+	}
+	return &leftCopy{l: l, c: l.last}
+}
+
+// clipboardOf names the clipboard that a route's copy goes to: that of an
+// X display as keetui reaches it (see slot), whichever tool copies, or a
+// Wayland compositor's.
+func (l *linuxClipboard) clipboardOf(r nativeRoute) string {
+	if r.display != "" {
+		return "x11\x00" + r.display + "\x00" + r.authority
+	}
+	wayland := func(name string) string {
+		if v := envValue(r.env, name); v != "" {
+			return v
+		}
+		return l.getenv(name)
+	}
+	return "wayland\x00" + wayland("WAYLAND_DISPLAY") + "\x00" + wayland("XDG_RUNTIME_DIR")
 }
 
 // x11Owner is the in-process CLIPBOARD owner, *x11clip.Owner. A Copy that
@@ -364,34 +414,35 @@ func (l *linuxClipboard) wlSensitive() bool {
 	return l.sensitive
 }
 
+// write copies along r. A copy to another clipboard than the last write's
+// leaves that one in place: the caller gets it from elsewhere first.
 func (l *linuxClipboard) write(value []byte, _ bool, r nativeRoute) (bool, error) {
-	tool := ""
-	switch {
-	case r.ok && r.display != "":
-		tool = "x11"
-	case r.ok:
-		tool = "wl-copy"
-	}
+	c := linuxCopy{env: r.env, clipboard: l.clipboardOf(r)}
 	var err error
 	marked := false
-	switch tool {
-	case "wl-copy":
+	switch {
+	case r.ok && r.display != "":
+		c.tool, c.x11, marked, err = l.writeX11(value, r)
+	case r.ok:
 		// An explicit type also keeps wl-copy from running xdg-mime on a
 		// temporary file holding the secret.
 		args := []string{"--type", "text/plain;charset=utf-8"}
 		if l.wlSensitive() {
 			args, marked = append(args, "--sensitive"), true
 		}
-		err = l.run(wlEnv(r.env, l.getenv), value, "wl-copy", args...)
-	case "x11":
-		tool, marked, err = l.writeX11(value, r)
+		c.tool, err = "wl-copy", l.run(wlEnv(r.env, l.getenv), value, "wl-copy", args...)
 	default:
 		err = errNoClipboard
 	}
 	if err != nil {
 		return false, err
 	}
-	l.tool, l.env, l.byContent = tool, r.env, false
+	if l.writes == nil {
+		l.writes = map[string]uint64{}
+	}
+	l.writes[c.clipboard]++
+	c.gen = l.writes[c.clipboard]
+	l.last = c
 	return marked, nil
 }
 
@@ -401,19 +452,18 @@ func (l *linuxClipboard) write(value []byte, _ bool, r nativeRoute) (bool, error
 // timeout, as they would wait for the same server, and not on a forwarded
 // display, where what they fork keeps the SSH session's X11 channel, and so
 // ssh, open after keetui exits.
-func (l *linuxClipboard) writeX11(value []byte, r nativeRoute) (tool string, marked bool, err error) {
-	slot := l.slot(r)
-	if l.x11 != nil && l.x11 != slot {
+func (l *linuxClipboard) writeX11(value []byte, r nativeRoute) (tool string, slot *x11Slot, marked bool, err error) {
+	slot = l.slot(r)
+	if old := l.last.x11; old != nil && old != slot {
 		// The session's display changed: wipe the copy on the old one, but
 		// keep its clipboard (see x11Slot).
-		l.x11.owner.Blank()
+		old.owner.Blank()
 	}
-	l.x11 = slot
 	if err = slot.owner.Copy(value, true); err == nil {
-		return "x11", true, nil
+		return "x11", slot, true, nil
 	}
 	if r.forwarded || errors.Is(err, x11clip.ErrTimeout) {
-		return "", false, err
+		return "", nil, false, err
 	}
 	// Only local routes get here, whose display is keetui's $DISPLAY, or the
 	// tmux session's or a herdr client's, which r.env names.
@@ -421,16 +471,16 @@ func (l *linuxClipboard) writeX11(value []byte, r nativeRoute) (tool string, mar
 	switch tool {
 	case "xclip":
 		if ferr := l.runX(toolEnv(r.env), value, "xclip", "-selection", "clipboard"); ferr != nil {
-			return "", false, fmt.Errorf("%w; %w", err, ferr)
+			return "", nil, false, fmt.Errorf("%w; %w", err, ferr)
 		}
 	case "xsel":
 		if ferr := l.runX(toolEnv(r.env), value, "xsel", "--clipboard", "--input"); ferr != nil {
-			return "", false, fmt.Errorf("%w; %w", err, ferr)
+			return "", nil, false, fmt.Errorf("%w; %w", err, ferr)
 		}
 	default:
-		return "", false, err
+		return "", nil, false, err
 	}
-	return tool, false, nil
+	return tool, slot, false, nil
 }
 
 // slot returns keetui's owner for a route's display, making one if needed.
@@ -446,26 +496,32 @@ func (l *linuxClipboard) slot(r nativeRoute) *x11Slot {
 	return s
 }
 
-// holds asks the X server whether keetui's copy is still on the clipboard,
-// and reads tool copies back; an unreadable clipboard (empty, or an image)
-// is not ours.
+// holds asks the X server whether keetui's last copy is still on the
+// clipboard, and reads tool copies back; an unreadable clipboard (empty, or
+// an image) is not ours.
 func (l *linuxClipboard) holds(matches func([]byte) bool, alsoTerminal bool) bool {
-	l.byContent, l.gone = false, false
+	return l.holdsCopy(&l.last, matches, alsoTerminal)
+}
+
+func (l *linuxClipboard) clear() error { return l.clearCopy(&l.last) }
+
+func (l *linuxClipboard) holdsCopy(c *linuxCopy, matches func([]byte) bool, alsoTerminal bool) bool {
+	c.byContent, c.gone = false, false
 	var out []byte
 	var err error
-	switch l.tool {
+	switch c.tool {
 	case "x11":
-		x := l.x11.owner
+		x := c.x11.owner
 		if x.Owns() {
 			return true
 		}
-		if l.x11.forwarded && x.Lost() {
+		if c.x11.forwarded && x.Lost() {
 			// The X server at the user's end went away (XQuartz quit, the
 			// SSH session ended), and keetui's copy with it. Nothing is
 			// left to clear there, and asking again would make the ssh
 			// client print over the screen, but the terminal copy made
 			// next to it is still to be cleared.
-			l.gone = true
+			c.gone = true
 			return true
 		}
 		if !alsoTerminal {
@@ -474,15 +530,15 @@ func (l *linuxClipboard) holds(matches func([]byte) bool, alsoTerminal bool) boo
 		// The terminal applies its OSC 52 copy asynchronously, possibly
 		// after keetui's, so the clipboard may hold the same value.
 		out, err = x.Read()
-		l.byContent = err == nil && matches(out)
+		c.byContent = err == nil && matches(out)
 		clear(out)
-		return l.byContent
+		return c.byContent
 	case "wl-copy":
-		out, err = l.output(toolEnv(l.env), "wl-paste", "--no-newline", "--type", "text")
+		out, err = l.output(toolEnv(c.env), "wl-paste", "--no-newline", "--type", "text")
 	case "xclip":
-		out, err = l.output(toolEnv(l.env), "xclip", "-selection", "clipboard", "-o")
+		out, err = l.output(toolEnv(c.env), "xclip", "-selection", "clipboard", "-o")
 	case "xsel":
-		out, err = l.output(toolEnv(l.env), "xsel", "--clipboard", "--output")
+		out, err = l.output(toolEnv(c.env), "xsel", "--clipboard", "--output")
 	default:
 		return false
 	}
@@ -495,28 +551,28 @@ func (l *linuxClipboard) holds(matches func([]byte) bool, alsoTerminal bool) boo
 	return held
 }
 
-func (l *linuxClipboard) clear() error {
-	switch l.tool {
+func (l *linuxClipboard) clearCopy(c *linuxCopy) error {
+	switch c.tool {
 	case "wl-copy":
-		return l.run(toolEnv(l.env), nil, "wl-copy", "--clear")
+		return l.run(toolEnv(c.env), nil, "wl-copy", "--clear")
 	case "x11":
 		switch {
-		case l.gone:
+		case c.gone:
 			return nil
-		case l.byContent:
+		case c.byContent:
 			// Another client (the terminal) holds keetui's value: replace
 			// it with an empty copy, which keetui then keeps.
-			return l.x11.owner.Copy(nil, false)
+			return c.x11.owner.Copy(nil, false)
 		}
 		// Keep the clipboard, empty. Giving it up would let managers that
 		// ignore the marker (ClipIt, Parcellite, Diodon, xfce4-clipman,
 		// qlipper, GPaste before 51.1) restore the secret from history.
-		l.x11.owner.Blank()
+		c.x11.owner.Blank()
 		return nil
 	case "xclip":
-		return l.runX(toolEnv(l.env), nil, "xclip", "-selection", "clipboard")
+		return l.runX(toolEnv(c.env), nil, "xclip", "-selection", "clipboard")
 	case "xsel":
-		return l.clearXsel()
+		return l.clearXsel(c)
 	}
 	return errNoClipboard
 }
@@ -524,14 +580,14 @@ func (l *linuxClipboard) clear() error {
 // clearXsel replaces xsel's copy with an empty one. xsel cannot own an
 // empty clipboard, and its --clear gives the clipboard up, so managers that
 // ignore the marker may restore the copy; it is the last resort.
-func (l *linuxClipboard) clearXsel() error {
-	if l.x11 != nil && l.x11.owner.Copy(nil, false) == nil {
+func (l *linuxClipboard) clearXsel(c *linuxCopy) error {
+	if c.x11 != nil && c.x11.owner.Copy(nil, false) == nil {
 		return nil
 	}
 	if l.has("xclip") {
-		return l.runX(toolEnv(l.env), nil, "xclip", "-selection", "clipboard")
+		return l.runX(toolEnv(c.env), nil, "xclip", "-selection", "clipboard")
 	}
-	return l.runX(toolEnv(l.env), nil, "xsel", "--clipboard", "--clear")
+	return l.runX(toolEnv(c.env), nil, "xsel", "--clipboard", "--clear")
 }
 
 // close runs at exit. The X server drops keetui's clipboard with its
