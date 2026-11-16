@@ -20,10 +20,7 @@ func TestSaveFailurePreservesVaultAndAllowsRetry(t *testing.T) {
 			t.Run(format+"/"+failure, func(t *testing.T) {
 				dir := t.TempDir()
 				path := filepath.Join(dir, "vault.kdbx")
-				db, err := Create(path, "synthetic-master")
-				if err != nil {
-					t.Fatal(err)
-				}
+				db := createKDBX31(t, path, "synthetic-master", "")
 				if kdbx4 {
 					if err := db.ConvertToKDBX4(); err != nil {
 						t.Fatal(err)

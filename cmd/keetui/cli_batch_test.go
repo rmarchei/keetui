@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tobischo/gokeepasslib/v3"
+
 	"github.com/rmarchei/keetui/internal/keepass"
 )
 
@@ -69,6 +71,30 @@ func runBatchCLI(t *testing.T, passwords []string, args ...string) (string, stri
 func syntheticCLIDatabase(t *testing.T, name string) *keepass.DB {
 	t.Helper()
 	db, err := keepass.Create(filepath.Join(t.TempDir(), name+".kdbx"), "synthetic-cli-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+// syntheticKDBX31Database writes a new KDBX 3.1 database with AES-KDF, as
+// keetui created before KDBX 4 and other clients still may, and opens it.
+func syntheticKDBX31Database(t *testing.T, name string) *keepass.DB {
+	t.Helper()
+	raw := gokeepasslib.NewDatabase(gokeepasslib.WithDatabaseKDBXVersion3())
+	raw.Credentials = gokeepasslib.NewPasswordCredentials("synthetic-cli-password")
+	root := gokeepasslib.NewGroup()
+	root.Name = "Root"
+	raw.Content.Root = &gokeepasslib.RootData{Groups: []gokeepasslib.Group{root}}
+	var file bytes.Buffer
+	if err := gokeepasslib.NewEncoder(&file).Encode(raw); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), name+".kdbx")
+	if err := os.WriteFile(path, file.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := keepass.Open(path, "synthetic-cli-password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,8 +207,11 @@ func TestCLIBatchMergeDryRunAndWrite(t *testing.T) {
 }
 
 func TestCLIBatchUpgradeKeepsEntriesAndAlreadyUpgradedFile(t *testing.T) {
-	db := syntheticCLIDatabase(t, "upgrade")
+	db := syntheticKDBX31Database(t, "upgrade")
 	addCLIFixture(t, db)
+	if db.IsKdbx4() {
+		t.Fatal("fixture is not KDBX 3.1")
+	}
 	stdout, stderr, code := runBatchCLI(t, []string{"synthetic-cli-password"}, "-upgrade-kdbx4", db.Path)
 	if code != 0 || !strings.Contains(stdout, "Upgraded") {
 		t.Fatalf("upgrade exit %d, stdout %s, stderr %s", code, stdout, stderr)

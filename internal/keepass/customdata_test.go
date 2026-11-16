@@ -12,10 +12,7 @@ import (
 func TestCustomDataRoundTrips(t *testing.T) {
 	for _, kdbx4 := range []bool{false, true} {
 		path := filepath.Join(t.TempDir(), "synthetic.kdbx")
-		db, err := Create(path, "synthetic")
-		if err != nil {
-			t.Fatal(err)
-		}
+		db := createKDBX31(t, path, "synthetic", "")
 		if kdbx4 {
 			if err := db.ConvertToKDBX4(); err != nil {
 				t.Fatal(err)
@@ -63,9 +60,6 @@ func TestCustomDataKeepsKDBX41Stamps(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "synthetic41.kdbx")
 	db, err := Create(path, "synthetic")
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.ConvertToKDBX4(); err != nil {
 		t.Fatal(err)
 	}
 	gokeepasslib.WithDatabaseKDBXVersion41()(db.Database)

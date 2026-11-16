@@ -132,10 +132,7 @@ func createSaveTestDB(t *testing.T, format saveTestFormat) (string, func(*testin
 			t.Fatal(err)
 		}
 	}
-	db, err := CreateWithKeyFile(path, saveTestPassword, keyPath)
-	if err != nil {
-		t.Fatalf("create database: %v", err)
-	}
+	db := createKDBX31(t, path, saveTestPassword, keyPath)
 	if format.setup != nil {
 		format.setup(t, db)
 	}

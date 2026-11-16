@@ -11,6 +11,14 @@ import (
 	"github.com/rmarchei/keetui/internal/keepass"
 )
 
+// TestMain gives the databases tests create a minimal key derivation cost,
+// in the test process and in the CLI children it re-executes (see
+// TestCLIHelperProcess), which run TestMain too.
+func TestMain(m *testing.M) {
+	keepass.UseTestKDF()
+	os.Exit(m.Run())
+}
+
 func TestZeroBytes(t *testing.T) {
 	b := []byte{1, 2, 3, 4, 5}
 	zeroBytes(b)

@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"bytes"
 	"encoding/base64"
 	"maps"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -25,17 +27,39 @@ var undoFixtureAttachments = map[string]string{
 	"G/S/D:d.txt":         "attachment of D",
 }
 
-// writeUndoFixture creates a synthetic keetui database (recycle bin off):
-// root entries A and B, group G with entry C, and G's subgroup S with entry
-// D. Attachments are added in the order A, C (history), C, D, B, so a save
-// that drops deleted binaries renumbers the ones after them.
+// createKDBX31 writes a new KDBX 3.1 database with AES-KDF, as keetui
+// created before KDBX 4 and other clients still may (recycle bin off), and
+// opens it.
+func createKDBX31(t *testing.T, path, password string) *keepass.DB {
+	t.Helper()
+	raw := gokeepasslib.NewDatabase(gokeepasslib.WithDatabaseKDBXVersion3())
+	raw.Credentials = gokeepasslib.NewPasswordCredentials(password)
+	root := gokeepasslib.NewGroup()
+	root.Name = "Root"
+	raw.Content.Root = &gokeepasslib.RootData{Groups: []gokeepasslib.Group{root}}
+	var file bytes.Buffer
+	if err := gokeepasslib.NewEncoder(&file).Encode(raw); err != nil {
+		t.Fatalf("encode KDBX 3.1 database: %v", err)
+	}
+	if err := os.WriteFile(path, file.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := keepass.Open(path, password)
+	if err != nil {
+		t.Fatalf("open KDBX 3.1 database: %v", err)
+	}
+	return db
+}
+
+// writeUndoFixture creates a synthetic keetui database (recycle bin off),
+// KDBX 3.1 or converted from it to KDBX 4: root entries A and B, group G
+// with entry C, and G's subgroup S with entry D. Attachments are added in
+// the order A, C (history), C, D, B, so a save that drops deleted binaries
+// renumbers the ones after them.
 func writeUndoFixture(t *testing.T, kdbx4 bool) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "undo.kdbx")
-	db, err := keepass.Create(path, undoFixturePassword)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	db := createKDBX31(t, path, undoFixturePassword)
 	if kdbx4 {
 		if err := db.ConvertToKDBX4(); err != nil {
 			t.Fatalf("ConvertToKDBX4: %v", err)
@@ -269,10 +293,7 @@ func writeKeyFixture(t *testing.T, kdbx4 bool) (string, map[string]string) {
 		"X:key.txt": base64.StdEncoding.EncodeToString(key) + "\n",
 	}
 	path := filepath.Join(t.TempDir(), "keys.kdbx")
-	db, err := keepass.Create(path, undoFixturePassword)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	db := createKDBX31(t, path, undoFixturePassword)
 	if kdbx4 {
 		if err := db.ConvertToKDBX4(); err != nil {
 			t.Fatalf("ConvertToKDBX4: %v", err)

@@ -76,10 +76,7 @@ func entryByTitle(t *testing.T, db *DB, title string) (Entry, bool) {
 func syncFixture(t *testing.T, kdbx4 bool) (path string, ours, theirs *DB, ids map[string]gokeepasslib.UUID) {
 	t.Helper()
 	path = filepath.Join(t.TempDir(), "synthetic.kdbx")
-	db, err := Create(path, "synthetic-master")
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := createKDBX31(t, path, "synthetic-master", "")
 	if kdbx4 {
 		if err := db.ConvertToKDBX4(); err != nil {
 			t.Fatal(err)

@@ -6,11 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/rmarchei/keetui/internal/keepass"
 )
 
 // TestMain keeps every test away from the user's clipboard, terminal and
 // tmux: a model without an injected backend gets a process clipboard that
-// refuses to copy.
+// refuses to copy. Databases the tests create derive their key at a minimal
+// cost.
 func TestMain(m *testing.M) {
 	if os.Getenv(fakeHerdrEnv) == "1" {
 		// Re-executed as a stand-in herdr client (see
@@ -18,6 +21,7 @@ func TestMain(m *testing.M) {
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(0)
 	}
+	keepass.UseTestKDF()
 	processClipboard.Store(&systemClipboard{terminal: terminalRoutes{tty: refusingTerminal{}}})
 	os.Exit(runIsolated(m))
 }

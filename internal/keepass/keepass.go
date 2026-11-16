@@ -245,8 +245,17 @@ func Create(path, password string) (*DB, error) {
 }
 
 // CreateWithKeyFile creates a new .kdbx database file protected by the
-// given password and/or key file.
+// given password and/or key file. The database is KDBX 4, its key derived
+// with Argon2d at keetui's cost (see productionKDF).
 func CreateWithKeyFile(path, password, keyFilePath string) (*DB, error) {
+	db := gokeepasslib.NewDatabase(gokeepasslib.WithDatabaseKDBXVersion40())
+	db.Header.FileHeaders.KdfParameters = targetKdfParameters()
+	return create(path, password, keyFilePath, db)
+}
+
+// create gives db, a new database in the format and with the key derivation
+// it was made with, a root group and writes it to a new file at path.
+func create(path, password, keyFilePath string, db *gokeepasslib.Database) (*DB, error) {
 	creds, err := buildCredentials(password, keyFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("create credentials: %w", err)
@@ -255,7 +264,6 @@ func CreateWithKeyFile(path, password, keyFilePath string) (*DB, error) {
 	rootGroup := gokeepasslib.NewGroup()
 	rootGroup.Name = "Root"
 
-	db := gokeepasslib.NewDatabase()
 	db.Credentials = creds
 	db.Content.Root = &gokeepasslib.RootData{
 		Groups: []gokeepasslib.Group{rootGroup},

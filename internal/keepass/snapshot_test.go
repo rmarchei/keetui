@@ -34,13 +34,11 @@ func forEachFormat(t *testing.T, test func(t *testing.T, kdbx4 bool)) {
 	}
 }
 
-// newFormatDB creates a synthetic database as keetui does (recycle bin off).
+// newFormatDB creates a synthetic database as keetui does (recycle bin off),
+// in KDBX 3.1 or converted from it to KDBX 4.
 func newFormatDB(t *testing.T, kdbx4 bool) *DB {
 	t.Helper()
-	db, err := Create(filepath.Join(t.TempDir(), "undo.kdbx"), snapshotTestPassword)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	db := createKDBX31(t, filepath.Join(t.TempDir(), "undo.kdbx"), snapshotTestPassword, "")
 	if kdbx4 {
 		if err := db.ConvertToKDBX4(); err != nil {
 			t.Fatalf("ConvertToKDBX4: %v", err)

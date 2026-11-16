@@ -183,14 +183,17 @@ func TestAttachmentOnNonExistentEntry(t *testing.T) {
 }
 
 func TestAttachmentPersistence(t *testing.T) {
+	forEachFormat(t, func(t *testing.T, kdbx4 bool) {
+		testAttachmentPersistence(t, kdbx4)
+	})
+}
+
+func testAttachmentPersistence(t *testing.T, kdbx4 bool) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.kdbx")
 	password := "testpass"
 
-	db, err := Create(dbPath, password)
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	db := createFormat(t, dbPath, password, kdbx4)
 
 	root := db.RootGroup()
 	uuid, err := db.AddEntry(root.UUID, Entry{Title: "With Attachment"})
