@@ -35,7 +35,7 @@ func main() {
 	mergeKeyFile := flag.String("merge-keyfile", "", "path to key file for the merge source database (use with -merge)")
 	dryRun := flag.Bool("dry-run", false, "preview changes without modifying (use with --merge)")
 	readOnly := flag.Bool("read-only", false, "open database in read-only mode")
-	upgradeKDBX4 := flag.Bool("upgrade-kdbx4", false, "upgrade database from KDBX 3.1 to KDBX 4 format")
+	upgradeKDBX4 := flag.Bool("upgrade-kdbx4", false, "upgrade database from KDBX 3.1 to KDBX 4 format, or strengthen a weak KDBX 4 key derivation")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "keetui - a TUI for KeePass databases\n\n")
 		fmt.Fprintf(os.Stderr, "Usage: keetui [options] <database.kdbx>\n\n")
@@ -273,19 +273,27 @@ func main() {
 		}
 
 		if *upgradeKDBX4 {
-			if db.IsKdbx4() {
-				fmt.Fprintln(os.Stderr, "Database is already KDBX 4 format")
-				os.Exit(0)
-			}
-			if err := db.ConvertToKDBX4(); err != nil {
+			// A KDBX 3.1 database is converted; a KDBX 4 one whose key
+			// derivation is weaker than new databases' is strengthened.
+			wasKdbx4, before := db.IsKdbx4(), db.KDF()
+			changed, err := db.StrengthenKDF()
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error upgrading to KDBX 4: %v\n", err)
 				os.Exit(1)
+			}
+			if !changed {
+				fmt.Fprintf(os.Stderr, "Database is already KDBX 4 with a strong key derivation (%s)\n", before)
+				os.Exit(0)
 			}
 			if err := db.Save(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error saving after upgrade: %v\n", err)
 				os.Exit(1)
 			}
-			fmt.Printf("Upgraded %s to KDBX 4 (Argon2) format\n", dbPath)
+			if wasKdbx4 {
+				fmt.Printf("Strengthened the key derivation of %s to %s (was %s)\n", dbPath, db.KDF(), before)
+			} else {
+				fmt.Printf("Upgraded %s to KDBX 4 with %s (was KDBX 3.1 with %s)\n", dbPath, db.KDF(), before)
+			}
 		}
 
 		os.Exit(0)

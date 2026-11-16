@@ -212,29 +212,71 @@ func TestCLIBatchUpgradeKeepsEntriesAndAlreadyUpgradedFile(t *testing.T) {
 	if db.IsKdbx4() {
 		t.Fatal("fixture is not KDBX 3.1")
 	}
+	target := syntheticCLIDatabase(t, "new").KDF() // what new databases get
 	stdout, stderr, code := runBatchCLI(t, []string{"synthetic-cli-password"}, "-upgrade-kdbx4", db.Path)
-	if code != 0 || !strings.Contains(stdout, "Upgraded") {
-		t.Fatalf("upgrade exit %d, stdout %s, stderr %s", code, stdout, stderr)
+	want := fmt.Sprintf("Upgraded %s to KDBX 4 with %s (was KDBX 3.1 with AES-KDF, 6000 rounds)\n", db.Path, target)
+	if code != 0 || stdout != want {
+		t.Fatalf("upgrade exit %d, stdout %q, want %q, stderr %s", code, stdout, want, stderr)
 	}
 	reopened, err := keepass.Open(db.Path, "synthetic-cli-password")
-	if err != nil || !reopened.IsKdbx4() {
-		t.Fatalf("upgraded file unreadable: %v", err)
+	if err != nil || !reopened.IsKdbx4() || reopened.KDF() != target {
+		t.Fatalf("upgraded file unreadable or not at %s: %v", target, err)
 	}
 	entry := reopened.RootGroup().Groups[0].Entries[0]
 	if entry.Password != "synthetic-entry-secret" || len(reopened.EntryAttachments(entry.UUID)) != 1 {
 		t.Fatal("upgrade lost entry data")
 	}
-	before, err := os.ReadFile(db.Path)
+	assertUpgradeLeavesStrongVault(t, db.Path)
+}
+
+// A KDBX 4 vault whose key derivation is weaker than new databases' is
+// strengthened: what is below the target is raised, what is above is kept.
+func TestCLIBatchUpgradeStrengthensWeakKDBX4(t *testing.T) {
+	db := syntheticCLIDatabase(t, "weak")
+	addCLIFixture(t, db)
+	target := db.KDF()
+	params := db.Database.Header.FileHeaders.KdfParameters
+	params.Iterations, params.Parallelism = 1, target.Parallelism+3
+	if err := db.Save(); err != nil {
+		t.Fatal(err)
+	}
+	before := db.KDF()
+	if !db.WeakKDF() {
+		t.Fatalf("fixture %s is not weak", before)
+	}
+	stdout, stderr, code := runBatchCLI(t, []string{"synthetic-cli-password"}, "-upgrade-kdbx4", db.Path)
+	want := target
+	want.Parallelism = before.Parallelism
+	line := fmt.Sprintf("Strengthened the key derivation of %s to %s (was %s)\n", db.Path, want, before)
+	if code != 0 || stdout != line {
+		t.Fatalf("strengthen exit %d, stdout %q, want %q, stderr %s", code, stdout, line, stderr)
+	}
+	reopened, err := keepass.Open(db.Path, "synthetic-cli-password")
+	if err != nil || reopened.KDF() != want {
+		t.Fatalf("strengthened file unreadable or not at %s: %v", want, err)
+	}
+	entry := reopened.RootGroup().Groups[0].Entries[0]
+	if entry.Password != "synthetic-entry-secret" || len(reopened.EntryAttachments(entry.UUID)) != 1 {
+		t.Fatal("strengthening lost entry data")
+	}
+	assertUpgradeLeavesStrongVault(t, db.Path)
+}
+
+// assertUpgradeLeavesStrongVault runs the upgrade on a vault that needs none:
+// it says so and leaves the file as it was.
+func assertUpgradeLeavesStrongVault(t *testing.T, path string) {
+	t.Helper()
+	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, stderr, code = runBatchCLI(t, []string{"synthetic-cli-password"}, "-upgrade-kdbx4", db.Path)
-	if code != 0 || !strings.Contains(stderr, "already KDBX 4") {
-		t.Fatalf("second upgrade exit %d: %s", code, stderr)
+	_, stderr, code := runBatchCLI(t, []string{"synthetic-cli-password"}, "-upgrade-kdbx4", path)
+	if code != 0 || !strings.Contains(stderr, "already KDBX 4 with a strong key derivation") {
+		t.Fatalf("upgrade of a strong vault exit %d: %s", code, stderr)
 	}
-	after, err := os.ReadFile(db.Path)
+	after, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(before, after) {
-		t.Fatal("already-upgraded vault was rewritten")
+		t.Fatal("upgrade rewrote a vault that needed none")
 	}
 }
 

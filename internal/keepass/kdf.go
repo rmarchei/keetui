@@ -114,6 +114,47 @@ func UseTestKDF() {
 	targetKDF = testKDF
 }
 
+// WeakKDF reports whether the database derives its key more cheaply than
+// new databases do: with AES-KDF (every KDBX 3.1 database), which is not
+// memory-hard, or with Argon2 over less memory or in fewer passes than the
+// target. Fewer lanes do not count: more lanes only make derivation faster
+// on more cores, for an attacker as well. StrengthenKDF raises it.
+func (d *DB) WeakKDF() bool {
+	k := d.KDF()
+	if k.Name != kdfArgon2d && k.Name != kdfArgon2id {
+		return true
+	}
+	return k.Memory < targetKDF.Memory || k.Iterations < targetKDF.Iterations
+}
+
+// StrengthenKDF raises a weak key derivation (see WeakKDF) to the cost new
+// databases get, in memory: the caller saves the database to persist it. A
+// KDBX 3.1 database is converted to KDBX 4 (see ConvertToKDBX4); a KDBX 4
+// one using AES-KDF switches to Argon2d at the target cost; one using Argon2
+// takes the target's memory, passes and lanes where its own are fewer, and
+// keeps those already above. It reports whether it changed anything.
+func (d *DB) StrengthenKDF() (bool, error) {
+	if !d.WeakKDF() {
+		return false, nil
+	}
+	if !d.IsKdbx4() {
+		if err := d.ConvertToKDBX4(); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	fh := d.Database.Header.FileHeaders
+	if k := d.KDF(); k.Name != kdfArgon2d && k.Name != kdfArgon2id {
+		fh.KdfParameters = targetKdfParameters()
+		return true, nil
+	}
+	p := fh.KdfParameters
+	p.Memory = max(p.Memory, targetKDF.Memory)
+	p.Iterations = max(p.Iterations, targetKDF.Iterations)
+	p.Parallelism = max(p.Parallelism, targetKDF.Parallelism)
+	return true, nil
+}
+
 // targetKdfParameters returns KDBX 4 header parameters for Argon2d at the
 // target cost, with a new salt.
 func targetKdfParameters() *gokeepasslib.KdfParameters {

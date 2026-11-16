@@ -114,6 +114,125 @@ func TestConvertToKDBX4UsesTargetKDF(t *testing.T) {
 	})
 }
 
+// strengthenTarget is a target above testKDF, cheap enough to save with.
+var strengthenTarget = KDF{Name: kdfArgon2d, Memory: 1 << 20, Iterations: 3, Parallelism: 2}
+
+// setArgon2 gives a KDBX 4 database Argon2 key derivation at the given cost.
+func setArgon2(db *DB, uuid []byte, memory, iterations uint64, parallelism uint32) {
+	p := db.Database.Header.FileHeaders.KdfParameters
+	p.UUID, p.Memory, p.Iterations, p.Parallelism = uuid, memory, iterations, parallelism
+}
+
+// setAESKDF gives a KDBX 4 database AES-KDF, as KeePass writes it.
+func setAESKDF(db *DB) {
+	fh := db.Database.Header.FileHeaders
+	fh.KdfParameters = &gokeepasslib.KdfParameters{UUID: gokeepasslib.KdfAES3, Rounds: 1234}
+	fh.CipherID = gokeepasslib.CipherAES
+	fh.EncryptionIV = make([]byte, 16)
+}
+
+func TestWeakKDF(t *testing.T) {
+	setTargetKDF(t, strengthenTarget)
+	m, i, p := strengthenTarget.Memory, strengthenTarget.Iterations, strengthenTarget.Parallelism
+	for _, tc := range []struct {
+		name  string
+		setup func(db *DB)
+		weak  bool
+	}{
+		{"KDBX 3.1", nil, true},
+		{"KDBX 4 AES-KDF", setAESKDF, true},
+		{"less memory", func(db *DB) { setArgon2(db, gokeepasslib.KdfArgon2, m/2, i*10, p) }, true},
+		{"fewer passes", func(db *DB) { setArgon2(db, gokeepasslib.KdfArgon2, m*10, i-1, p) }, true},
+		{"Argon2id with fewer passes", func(db *DB) { setArgon2(db, argon2idUUID, m, i-1, p) }, true},
+		{"the target", func(db *DB) { setArgon2(db, gokeepasslib.KdfArgon2, m, i, p) }, false},
+		{"fewer lanes", func(db *DB) { setArgon2(db, gokeepasslib.KdfArgon2, m, i, 1) }, false},
+		{"above the target", func(db *DB) { setArgon2(db, gokeepasslib.KdfArgon2, m*2, i*2, p*2) }, false},
+		{"Argon2id", func(db *DB) { setArgon2(db, argon2idUUID, m, i, p) }, false},
+	} {
+		db := &DB{Database: gokeepasslib.NewDatabase()}
+		if tc.setup != nil {
+			db.Database = gokeepasslib.NewDatabase(gokeepasslib.WithDatabaseKDBXVersion40())
+			tc.setup(db)
+		}
+		if got := db.WeakKDF(); got != tc.weak {
+			t.Errorf("%s (%s): weak = %t, want %t", tc.name, db.KDF(), got, tc.weak)
+		}
+	}
+}
+
+// StrengthenKDF brings every weak key derivation to at least the target and
+// never lowers a parameter already above it; the database keeps its entries
+// and attachments, and the file the new cost.
+func TestStrengthenKDF(t *testing.T) {
+	setTargetKDF(t, strengthenTarget)
+	m, i, p := strengthenTarget.Memory, strengthenTarget.Iterations, strengthenTarget.Parallelism
+	for _, tc := range []struct {
+		name  string
+		kdbx4 bool
+		setup func(db *DB)
+		want  KDF
+	}{
+		{"KDBX 3.1", false, nil, strengthenTarget},
+		{"KDBX 4 AES-KDF", true, setAESKDF, strengthenTarget},
+		{"gokeepasslib's default", true, func(db *DB) { setArgon2(db, gokeepasslib.KdfArgon2, 1<<20, 2, 2) }, strengthenTarget},
+		{"less memory, more passes and lanes", true, func(db *DB) { setArgon2(db, gokeepasslib.KdfArgon2, m/4, i*2, p*2) },
+			KDF{Name: kdfArgon2d, Memory: m, Iterations: i * 2, Parallelism: p * 2}},
+		{"more memory, fewer passes and lanes", true, func(db *DB) { setArgon2(db, gokeepasslib.KdfArgon2, m*2, 1, 1) },
+			KDF{Name: kdfArgon2d, Memory: m * 2, Iterations: i, Parallelism: p}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "vault.kdbx")
+			db := createFormat(t, path, "synthetic", tc.kdbx4)
+			if tc.setup != nil {
+				tc.setup(db)
+			}
+			id, err := db.AddEntry(db.RootGroup().UUID, Entry{Title: "Service", Password: "synthetic-secret"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := db.AddAttachment(id, "recovery.txt", []byte("synthetic attachment")); err != nil {
+				t.Fatal(err)
+			}
+			if err := db.Overwrite(); err != nil {
+				t.Fatal(err)
+			}
+			before := db.KDF()
+			if !db.WeakKDF() {
+				t.Fatalf("%s is not weak", before)
+			}
+			changed, err := db.StrengthenKDF()
+			if err != nil || !changed {
+				t.Fatalf("strengthen %s: changed %t, %v", before, changed, err)
+			}
+			if got := db.KDF(); !db.IsKdbx4() || got != tc.want || db.WeakKDF() {
+				t.Fatalf("strengthened %s to %s, want KDBX 4 with %s", before, got, tc.want)
+			}
+			if err := db.Save(); err != nil {
+				t.Fatal(err)
+			}
+			reopened, err := Open(path, "synthetic")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := reopened.KDF(); got != tc.want {
+				t.Errorf("file holds %s, want %s", got, tc.want)
+			}
+			entry, err := reopened.GetEntry(id)
+			if err != nil || entry.Password != "synthetic-secret" {
+				t.Fatalf("entry after strengthening: %+v, %v", entry, err)
+			}
+			if data := attachmentData(t, reopened, id, "recovery.txt"); string(data) != "synthetic attachment" {
+				t.Errorf("attachment after strengthening: %q", data)
+			}
+
+			again, err := reopened.StrengthenKDF()
+			if err != nil || again || reopened.KDF() != tc.want {
+				t.Errorf("strengthening again: changed %t, %v, now %s", again, err, reopened.KDF())
+			}
+		})
+	}
+}
+
 func TestKDFDescription(t *testing.T) {
 	kdbx4 := func(p *gokeepasslib.KdfParameters) *gokeepasslib.DBHeader {
 		h := gokeepasslib.NewKDBX40Header()
