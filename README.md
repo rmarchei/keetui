@@ -5,7 +5,7 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 ## Features
 
 - Unlock `.kdbx` databases with password or password + key file
-- Create new `.kdbx` databases from scratch
+- Create new `.kdbx` databases from scratch (KDBX 4, Argon2d)
 - Browse groups and entries with vim-style navigation
 - Search entries across all groups with literal substrings or optional fuzzy matching (title, username, URL, notes, custom fields)
 - Favorite/pin entries -- mark entries with `f` key, shown first with `[*]` indicator (uses KeePass Tags)
@@ -26,14 +26,14 @@ A terminal user interface (TUI) for reading and writing KeePass `.kdbx` database
 - Rename groups
 - Duplicate entries
 - Move entries and groups between groups (cut/paste)
-- Custom fields support (add, edit, delete extra key-value pairs)
+- Custom fields support (add, edit, delete extra key-value pairs; names must differ from each other and from built-in fields)
 - File attachments -- add, extract, and delete attachments on entries
 - Entry expiry dates with visual warnings for expired entries
 - Password history -- view previous passwords for an entry
 - Recycle bin support -- deleted items go to recycle bin, with restore and permanent delete
 - Database stats and batch password audit (weak, reused, empty, expired)
 - Import/export (CSV, XML) and merge from other `.kdbx` files (with `--dry-run` preview)
-- Upgrade KDBX 3.1 (AES) databases to KDBX 4 (Argon2) format via TUI or CLI
+- Upgrade KDBX 3.1 (AES) databases to KDBX 4 (Argon2) format via TUI or CLI, and strengthen a weak KDBX 4 key derivation via CLI
 - Change database master password
 - Undo last action with `Ctrl+Z` (delete, edit, move, rename, duplicate, add)
 - Status bar showing database name, entry count, and modified state
@@ -118,8 +118,8 @@ keetui --merge other.kdbx --dry-run database.kdbx  # preview without modifying
 keetui --merge other.kdbx --merge-keyfile other.key database.kdbx  # keyfile-protected source
 ```
 
-- **CSV** format includes columns: Group, Title, Username, Password, URL, Notes, TOTP, Attachments
-- **XML** format preserves group hierarchy, custom fields, and attachments
+- **CSV** format includes columns: Group, Title, Username, Password, URL, Notes, TOTP, Attachments. Fields a spreadsheet would read as a formula (starting with `=`, `+`, `-`, `@`, a tab or a carriage return) are exported with a leading `'`, which import removes; Password and TOTP are written as they are
+- **XML** format preserves group hierarchy, custom fields, and attachments. Import takes `otp` (KeePassXC) and `TimeOtp-Secret-Base32` (KeePass 2) fields as the entry's TOTP
 - **Merge** matches entries by UUID; newer entries overwrite older ones; new groups are created as needed. Merged entries keep their UUID, timestamps, history, and attachments. Use `--dry-run` to preview changes without modifying the database
 
 ### Format Upgrade
@@ -129,6 +129,11 @@ Upgrade a KDBX 3.1 (AES) database to KDBX 4 (Argon2) format:
 ```sh
 keetui --upgrade-kdbx4 database.kdbx
 ```
+
+The upgraded database derives its key with Argon2d at 64 MiB, 20 iterations
+and parallelism 2, as new databases do. On a KDBX 4 database whose key
+derivation is weaker (AES-KDF, or less Argon2 memory or fewer passes), the
+same command raises it to that cost. It never lowers one.
 
 You can also upgrade from the TUI: press `s` to open the save dialog, then `Tab` to the format selector and choose KDBX 4 (Argon2) before saving.
 
@@ -259,7 +264,7 @@ keetui reads TOTP secrets from entries using two common conventions:
 - **KeePassXC**: `otp` field containing an `otpauth://` URI
 - **KeePass2**: `TimeOtp-Secret-Base32` field containing a raw base32 secret
 
-When viewing an entry with a TOTP secret, a live 6-digit code is displayed with a visual countdown bar. The code refreshes automatically every second.
+When viewing an entry with a TOTP secret, a live 6-digit code is displayed with a visual countdown bar. The code refreshes automatically every second. When no code can be generated from the secret, copying the TOTP field reports an error: the secret itself is copied only when revealed (`p`).
 
 ## Configuration
 
@@ -305,9 +310,9 @@ Settings are stored in `~/.config/keetui/config.json`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `clipboard_clear_seconds` | 15 | Seconds before clipboard is automatically cleared (0: disable) |
+| `clipboard_clear_seconds` | 15 | Seconds before clipboard is automatically cleared (0: disable; otherwise 15 to 99999) |
 | `clipboard_osc52` | `"auto"` | Copy through the terminal (OSC 52): `auto` (only without a local clipboard, e.g. over SSH), `always`, or `never`. See [Clipboard](#clipboard) |
-| `auto_lock_minutes` | 5 | Minutes of inactivity before the database locks (0: disable) |
+| `auto_lock_minutes` | 5 | Minutes of inactivity before the database locks (0: disable; otherwise 5 to 99999) |
 | `privacy_mode` | false | Keep passwords hidden while editing: no brief reveal when typing, generated passwords masked in the editor and the generator's preview (`p` or `Ctrl+R` shows them) |
 | `password_length` | 20 | Length of generated passwords (minimum 8) |
 | `show_password_strength` | true | Show password strength indicator in detail and editor views |
@@ -322,7 +327,7 @@ Settings are stored in `~/.config/keetui/config.json`:
 | `theme` | `"auto"` | Color theme: `auto` (light or dark, following the terminal background; dark if the terminal does not say), `dark`, `light`, `high-contrast`, or `terminal` (the terminal's own palette). A theme chosen by name paints its own background when the terminal reports one of the other tone, such as `light` on a dark terminal |
 | `colors` | (none) | Override theme colors, per theme: see [Colors](#colors) |
 | `confirm_quit` | true | Confirm before quitting, even without unsaved changes (`false`: disable) |
-| `backup_on_save` | false | Create a `.kdbx.bak` backup copy before each save |
+| `backup_on_save` | false | Create a `.kdbx.bak` backup copy before each save, readable only by you |
 
 Pressing `q` opens a confirmation with **No** selected. Press `y` to quit,
 or `n`/`Esc` to return. To disable it, press `c` in the browser and set
@@ -455,17 +460,19 @@ git config core.hooksPath .githooks
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 - **Clipboard auto-clear**: Copied passwords and TOTP codes are automatically cleared from the clipboard (configurable, default 15s), and marked as sensitive where the platform supports it (see [Clipboard](#clipboard))
-- **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered
+- **Auto-lock**: The database locks after inactivity (configurable, default 5 minutes), requiring the master password to be re-entered. The screen locks at once while unsaved changes are saved. If that save fails, keetui holds the changes in memory: the unlock screen says why, the master password brings them back (checked against the database in memory, so the file need not be reachable), and quitting asks first, since it loses them
 - **History**: `H` in an entry lists its earlier versions; `Enter` shows one with what differs from the current entry (protected values masked until `p`), and `R` restores it after asking. The current state goes to the history first, the version brings back its fields, tags, attachments and expiry, and `Ctrl+Z` undoes the restore
 - **Privacy mode**: With `privacy_mode` on, passwords stay hidden while you edit: typing in a protected field does not reveal it briefly, and generated passwords stay masked in the editor and the generator's preview until you press `p` or `Ctrl+R`
-- **Lock now**: `Ctrl+L` (keybinding `lock`) locks the database at once and clears keetui's copy from the clipboard, on the browsing screens and over their help. With unsaved changes it first asks to save them: Yes saves, then locks (a failed save leaves the database open); No keeps it open. A save already running finishes first. Forms (the editor, group names, the master password, save as), search, and attachment path inputs keep their input: close them first. Database Undo (`Ctrl+Z`) also waits until you leave text input
+- **Lock now**: `Ctrl+L` (keybinding `lock`) locks the database at once and clears keetui's copy from the clipboard, on the browsing screens and over their help. With unsaved changes it first asks to save them: Yes saves, then locks (a failed save offers to lock anyway, holding the changes in memory as auto-lock does); No keeps it open. A save already running finishes first. Forms (the editor, group names, the master password, save as), search, and attachment path inputs keep their input: close them first. Database Undo (`Ctrl+Z`) also waits until you leave text input
 - **Live security status**: The status bar shows `clip:15s` until clipboard clearing and `lock:4:59` until auto-lock. The lock countdown is highlighted in its final 30 seconds; normal input resets inactivity. Copying again restarts the clipboard timer, even for the same value. `off` means a protection is disabled, or that nothing can clear the copy (some tmux setups, see [Clipboard](#clipboard)), and `clip:wait` that a clear waits for keetui's tmux pane to be visible to the terminal that got the copy (`C:`/`L:` are compact labels on very narrow terminals). Clearing over OSC 52 cannot be verified; a local clipboard that has changed since the copy is left untouched.
 - **Password generator**: Generates random passwords via `crypto/rand` with configurable character sets (uppercase, lowercase, digits, symbols)
-- **Changes made elsewhere**: keetui remembers what it last read from or wrote to the database file. If another program (KeePassXC, a phone app syncing through Dropbox or Syncthing, a second keetui) changed the file since, saving asks first: **Yes** merges those changes into yours, then saves; **No** asks whether to overwrite them with your version; `Esc` cancels and keeps your changes unsaved. The merge matches entries by UUID: entries added there come in, an entry changed on both sides keeps the more recent version and puts the other in its history, and entries moved there (to the recycle bin, say) move here too. Entries you deleted stay deleted, unless they were changed there afterwards. Entries deleted there go here too when the file records their deletion (KeePass clients, keetui included, record what they delete for good) and you have not changed them since; entries merely missing from the file are kept, since it could be an older copy (a sync conflict, a restored backup). When the other program upgraded the file's format (KeePassXC turns KDBX 3.1 into 4 when it saves), keetui saves in that format too. Custom icons come along (a favicon downloaded in KeePassXC), and so do database settings: the name, description and default user name when they changed there more recently, and each application's per-database settings (keetui's own, KeePassXC's browser pairings) one by one, so a pairing added or revoked there stays that way. A master password changed elsewhere keeps keetui from reading the file to merge it: then only overwriting (which puts the file back under your master password) or cancelling remain. A file that is gone is written again if you say so; a folder that is gone (a volume unmounted) stops the save. Auto-lock cannot ask, so it merges and saves. The undo history is cleared after a merge. Command-line imports, merges and upgrades refuse to save over a file that changed while they ran
-- **Backup on save**: When enabled, the original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback (disabled by default; enable via `backup_on_save` setting)
+- **Changes made elsewhere**: keetui remembers what it last read from or wrote to the database file. If another program (KeePassXC, a phone app syncing through Dropbox or Syncthing, a second keetui) changed the file since, saving asks first: **Yes** merges those changes into yours, then saves; **No** asks whether to overwrite them with your version; `Esc` cancels and keeps your changes unsaved. The merge matches entries by UUID: entries added there come in, an entry changed on both sides keeps the more recent version and puts the other in its history, and entries moved there (to the recycle bin, say) move here too. Entries you deleted stay deleted, unless they were changed there afterwards. Entries deleted there go here too when the file records their deletion (KeePass clients, keetui included, record what they delete for good) and you have not changed them since; entries merely missing from the file are kept, since it could be an older copy (a sync conflict, a restored backup). When the other program upgraded the file's format (KeePassXC turns KDBX 3.1 into 4 when it saves), keetui saves in that format too. Custom icons come along (a favicon downloaded in KeePassXC), and so do database settings: the name, description and default user name when they changed there more recently, and each application's per-database settings (keetui's own, KeePassXC's browser pairings) one by one, so a pairing added or revoked there stays that way. A master password changed elsewhere keeps keetui from reading the file to merge it: then only overwriting (which puts the file back under your master password) or cancelling remain. The same two remain when keetui cannot read the file at all (permissions, an I/O error, a cloud placeholder). An entry or group you put back with `Ctrl+Z`, or that `--merge` adds back, counts as changed when it comes back, so that a sync does not delete it again. A file that is gone is written again if you say so; a folder that is gone (a volume unmounted) stops the save. Auto-lock cannot ask, so it merges and saves (or holds the changes, see Auto-lock). The undo history is cleared after a merge. Command-line imports, merges and upgrades refuse to save over a file that changed while they ran
+- **Backup on save**: When enabled, the original `.kdbx` file is copied to `.kdbx.bak` before each save, providing a one-save-ago fallback (disabled by default; enable via `backup_on_save` setting). The backup is readable only by you (mode 0600), even when an older one was not
+- **Key derivation**: New databases, and those upgraded to KDBX 4, derive their key with Argon2d at 64 MiB, 20 iterations and parallelism 2 (see [Format Upgrade](#format-upgrade)). The file header that sets this cost is not authenticated before the key is derived, so keetui refuses a header beyond its limits (over 2^32 AES-KDF rounds, 2 GiB of Argon2 memory, 128 GiB of memory times passes, or 255 lanes) before deriving anything, when unlocking and when merging the file on disk. Databases using Argon2id are not supported; keetui says so
+- **No trace logs**: keetui unsets `TEA_TRACE`, `TEA_DEBUG` and `UV_DEBUG` before starting the TUI: Bubble Tea's trace log records every key typed, the master password included
 - **Read-only mode**: Open with `--read-only` to browse a database without risk of accidental modification
-- **Input validation**: Attachment extraction rejects path traversal attempts; config values are sanitized on load; URL opening restricted to http/https schemes
-- **Display sanitization**: Values containing control characters or invalid UTF-8 are rendered with `�` placeholders so they cannot corrupt the terminal; clipboard copies always use the raw value
+- **Input validation**: Attachment extraction rejects path traversal attempts; config values are sanitized on load; URL opening restricted to http/https schemes; Save As refuses a path that is a symbolic link (the database's own file may be one)
+- **Display sanitization**: Values and field names containing control characters or invalid UTF-8 are rendered with `�` placeholders so they cannot corrupt the terminal; clipboard copies always use the raw value
 
 ## Compatibility
 
@@ -557,6 +564,15 @@ libxcb does: for a local socket or `127.0.0.1`, the entry for this host's
 name, as display managers and `ssh -X` write it; for any other address, the
 entry for the server's IP address, as sshd writes it with
 `X11UseLocalhost no` (`DISPLAY=hostname:10.0`); and entries for any host.
+
+Inside tmux, keetui copies to the tmux session's `DISPLAY` and `XAUTHORITY`,
+which tmux refreshes on every attach, rather than the pane's, which may name
+the display of an SSH session long gone. A display that keetui reaches over
+TCP on this machine's loopback (the `localhost:10.0` sshd forwards) gets
+copies only while keetui's user or root listens on its port: once the SSH
+session ends, any user of the machine can take that port. Otherwise keetui
+does not copy there and F1 says why; with `auto`, the copy goes to the
+terminal with OSC 52 instead.
 
 **Terminal clipboard (OSC 52).** Over SSH, or when no local clipboard is
 available, keetui sends the copy to the terminal with OSC 52 instead. These
@@ -767,7 +783,9 @@ see copies. F1 shows the full status message together with these settings.
 **Clearing.** keetui clears only its own copy: if you have copied something
 else since, the clipboard is left untouched. It clears on the timer, on lock,
 on quit, and when the process is terminated (SIGTERM, SIGINT, or SIGHUP when
-the terminal is closed). A terminal clear that waits for keetui's tmux pane,
+the terminal is closed). A copy to another local clipboard than the last
+(the session moved between Wayland and a forwarded X display, say) clears
+keetui's copy on the earlier one at once. A terminal clear that waits for keetui's tmux pane,
 or for the terminal that got the copy, keeps retrying after a lock and is
 tried once more when keetui exits. After `kill -9`, a copy on macOS or
 Wayland, an X11 fallback copy made with xclip or xsel, or a terminal copy
