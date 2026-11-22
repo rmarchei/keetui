@@ -6,7 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.1.1
 	charm.land/lipgloss/v2 v2.1.1
-	github.com/boombuler/barcode v1.1.0
+	github.com/boombuler/barcode v1.1.1
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/ebitengine/purego v0.11.3
 	github.com/jezek/xgb v1.3.1
